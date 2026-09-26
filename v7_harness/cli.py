@@ -1164,6 +1164,30 @@ PLAN_TEMPLATE = """# 통합 실행 계획 (UAOS)
 도구 상태(시각이 지나면 UNKNOWN): `python -m v7_harness.cli coord presence`로 확인한다.
 """
 
+PROJECT_MANUAL_TEMPLATE = """# 프로젝트 총괄 매뉴얼 (UAOS Project Manual)
+
+- 프로젝트 목표: 프로젝트 전체 목적과 해결 과제를 정의한다.
+- 승인 경계: 데이터 삭제, push·배포, 결제, 권한 변경은 사용자 승인 필수.
+- 작업 체계: 지휘자(Codex) -> 부관/부지휘자(Claude Code) -> 독립검증/대행(Antigravity) -> 로컬계산기(Ollama).
+- 단일 원장: `.coord/PLAN.md`
+"""
+
+CONTRACT_MANUAL_TEMPLATE = """```contract
+work_id: T01_TASK_NAME
+worker: local
+goal: 작업 목표 요약
+inputs:
+- path/to/input.py sha256=...
+allow:
+- path/to/output.py
+acceptance: python -m unittest path/to/test.py
+forbidden: scope escape, delete, network
+stop: two failures with same cause
+judge: codex
+timeout_s: 300
+```
+"""
+
 
 def cmd_coord_init(args: argparse.Namespace) -> int:
     """Prepare any project for UAOS. Idempotent: existing files are never overwritten, only missing lines are added."""
@@ -1177,10 +1201,19 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
         plan.parent.mkdir(parents=True, exist_ok=True)
         plan.write_text(PLAN_TEMPLATE, encoding="utf-8")
         created.append(".coord/PLAN.md")
+    proj_man = project / ".coord" / "PROJECT_MANUAL.md"
+    if not proj_man.is_file():
+        proj_man.write_text(PROJECT_MANUAL_TEMPLATE, encoding="utf-8")
+        created.append(".coord/PROJECT_MANUAL.md")
     for folder in (".coord/tasks", ".coord/mailbox", ".work"):
         if not (project / folder).is_dir():
             (project / folder).mkdir(parents=True)
             created.append(folder + "/")
+    task_tpl = project / ".coord" / "tasks" / "contract_template.md"
+    if not task_tpl.is_file():
+        task_tpl.parent.mkdir(parents=True, exist_ok=True)
+        task_tpl.write_text(CONTRACT_MANUAL_TEMPLATE, encoding="utf-8")
+        created.append(".coord/tasks/contract_template.md")
     gitignore = project / ".gitignore"
     existing = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.is_file() else []
     missing = [line for line in UAOS_GITIGNORE_LINES if line not in existing]
