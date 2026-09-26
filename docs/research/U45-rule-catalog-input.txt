@@ -1,0 +1,10 @@
+role_claude|deputy-only-after-codex-unavailable
+common|contract-before-delegation
+role_antigravity|third-line-authority
+common|no-quota-percent-to-token-conversion
+role_codex|independent-final-verdict
+common|retention-never-deletes
+role_claude|no-self-judgment
+common|unknown-fails-closed
+role_antigravity|handoff-for-return-review
+role_codex|review-deputy-evidence-on-return
