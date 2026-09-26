@@ -47,6 +47,32 @@ VERDICT_SCHEMA = {
 }
 # Enough of the acceptance log to show the failing or passing summary without flooding the judge prompt.
 ACCEPTANCE_TAIL_CHARS = 4_000
+# U47-A1: agy's quota answer names the wait ("Resets in 162h49m0s", 2026-09-27). The desk then reads LIMITED until the
+# reset instead of a session heartbeat's ACTIVE, which had routed a verdict request to a tool that could not answer.
+QUOTA_RESET_RE = re.compile(r"resets in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?", re.I)
+# No reset time in the message: re-probe after an hour rather than guess a long outage.
+QUOTA_FALLBACK_TTL_S = 3_600
+# agy's error is one line (~170 chars with the reset time); 300 keeps it whole without storing a transcript.
+PROVIDER_MESSAGE_CHARS = 300
+
+
+def quota_ttl(message: str) -> int:
+    """Seconds until agy's quota resets, read from its error text; one hour when the text names no time."""
+    match = QUOTA_RESET_RE.search(message or "")
+    if not match or not any(match.groups()):
+        return QUOTA_FALLBACK_TTL_S
+    hours, minutes, seconds = (int(part or 0) for part in match.groups())
+    return max(1, hours * 3600 + minutes * 60 + seconds)
+
+
+def _provider_message(stdout: bytes) -> str:
+    """agy's own error text from its JSON envelope, so a failed judgement says why (quota, auth, capacity)."""
+    text = stdout.decode("utf-8", errors="replace")
+    try:
+        envelope = json.loads(text)
+    except ValueError:
+        return text[:PROVIDER_MESSAGE_CHARS]
+    return str(envelope.get("error") or "")[:PROVIDER_MESSAGE_CHARS] if isinstance(envelope, dict) else ""
 
 
 class JudgeRefused(Exception):
@@ -164,6 +190,9 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     judgement = None
     error = ""
     envelope_sha = ""
+    provider_message = ""
+    presence_marked = ""
+    marked_at = None
     try:
         done = runner(argv, cwd=str(runs), env={**os.environ, "UAOS_WORKER": "1"}, capture_output=True,
                       timeout=timeout_s + 60)
@@ -177,6 +206,14 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
                 error = "JUDGE_UNPARSED: agy did not return the JSON verdict"
         else:
             error = f"JUDGE_FAILED:agy {outcome.error_class}"
+            provider_message = _provider_message(stdout)
+            if outcome.error_class == "QUOTA":
+                from .coord.presence import mark
+
+                marked_at = time.time()
+                mark(Path(project or source).resolve(), JUDGE_TOOL[judge], "LIMITED",
+                     ttl_s=quota_ttl(provider_message), now=marked_at)
+                presence_marked = "LIMITED"
     except subprocess.TimeoutExpired:
         error = f"JUDGE_TIMEOUT:{timeout_s}s"
     except (OSError, ValueError) as exc:
@@ -197,6 +234,7 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
                            if judgement else ""),
         "cost_gate": cost_gate, "budget": budget, "usage": usage, "elapsed_s": int(time.monotonic() - started), "error": error,
         "applied": False,
+        "provider_message": provider_message, "presence_marked": presence_marked, "marked_at": marked_at,
     }
     if verdict == "APPROVE" and apply:
         # The unchanged approval gate does the promotion and re-checks digest, scope and the recorded cost gate.
