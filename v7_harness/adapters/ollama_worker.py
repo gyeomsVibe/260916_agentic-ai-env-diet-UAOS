@@ -207,7 +207,10 @@ def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
         _guard(rel, target, content, task)
     # 모든 블록이 검증된 뒤에만 쓴다. 중간에 하나라도 실패하면 아무 파일도 바뀌지 않는다.
     for target, (_rel, content) in pending.items():
-        target.write_text(content, encoding="utf-8")
+        # U47-N1: write_text turned every "\n" into "\r\n" on Windows, so an LF file came back CRLF and exact-byte
+        # acceptance failed on a correct edit. Keep the line ending the file already uses; a new file gets LF.
+        eol = "\r\n" if target.is_file() and b"\r\n" in target.read_bytes() else "\n"
+        target.write_bytes(content.replace("\r\n", "\n").replace("\n", eol).encode("utf-8"))
     return written
 
 
