@@ -1,5 +1,10 @@
 # UAOS-Diet v7: Unified Agentic AI Orchestration System - AI Environment Diet v7
 
+<!-- uaos-update:8eee03249cf9eb89a90d9f9421766b468308eee5ecebf5fb88460a08e9469569 -->
+## 업데이트 (0.1.0, 2026-09-25)
+
+- 검증된 근거만 버전된 PR 후보로 만드는 fail-closed 파이프라인과 결정적 변경 감시 스케줄러 구현.
+
 **통합 에이전틱 AI 오케스트레이션 시스템 기반의 'AI 환경 다이어트' (약칭: UAOS)**
 
 AI 코딩 도구 **세 개(Codex, Claude Code, Antigravity)**와 **전자계산기(Ollama)**가 한 프로젝트를 함께 하면서 **거짓 성공을 내지 않고**, **토큰 예산을 극대화하여 절약**하도록 만든 장치와 그 측정 기록입니다.
@@ -12,7 +17,7 @@ AI 코딩 도구 **세 개(Codex, Claude Code, Antigravity)**와 **전자계산�
 
 사용자 5대 비유의 실현도 감사는 [docs/35](docs/35_five-metaphors-realization-audit_2026-09-25.md), 그 보강 구현 기록은 [docs/36](docs/36_metaphor-realization-implementation-record_2026-09-25.md), 모든 프로젝트에 쓰는 표준 작업 프로세스와 Ollama·Antigravity 하네스·계약 매뉴얼 설계는 [docs/37](docs/37_standard-process-and-worker-harness.md)에 있습니다.
 
-자가개선(RSI)의 맹점 조사와 코드로 강제한 증거 관문은 [docs/38](docs/38_rsi-self-improvement-blind-spots-and-evidence-gate.md), UAOS를 이 PC의 **모든 프로젝트**에 설치하는 방법은 [uaos_everywhere/](uaos_everywhere/README.md)와 [docs/39](docs/39_uaos-everywhere-global-deployment-and-b77.md)에 있습니다. Claude Code를 파이프라인의 작업자·검증자·알림 수신자로 참여시키는 설계와 구현 기록은 [docs/40](docs/40_claude-code-in-the-uaos-pipeline-design.md), "Ollama를 재교육하면 스스로 나아지나"에 대한 계산과 작업 배정 상태 기계(U39)는 [docs/41](docs/41_ollama-retraining-myth-and-escalation-math.md), Ollama의 시스템 학습과 LoRA 실험 관문(U40)은 [docs/42](docs/42_ollama-system-level-learning-and-lora-gate-u40.md), 사용자 PC 마무리 배포를 명령 하나로 끝내는 방법(U41)은 [docs/43](docs/43_one-command-pc-rollout-u41.md)입니다. 진단부터 해결까지의 전 과정을 용어 설명과 함께 쉬운 말로 정리한 글은 [쉽게 읽는 UAOS 진단과 해결 전과정](docs/쉽게_읽는_UAOS_진단과_해결_전과정/00_먼저_읽기_이_폴더_사용법.md)입니다.
+자가개선(RSI)의 맹점 조사와 코드로 강제한 증거 관문은 [docs/38](docs/38_rsi-self-improvement-blind-spots-and-evidence-gate.md), UAOS를 이 PC의 **모든 프로젝트**에 설치하는 방법은 [uaos_everywhere/](uaos_everywhere/README.md)와 [docs/39](docs/39_uaos-everywhere-global-deployment-and-b77.md)에 있습니다. Claude Code를 파이프라인의 작업자·검증자·알림 수신자로 참여시키는 설계와 구현 기록은 [docs/40](docs/40_claude-code-in-the-uaos-pipeline-design.md), "Ollama를 재교육하면 스스로 나아지나"에 대한 계산과 작업 배정 상태 기계(U39)는 [docs/41](docs/41_ollama-retraining-myth-and-escalation-math.md), Ollama의 시스템 학습과 LoRA 실험 관문(U40)은 [docs/42](docs/42_ollama-system-level-learning-and-lora-gate-u40.md), 사용자 PC 마무리 배포를 명령 하나로 끝내는 방법(U41)은 [docs/43](docs/43_one-command-pc-rollout-u41.md), 증거 관문형 RSI 연구·PR 자동화 파이프라인(U42)은 [docs/43-U42](docs/43_evidence-to-pr-rsi-pipeline-u42.md)입니다. 진단부터 해결까지의 전 과정을 용어 설명과 함께 쉬운 말로 정리한 글은 [쉽게 읽는 UAOS 진단과 해결 전과정](docs/쉽게_읽는_UAOS_진단과_해결_전과정/00_먼저_읽기_이_폴더_사용법.md)입니다.
 
 실행 기록을 안전하게 개선에 쓰는 방법은 [증거 관문형 RSI](docs/31_evidence-gated-rsi-for-uaos.md)와 [사용량 장부](.coord/usage/README.md)에 있습니다. **현재 구현·복귀 검증은 완료**됐습니다. 설치·첫 실행·운영·문제 해결은 [최종 사용자 안내](docs/33_uaos-final-user-guide-and-completion-briefing.md)를 따르세요. 삭제·원격 push·배포·계정/권한 변경은 계속 사용자 승인 대상입니다.
 

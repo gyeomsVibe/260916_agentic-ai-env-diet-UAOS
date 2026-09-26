@@ -1,0 +1,47 @@
+{
+  "schema": "uaos-retention-classification-v1",
+  "items": [
+    {
+      "path": "docs/research/U42-R1-retention-sample.json",
+      "age_days": 1,
+      "bytes": 2,
+      "classification": "ARCHIVE_CANDIDATE"
+    },
+    {
+      "path": "docs/research/U42-R1-retention-sample.json",
+      "age_days": 2,
+      "bytes": 3,
+      "classification": "KEEP"
+    },
+    {
+      "path": "docs/research/U42-R1-retention-sample.json",
+      "age_days": 3,
+      "bytes": 4,
+      "classification": "PROTECT"
+    },
+    {
+      "path": "docs/research/U42-R1-retention-sample.json",
+      "age_days": 4,
+      "bytes": 5,
+      "classification": "ARCHIVE_CANDIDATE"
+    },
+    {
+      "path": "docs/research/U42-R1-retention-sample.json",
+      "age_days": 5,
+      "bytes": 6,
+      "classification": "PROTECT"
+    },
+    {
+      "path": "docs/research/U42-R1-retention-sample.json",
+      "age_days": 6,
+      "bytes": 7,
+      "classification": "ACTIVE_EXCLUDE"
+    }
+  ],
+  "counts": {
+    "ARCHIVE_CANDIDATE": 2,
+    "KEEP": 1,
+    "PROTECT": 2,
+    "ACTIVE_EXCLUDE": 1
+  }
+}

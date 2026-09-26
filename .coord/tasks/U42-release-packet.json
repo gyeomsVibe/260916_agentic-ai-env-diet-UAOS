@@ -1,0 +1,103 @@
+{
+  "schema": "uaos-rsi-release-v1",
+  "work_id": "U42",
+  "proposal_id": "evidence-to-pr",
+  "title": "근거에서 PR까지: 증거 관문형 RSI 연구·PR 자동화",
+  "summary": "검증된 근거만 버전된 PR 후보로 만드는 fail-closed 파이프라인과 결정적 변경 감시 스케줄러 구현.",
+  "author": "codex",
+  "verifier": "antigravity",
+  "judge": "user",
+  "change_type": "feature",
+  "base_branch": "main",
+  "branch": "codex/u42-rsi-research-pr",
+  "version_file": "uaos_everywhere/VERSION",
+  "update_documents": [
+    "README.md",
+    "uaos_everywhere/README.md"
+  ],
+  "changed_files": [
+    "v7_harness/rsi_release.py",
+    "v7_harness/cli.py",
+    "uaos_everywhere/uaos_global_rule_block.md"
+  ],
+  "sources": [
+    {
+      "kind": "official_docs",
+      "url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md",
+      "title": "official_docs",
+      "published_at": "2026-09-25",
+      "fetched_at": "2026-09-25T12:00:00Z",
+      "snapshot": "official_docs:https://learn.chatgpt.com/docs/agent-configuration/agents-md",
+      "snapshot_sha256": "685d9ddbc074bb6a13e894df984d219b0c31edde6651325ef860ea49709701af",
+      "apply": "Use one bounded property.",
+      "do_not_apply": "Do not treat this single source as a verdict."
+    },
+    {
+      "kind": "paper",
+      "url": "https://arxiv.org/abs/2609.26457",
+      "title": "paper",
+      "published_at": "2026-09-25",
+      "fetched_at": "2026-09-25T12:00:00Z",
+      "snapshot": "paper:https://arxiv.org/abs/2609.26457",
+      "snapshot_sha256": "6b7ceb7bdf72dfa6e462b99220aced66cd45e5e680838b22d963d699ca849663",
+      "apply": "Use one bounded property.",
+      "do_not_apply": "Do not treat this single source as a verdict."
+    },
+    {
+      "kind": "github",
+      "url": "https://github.com/akaszubski/autonomous-dev",
+      "title": "github",
+      "published_at": "2026-09-25",
+      "fetched_at": "2026-09-25T12:00:00Z",
+      "snapshot": "github:https://github.com/akaszubski/autonomous-dev",
+      "snapshot_sha256": "30a658330dec8e4c790acda671e5e17ce1457146122519763bdd85fdf3eda65b",
+      "apply": "Use one bounded property.",
+      "do_not_apply": "Do not treat this single source as a verdict."
+    },
+    {
+      "kind": "reddit",
+      "url": "https://www.reddit.com/r/developersIndia/comments/example",
+      "title": "reddit",
+      "published_at": "2026-09-25",
+      "fetched_at": "2026-09-25T12:00:00Z",
+      "snapshot": "reddit:https://www.reddit.com/r/developersIndia/comments/example",
+      "snapshot_sha256": "d7b464d4a65185ee1cd5a8fbb3ca42c7dfb82cc3191070fedc892d8836cbc51a",
+      "apply": "Use one bounded property.",
+      "do_not_apply": "Do not treat this single source as a verdict."
+    }
+  ],
+  "acceptance": {
+    "name": "acceptance",
+    "command": "python -m unittest tests.test_u42_rsi_release",
+    "exit_code": 0,
+    "passed": 16,
+    "fixed_sha256": "2f6334c4907455fbb2cdf121a6c6ae0d12c4af33b170fe37da6ac0cc87a70c27",
+    "runner": "codex"
+  },
+  "holdout": {
+    "name": "holdout",
+    "command": "python -m unittest tests.test_u36_evidence_gated_rsi",
+    "exit_code": 0,
+    "passed": 27,
+    "fixed_sha256": "4619af168d609d7e93ffb1ff29d95a97982921068bab4768c698b2ef58015f63",
+    "runner": "antigravity"
+  },
+  "red_team": {
+    "name": "red_team",
+    "command": "python -m unittest tests.test_u42_rsi_release.ApprovalAndShippingTests.test_shipping_is_dry_run_by_default_and_stops_on_dirty_unexpected_path",
+    "exit_code": 0,
+    "passed": 1,
+    "fixed_sha256": "2f6334c4907455fbb2cdf121a6c6ae0d12c4af33b170fe37da6ac0cc87a70c27",
+    "runner": "antigravity"
+  },
+  "usage": {
+    "remote_budget_tokens": 100000,
+    "actual_tokens": 5000,
+    "wall_seconds": 30,
+    "failures": []
+  },
+  "rollback": "Revert the release commit; never use rsi rollback to write policy.",
+  "risks": [
+    "External sources can drift after their snapshot."
+  ]
+}

@@ -742,6 +742,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_rsi_rollback.add_argument("--reason", required=True)
     p_rsi_rollback.set_defaults(func=cmd_rsi_rollback)
 
+    p_rsi_watch = p_rsi_subs.add_parser("watch", help="Deterministic change detection cycle (U42)")
+    p_rsi_watch.add_argument("--project", default=".")
+    p_rsi_watch.add_argument("--config", default=None, help="Watcher config JSON path")
+    p_rsi_watch.set_defaults(func=cmd_rsi_watch)
+
+    p_rsi_prepare = p_rsi_subs.add_parser("prepare", help="Prepare a release packet (dry-run by default, --apply to write)")
+    p_rsi_prepare.add_argument("--project", default=".")
+    p_rsi_prepare.add_argument("--packet", required=True, help="Release packet JSON file")
+    p_rsi_prepare.add_argument("--apply", action="store_true", help="Write version and update documents")
+    p_rsi_prepare.add_argument("--date", default="2026-09-25", help="Release date string")
+    p_rsi_prepare.set_defaults(func=cmd_rsi_prepare)
+
+    p_rsi_ship = p_rsi_subs.add_parser("ship", help="Ship an approved release (dry-run by default, --execute to push & pr)")
+    p_rsi_ship.add_argument("--project", default=".")
+    p_rsi_ship.add_argument("--packet", required=True, help="Release packet JSON file")
+    p_rsi_ship.add_argument("--approval", required=True, help="Approval receipt JSON file")
+    p_rsi_ship.add_argument("--execute", action="store_true", help="Execute git commit, push, and gh pr create")
+    p_rsi_ship.set_defaults(func=cmd_rsi_ship)
+
+    p_rsi_schedule = p_rsi_subs.add_parser("schedule", help="Manage Windows Task Scheduler for RSI watch")
+    p_rsi_schedule.add_argument("--project", default=".")
+    p_rsi_schedule.add_argument("--action", choices=["install", "status", "remove", "manual-now"], default="status")
+    p_rsi_schedule.add_argument("--apply", action="store_true", help="Apply schtasks command / run manual-now")
+    p_rsi_schedule.add_argument("--python-bin", default=None, help="Python executable path")
+    p_rsi_schedule.set_defaults(func=cmd_rsi_schedule)
+
+    p_rsi_retention = p_rsi_subs.add_parser("retention", help="Deletion-free retention plan (dry-run manifest, U42-R1)")
+    p_rsi_retention.add_argument("--project", default=".")
+    p_rsi_retention.set_defaults(func=cmd_rsi_retention)
+
     return parser
 
 
@@ -1292,6 +1322,85 @@ def cmd_rsi_rollback(args: argparse.Namespace) -> int:
         return 2
     _print_json({"ok": True, **result})
     return 0
+
+
+def cmd_rsi_watch(args: argparse.Namespace) -> int:
+    import time
+    from .rsi_release import run_scheduler_cycle
+
+    project = Path(args.project)
+    config_path = Path(args.config) if args.config else project / ".coord" / "rsi" / "watcher.json"
+    if not config_path.is_file():
+        config = {
+            "interval_seconds": 86400,
+            "timeout_seconds": 15,
+            "max_retries": 3,
+            "backoff_base_seconds": 60,
+            "lock_ttl_seconds": 3600,
+            "sources": [],
+        }
+    else:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+
+    def _record(event: dict[str, Any]) -> None:
+        # A quiet local scheduler still leaves one line when it recovers a dead/stale lock.
+        print(json.dumps({"scheduler_event": event}, ensure_ascii=False))
+
+    res = run_scheduler_cycle(project, config, now=time.time(), sleeper=time.sleep, record=_record)
+    _print_json(res)
+    return 0 if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") else 1
+
+
+def cmd_rsi_retention(args: argparse.Namespace) -> int:
+    import time
+
+    from .retention import apply_retention, default_policy, plan_retention
+
+    project = Path(args.project)
+    policy = default_policy()
+    plan = plan_retention(project, policy, now=time.time())
+    result = apply_retention(project, plan)
+    _print_json({"ok": True, **result})
+    return 0
+
+
+def cmd_rsi_prepare(args: argparse.Namespace) -> int:
+    from .rsi_release import ReleaseRefused, prepare_release
+
+    project = Path(args.project)
+    packet = json.loads(Path(args.packet).read_text(encoding="utf-8"))
+    try:
+        plan = prepare_release(project, packet, apply=args.apply, date=args.date)
+    except (ReleaseRefused, ValueError) as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 1
+    _print_json({"ok": True, **plan})
+    return 0
+
+
+def cmd_rsi_ship(args: argparse.Namespace) -> int:
+    from .rsi_release import ReleaseRefused, ship_release
+
+    project = Path(args.project)
+    packet = json.loads(Path(args.packet).read_text(encoding="utf-8"))
+    approval = json.loads(Path(args.approval).read_text(encoding="utf-8"))
+    try:
+        res = ship_release(project, packet, approval, execute=args.execute)
+    except (ReleaseRefused, ValueError) as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 1
+    _print_json({"ok": True, **res})
+    return 0
+
+
+def cmd_rsi_schedule(args: argparse.Namespace) -> int:
+    from .rsi_release import windows_schedule
+
+    project = Path(args.project)
+    python_bin = args.python_bin or sys.executable
+    res = windows_schedule(project, python_bin, action=args.action, apply=args.apply)
+    _print_json(res)
+    return 0 if res.get("status") == "DRY_RUN" or res.get("ok") else 1
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

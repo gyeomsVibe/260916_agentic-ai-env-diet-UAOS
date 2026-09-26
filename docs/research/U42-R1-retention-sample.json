@@ -1,0 +1,12 @@
+{
+  "schema": "uaos-retention-sample-v1",
+  "now": 2000000000,
+  "entries": [
+    {"path": ".coord/usage/old.jsonl", "age_days": 400, "bytes": 9000000, "status": "PASS", "expected": "ARCHIVE_CANDIDATE"},
+    {"path": ".coord/stream/recent.jsonl", "age_days": 2, "bytes": 1000, "status": "PASS", "expected": "KEEP"},
+    {"path": ".coord/pilot/runs/fail/summary.json", "age_days": 90, "bytes": 1200, "status": "FAILED_P1", "expected": "PROTECT"},
+    {"path": ".work/logs/old.log", "age_days": 365, "bytes": 3000000, "status": "PASS", "expected": "ARCHIVE_CANDIDATE"},
+    {"path": ".coord/approvals/U42.json", "age_days": 500, "bytes": 600, "status": "APPROVAL", "expected": "PROTECT"},
+    {"path": ".coord/pilot/runs/active/summary.json", "age_days": 90, "bytes": 1000, "status": "ACTIVE", "expected": "ACTIVE_EXCLUDE"}
+  ]
+}

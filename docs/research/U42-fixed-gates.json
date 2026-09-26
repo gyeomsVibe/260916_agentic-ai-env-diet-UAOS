@@ -1,0 +1,23 @@
+{
+  "schema": "uaos-fixed-gates-v1",
+  "work_id": "U42",
+  "frozen_at": "2026-09-25T22:58:00+09:00",
+  "test_file": "tests/test_u42_rsi_release.py",
+  "test_sha256": "2f6334c4907455fbb2cdf121a6c6ae0d12c4af33b170fe37da6ac0cc87a70c27",
+  "red_command": "python -m unittest tests.test_u42_rsi_release",
+  "red_exit_code": 1,
+  "red_reason": "ImportError: cannot import name 'rsi_release'",
+  "acceptance_groups": [
+    "source snapshot hash and proposal dedupe",
+    "acceptance holdout red-team and role separation",
+    "protected evaluator and ledger paths",
+    "usage budget and failure receipts",
+    "deterministic SemVer and top update section",
+    "dry-run prepare and approval-bound shipping",
+    "fetch before commit push PR and no merge",
+    "no-change ACK_ONLY and one actionable trigger",
+    "same-delta dedupe and metadata-only suppression",
+    "single-owner lock and bounded exponential backoff",
+    "Windows scheduler dry-run install status remove"
+  ]
+}

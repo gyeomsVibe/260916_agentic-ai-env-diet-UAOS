@@ -1,0 +1,22 @@
+{
+  "schema": "uaos-approval-v1",
+  "work_id": "U42",
+  "source_thread_id": "01a0d8c9-88c1-7ee0-8317-36181e604ca2",
+  "received_at": "2026-09-25T22:41:00+09:00",
+  "approval_text": "이 요청은 이 U42 범위의 전역 규칙 배포, 브랜치 생성, 커밋, 원격 푸시, PR 생성에 대한 명시적 승인이다. 삭제·결제·계정/자격증명 변경은 금지한다.",
+  "approval_sha256": "171548d13209e17d8a5ef29769c980d422fac35f4b3609f11181c60cfbd53b52",
+  "allowed_actions": [
+    "global_rule_deploy",
+    "branch_create",
+    "commit",
+    "push",
+    "pull_request_create"
+  ],
+  "forbidden_actions": [
+    "delete_data",
+    "spend_money",
+    "change_account",
+    "change_credentials",
+    "auto_merge"
+  ]
+}
