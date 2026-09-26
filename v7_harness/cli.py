@@ -1398,12 +1398,15 @@ def _print_json(data: Any) -> None:
 
 
 def cmd_rsi_report(args: argparse.Namespace) -> int:
-    from .rsi import analyze, load_policy, load_rows, open_trials, read_decisions
+    from .olla import USAGE_LOG
+    from .rsi import analyze, load_policy, load_rows, local_usage, open_trials, read_decisions
 
     project = Path(args.project)
     policy = load_policy(project)
     rows = load_rows(project)
     report = analyze(rows, policy)
+    # U47-D1: the local model's real work (fake 1/1 rows excluded), joined to the pilot ledger by work_id.
+    report["local"] = local_usage(USAGE_LOG, rows)
     report["policy"] = policy
     report["decisions"] = len(read_decisions(project))
     # An adopted change whose window is complete is due for its re-check: keep it or `rsi rollback`.
