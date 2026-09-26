@@ -169,6 +169,9 @@ def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
     잘못 옮긴 것이고, 2번 이상이면 어디를 바꿀지 모호하다. 둘 다 추측하지 않고 실패로 끝낸다.
     `task` 에 이름이 없는 함수·클래스를 지우거나 문법이 깨진 .py 는 거부한다(_guard).
     """
+    # U47-N2: the block patterns expect "\n"; a reply whose own lines end in "\r\n" matched nothing and was dropped in
+    # silence. Line endings of the written file are the target file's own (U47-N1), so normalising here loses nothing.
+    text = text.replace("\r\n", "\n")
     written: list[str] = []
     pending: dict[Path, tuple[str, str]] = {}
     for match in BLOCK_RE.finditer(text):
