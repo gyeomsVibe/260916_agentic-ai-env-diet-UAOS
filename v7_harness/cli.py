@@ -736,6 +736,10 @@ def build_parser() -> argparse.ArgumentParser:
                                        "p1 = one line only when a P1 wake waits and Codex is not ACTIVE (U38)")
     p_coord_presence.set_defaults(func=cmd_coord_presence)
 
+    p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
+    p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_route.set_defaults(func=cmd_coord_route)
+
     p_coord_init = p_coord_subs.add_parser("init")
     p_coord_init.add_argument("--project", default=".", help="Project to prepare for UAOS (default: .)")
     p_coord_init.set_defaults(func=cmd_coord_init)
@@ -1223,6 +1227,20 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coord_route(args: argparse.Namespace) -> int:
+    """Choose authority from provider states; percentages and reset windows are never token balances."""
+    from .budget_route import route_authority
+    from .coord.presence import read_all
+
+    presence = read_all(Path(args.project))
+    states = {tool: (presence.get(tool) or {}).get("state", "UNKNOWN")
+              for tool in ("codex", "claude", "antigravity")}
+    authority = route_authority(states["codex"], states["claude"], states["antigravity"])
+    print(json.dumps({"ok": not authority.startswith("BLOCKED_"), "authority": authority,
+                      "states": states, "quota_conversion": "FORBIDDEN"}, ensure_ascii=False))
+    return 0 if not authority.startswith("BLOCKED_") else 1
+
+
 SENTINEL_LOG_MAX_BYTES = 5 * 1024 * 1024
 
 UAOS_GITIGNORE_LINES = (
@@ -1246,12 +1264,16 @@ PLAN_TEMPLATE = """# 통합 실행 계획 (UAOS)
 도구 상태(시각이 지나면 UNKNOWN): `python -m v7_harness.cli coord presence`로 확인한다.
 """
 
-# U45 G2: the big picture is written once per project, before any delegation. Each delegation then gets its own small
-# contract manual in .coord/tasks/<work_id>-manual.md (pilot manual new), whose full text is the worker's input.
-PROJECT_MANUAL_TEMPLATE = """# Project manual (big picture)
+PROJECT_MANUAL_TEMPLATE = """# 프로젝트 총괄 매뉴얼 (UAOS Project Manual)
 
-Write this before the first delegation. Each delegation also gets a small contract manual:
-`.coord/tasks/<work_id>-manual.md` via `pilot manual new`, and its full text is the call input.
+- work_id: PROJECT
+- 프로젝트 목표: 프로젝트 전체 목적과 해결 과제를 정의한다.
+- 승인 경계: 데이터 삭제, push·배포, 결제, 권한 변경은 사용자 승인 필수.
+- 권한 상태기계: Codex ACTIVE → Claude ACTIVE → 둘 다 LIMITED/ABSENT일 때 Antigravity ACTIVE. UNKNOWN은 fail-closed.
+- 예산: 잔여율·리셋 창을 토큰으로 환산하지 않고, 호출별 token/USD/time 상한을 각각 집행한다.
+- 위임: 계약 파일을 먼저 발행·lint하고 그 내용 전체를 호출에 포함한다.
+- 단일 원장: `.coord/PLAN.md`; 작성자와 최종 판정자는 분리한다.
+- 보존: archive candidate와 복구 manifest만 만들고 실제 삭제는 별도 최신 승인을 요구한다.
 
 ## Goal
 One sentence: what is done when this project is done.
@@ -1266,12 +1288,13 @@ Actions that always need the user: deletion, push/deploy/publish, payment, accou
 The commands that decide done (tests, checks). A step without a gate is unmeasured.
 
 ## Workers
-Who does what: apply (0 tokens) when the code is known, Ollama for narrow mechanical work, Antigravity or
-`worker: claude` with a token and dollar cap for judgment work.
+Who does what: apply (0 tokens) when the code is known, Ollama for narrow mechanical work, Antigravity or `worker: claude` with a token and dollar cap for judgment work.
 
 ## Judge
 The tool that approves, never the author of the same change.
 """
+
+CONTRACT_MANUAL_TEMPLATE = "Generated per project by cmd_coord_init with a pinned .coord/PLAN.md hash."
 
 
 def cmd_coord_init(args: argparse.Namespace) -> int:
@@ -1294,6 +1317,23 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
         if not (project / folder).is_dir():
             (project / folder).mkdir(parents=True)
             created.append(folder + "/")
+    task_tpl = project / ".coord" / "tasks" / "contract_template.md"
+    if not task_tpl.is_file():
+        from .manual import new_manual
+
+        task_tpl.parent.mkdir(parents=True, exist_ok=True)
+        task_tpl.write_text(new_manual(
+            project,
+            work_id="T01_EXTRACT_READY_ID",
+            worker="local",
+            goal="Extract the first exact READY work item ID from `.coord/PLAN.md` into `.work/T01-result.txt`.",
+            inputs=[".coord/PLAN.md"],
+            allow=[".work/T01-result.txt"],
+            acceptance='python -c "from pathlib import Path; assert Path(\'.work/T01-result.txt\').is_file()"',
+            judge="codex",
+            timeout_s=300,
+        ), encoding="utf-8")
+        created.append(".coord/tasks/contract_template.md")
     gitignore = project / ".gitignore"
     existing = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.is_file() else []
     missing = [line for line in UAOS_GITIGNORE_LINES if line not in existing]
