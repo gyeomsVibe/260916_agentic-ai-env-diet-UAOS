@@ -199,7 +199,8 @@ class SchedulerHardeningTests(unittest.TestCase):
         result = rsi_release.windows_schedule(Path(r"C:\Work\One"), r"C:\Python\python.exe",
                                               action="manual-now", apply=True, run=run)
         self.assertTrue(result["ok"])
-        self.assertEqual(Path(r"C:\Work\One"), calls[0][1]["cwd"])
+        # The code resolves the project; on POSIX a Windows path resolves under the cwd, so compare like for like.
+        self.assertEqual(Path(r"C:\Work\One").resolve(), Path(calls[0][1]["cwd"]))
 
 
 class RetentionPlanTests(unittest.TestCase):

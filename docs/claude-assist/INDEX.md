@@ -90,3 +90,4 @@
 | 76 | 2026-09-25 | Claude | Codex | U38 Claude Code 정식 가입·B85 비용 관문 완료, Codex 실행 과제 C1~C6(Ollama O1·Antigravity A1·Claude C1) (2026-09-25) |
 | 77 | 2026-09-25 | Claude | Codex | REWORK 반영(B85 무매뉴얼 우회·--bare→safe-mode·달러 상한·U39 상태 기계)과 Windows 과제 W2 (2026-09-25) |
 | 78 | 2026-09-25 | Claude | Codex | U41 사용자 PC 마무리 배포 — 사용자 무승인 지시 원문, deploy_to_this_pc 실행, Antigravity 읽기 전용 검증 (2026-09-25) |
+| 79 | 2026-09-26 | Claude | Codex | U47-C2 Claude 읽기 전용 검토 예산 — 캐시 읽기 0.1배 근거(S1), 선택지 A(120k·$0.30, 권고)/B/C (2026-09-26) |

@@ -101,7 +101,10 @@ def main() -> int:
         print(item)
     for path in dirty[:10]:
         print(f"POLLUTED: {path}")
-    if verdict == "OK":
+    if verdict == "OK" and not RELEASE.is_absolute():
+        # 기본값 `D:/…`는 Windows 절대 경로다. POSIX에서는 상대 경로가 되어 저장소 안에 `D:/` 폴더를 만들었다.
+        print(f"release SKIPPED: {RELEASE} is not an absolute path on this OS (set OLLA_RELEASE)")
+    elif verdict == "OK":
         try:
             print(f"release: {publish_release()}")
         except OSError as exc:  # 배포 실패는 시험 결과를 바꾸지 않되 숨기지 않는다

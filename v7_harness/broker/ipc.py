@@ -10,6 +10,8 @@ import os
 import threading
 import re
 import secrets
+import socket
+import stat
 import tempfile
 import time
 from multiprocessing.connection import Client, Listener
@@ -35,6 +37,38 @@ DRAIN_FLOOR_S = 2.0
 def drain_budget(deadline: float, now: float) -> float:
     return max(DRAIN_FLOOR_S, deadline - now)
 
+
+
+def _reclaim_stale_unix_socket(address: str) -> bool:
+    """B75: a crashed POSIX broker leaves its socket file behind and the restart failed with EADDRINUSE.
+
+    Only a socket that refuses a connection is removed. A live broker answers the probe and keeps its
+    file (the bind then fails as before), and a path that is not a socket is never touched. Two brokers
+    racing here on one database cannot happen: the dispatcher takes the single-writer lock first.
+    Windows named pipes vanish with their process and never reach this function.
+    """
+    try:
+        if not stat.S_ISSOCK(os.lstat(address).st_mode):
+            return False
+    except FileNotFoundError:
+        return False
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(0.5)
+    try:
+        probe.connect(address)
+    except (ConnectionRefusedError, FileNotFoundError):
+        pass
+    except OSError:
+        return False  # busy or unknown: leave it and let the bind report the real state
+    else:
+        return False  # a live listener owns it
+    finally:
+        probe.close()
+    try:
+        os.unlink(address)
+    except FileNotFoundError:
+        pass
+    return True
 
 class BrokerProtocolError(RuntimeError):
     def __init__(self, error_code: str, *, retryable: bool = False) -> None:
@@ -187,6 +221,8 @@ class ForegroundBroker:
         try:
             # Authentication is inside the bounded frame. multiprocessing's
             # built-in challenge has no public deadline and can block accept().
+            if family == "AF_UNIX":
+                _reclaim_stale_unix_socket(self.address)
             self._listener = Listener(self.address, family=family, authkey=None)
             if ready is not None:
                 ready.set()

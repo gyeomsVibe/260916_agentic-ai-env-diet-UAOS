@@ -277,5 +277,41 @@ class NamedPipeTest(unittest.TestCase):
         self.assertEqual(counts["result"], {"deliveries": 1, "acked": 0, "succeeded": 0})
 
 
+
+@unittest.skipIf(os.name == "nt", "named pipes vanish with their process; B75 is POSIX only")
+class StaleSocketReclaimTest(unittest.TestCase):
+    """B75: only a socket that refuses connections is removed before the broker binds."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.temp.name, "b.sock")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_a_dead_socket_is_removed_and_a_live_one_is_kept(self):
+        import socket as _socket
+
+        from v7_harness.broker.ipc import _reclaim_stale_unix_socket
+
+        live = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        live.bind(self.path)
+        live.listen(1)
+        self.assertFalse(_reclaim_stale_unix_socket(self.path))
+        self.assertTrue(os.path.exists(self.path))
+        live.close()  # the file stays behind, exactly like a crashed broker
+        self.assertTrue(os.path.exists(self.path))
+        self.assertTrue(_reclaim_stale_unix_socket(self.path))
+        self.assertFalse(os.path.exists(self.path))
+        self.assertFalse(_reclaim_stale_unix_socket(self.path))  # nothing there: no-op
+
+    def test_a_path_that_is_not_a_socket_is_never_touched(self):
+        from v7_harness.broker.ipc import _reclaim_stale_unix_socket
+
+        Path(self.path).write_text("not a socket", encoding="utf-8")
+        self.assertFalse(_reclaim_stale_unix_socket(self.path))
+        self.assertEqual("not a socket", Path(self.path).read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
