@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -46,6 +47,24 @@ class DeliverResult:
     receipt: str = ""
 
 
+# U64-F (Claude acting, 2026-09-28): whole tokens only. Substrings woke a paid cold turn for "inbox 140 (P1 0)",
+# "STEP1" and "no ACTIONABLE_DELTA since last"; an ACK_ONLY marker always wins.
+_TOKEN = r"(?<![A-Z0-9_=]){}(?![A-Z0-9_])"
+_ACK_RE = re.compile(_TOKEN.format("ACK_ONLY"))
+_NEGATED_RE = re.compile(r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+ACTIONABLE_DELTA\b")
+_WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
+    "ACTIONABLE_DELTA", "VERDICT_REQUESTED=YES", "APPROVAL_REQUIRED", r"(?:PRIORITY|SEVERITY|P1)=(?:P1|YES|1)"))
+
+
+def _requires_wake(message: str) -> bool:
+    """Only a real delta may spend a paid turn; ACK_ONLY, negated or incidental tokens never do."""
+    upper = message.upper()
+    if _ACK_RE.search(upper):
+        return False
+    upper = _NEGATED_RE.sub(" ", upper)
+    return any(pattern.search(upper) for pattern in _WAKE_RES)
+
+
 # ── 비밀 검사 ────────────────────────────────────────────────
 def _check_secrets(text: str) -> None:
     for pat in SECRET_PATTERNS:
@@ -55,9 +74,9 @@ def _check_secrets(text: str) -> None:
 
 # ── Codex 전달 ───────────────────────────────────────────────
 def _project_mailbox(project: Path) -> Mailbox:
-    """U61: a project whose first letter is this one has no mailbox folder yet; create it instead of raising
-    MailboxRejected (the same crash `coord watch` had before U59)."""
-    root = Path(project) / ".coord" / "mailbox"
+    """Use one runtime mailbox per repository while preserving the caller's source worktree separately."""
+    from v7_harness.coord.hook_context import shared_desk
+    root = shared_desk(Path(project)) / ".coord" / "mailbox"
     root.mkdir(parents=True, exist_ok=True)
     return Mailbox(root)
 
@@ -407,6 +426,7 @@ def _deliver_unlocked(
     _check_secrets(message)
     project = Path(project).resolve()
     box = _project_mailbox(project)
+    desk = box.root.parent.parent
     # Stable id makes repeated calls with the same sender and bytes idempotent.
     digest = hashlib.sha256((actor + "\0" + message).encode("utf-8")).hexdigest()
     message_id = "relay_" + digest[:32]
@@ -418,27 +438,27 @@ def _deliver_unlocked(
     # 자동 판별
     if target is None:
         from v7_harness.coord.presence import read as read_presence
-        codex_state = read_presence(project, "codex")["state"]
+        codex_state = read_presence(desk, "codex")["state"]
         if codex_state == "ACTIVE":
             target = "codex"
         else:
             from v7_harness.coord.watch import watcher_live
 
-            claude_state = read_presence(project, "claude")["state"]
+            claude_state = read_presence(desk, "claude")["state"]
             # U61 (2026-09-28): the session heartbeat expires an hour after the last prompt, while `coord watch`
             # beats every 30 s. A live watcher proves a Claude session is waiting for mail even when the user has
             # been away, so the letter is queued for it instead of kept in the mailbox where nothing wakes.
-            if claude_state == "ACTIVE" or watcher_live(project, "claude"):
+            if claude_state == "ACTIVE" or watcher_live(desk, "claude"):
                 target = "claude"
             else:
                 # 둘 다 부재: 사서함에만 보존, 사용자 릴레이 요청 금지
                 return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
 
-    # U57-C (2026-09-28): an interactive Claude session running `coord watch` wakes on this inbox letter by itself.
-    # A cold `claude -p` would answer without the conversation and race the live session, so leave the letter queued.
+    # U64 (2026-09-28): coord watch only returns to the shell process that launched it; it cannot start a new AI turn.
+    # It may suppress an ACK-only/liveness delivery, but a real delta must use the direct Claude dispatch path.
     if target == "claude":
         from v7_harness.coord.watch import watcher_live
-        if watcher_live(project, "claude"):
+        if watcher_live(desk, "claude") and not _requires_wake(message):
             return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
 
@@ -475,7 +495,7 @@ def _deliver_unlocked(
         if target == "codex":
             if not thread:
                 from v7_harness.coord.notify import resolve_thread
-                thread = resolve_thread(project)
+                thread = resolve_thread(desk)
             result = (_deliver_to_codex(envelope, thread, runner=runner) if thread else
                       DeliverResult(False, "codex", "NO_THREAD", (), ""))
         elif target == "claude":
