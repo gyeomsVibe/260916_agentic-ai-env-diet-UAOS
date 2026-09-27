@@ -215,7 +215,11 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
         raise JudgeRefused("NOTHING_TO_JUDGE: no changed files or no staged copy")
     log = Path(summary.get("acceptance_log_path") or "")
     log = log if log.is_absolute() else source / log
-    tail = log.read_text(encoding="utf-8", errors="replace")[-ACCEPTANCE_TAIL_CHARS:] if log.is_file() else "(no log)"
+    # U52: head+tail with a marked cut; the paid judge must not take a cut log for the whole one.
+    from .output_gate import gate_output
+
+    tail = (gate_output(log.read_text(encoding="utf-8", errors="replace"), ACCEPTANCE_TAIL_CHARS).text
+            if log.is_file() else "(no log)")
 
     diff = bundle_diff(source, staging, changed)
     from .review import MAX_DIFF_CHARS
