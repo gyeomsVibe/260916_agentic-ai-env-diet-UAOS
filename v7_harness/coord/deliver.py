@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,7 +80,61 @@ def _deliver_to_codex(
 
 
 # ── Claude 전달 ──────────────────────────────────────────────
+@contextmanager
+def _claude_turn(project_dir: Path | None, timeout: int):
+    """Serialize messages through the one persisted Claude conversation, including across processes."""
+    if project_dir is None:
+        yield
+        return
+    lock = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.turn.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout + 5
+    fd = None
+    while time.monotonic() < deadline:
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except FileExistsError:
+            try:
+                stale = time.time() - lock.stat().st_mtime > timeout + 30
+            except OSError:
+                stale = False
+            if stale:
+                try:
+                    os.rename(lock, lock.with_name(f"{lock.name}.stale-{uuid.uuid4().hex}"))
+                except OSError:
+                    pass
+            time.sleep(CLAIM_SLEEP_S)
+    if fd is None:
+        raise TimeoutError("CLAUDE_TURN_TIMEOUT")
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(str(os.getpid()).encode("ascii"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
 def _deliver_to_claude(
+    message: str,
+    *,
+    project_dir: Path | None = None,
+    runner: Any = None,
+    timeout: int = 120,
+    allowed_tools: tuple[str, ...] = ("Read",),
+) -> DeliverResult:
+    try:
+        with _claude_turn(project_dir, timeout):
+            return _deliver_to_claude_locked(
+                message, project_dir=project_dir, runner=runner, timeout=timeout, allowed_tools=allowed_tools
+            )
+    except TimeoutError as exc:
+        return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
+
+
+def _deliver_to_claude_locked(
     message: str,
     *,
     project_dir: Path | None = None,
@@ -91,15 +146,43 @@ def _deliver_to_claude(
     if not claude_bin:
         return DeliverResult(False, "claude", "CLI_NOT_FOUND", (), "")
 
-    argv_list = [
-        claude_bin, "-p", message,
-        "--output-format", "json",
-    ]
+    session_path: Path | None = None
+    session_id = ""
+    resume = False
+    if project_dir:
+        session_path = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.json"
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            state = json.loads(session_path.read_text(encoding="utf-8"))
+            session_id = str(state.get("session_id") or "")
+            resume = bool(state.get("ready"))
+        except (FileNotFoundError, OSError, ValueError, AttributeError):
+            state = {}
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            initial = (json.dumps({"session_id": session_id, "ready": False}, sort_keys=True) + "\n").encode("utf-8")
+            try:
+                fd = os.open(str(session_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                state = json.loads(session_path.read_text(encoding="utf-8"))
+                session_id = str(state["session_id"])
+                resume = bool(state.get("ready"))
+            else:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(initial)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+
+    argv_list = [claude_bin, "-p", message, "--output-format", "json"]
+    if session_id:
+        argv_list.extend(["--resume" if resume else "--session-id", session_id])
     for tool in allowed_tools:
         argv_list.extend(["--allowedTools", tool])
 
     execute = runner or subprocess.run
-    kwargs: dict[str, Any] = dict(capture_output=True, text=True, timeout=timeout)
+    # Claude emits UTF-8. Windows' locale is CP949 on this host, so text=True without an explicit encoding loses the
+    # reply in subprocess' reader thread even when Claude exits successfully.
+    kwargs: dict[str, Any] = dict(capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if project_dir:
         kwargs["cwd"] = str(project_dir)
 
@@ -125,7 +208,26 @@ def _deliver_to_claude(
     except (json.JSONDecodeError, AttributeError):
         result_text = stdout[:500]
 
-    return DeliverResult(True, "claude", "SENT", tuple(argv_list), str(result_text)[:2000])
+    if session_path and session_id:
+        temporary = session_path.with_suffix(f".tmp-{uuid.uuid4().hex}")
+        temporary.write_text(json.dumps({"session_id": session_id, "ready": True}, sort_keys=True) + "\n",
+                             encoding="utf-8")
+        os.replace(temporary, session_path)
+    reply = str(result_text)[:2000]
+    try:
+        _check_secrets(reply)
+    except ValueError:
+        return DeliverResult(False, "claude", "DELIVERY_FAILED:SECRET_IN_RESPONSE", tuple(argv_list), "")
+    return DeliverResult(True, "claude", "SENT", tuple(argv_list), reply)
+
+
+def _receipt_output(path: Path) -> str:
+    """Return a previously persisted reply; malformed receipts fail closed to an empty reply."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(data.get("output") or "") if isinstance(data, dict) else ""
 
 
 def _write_receipt(path: Path, payload: dict[str, Any]) -> None:
@@ -275,7 +377,8 @@ def _deliver_unlocked(
 
     accepted = box.root / "delivery" / "accepted" / f"{message_id}.json"
     if accepted.is_file():
-        return DeliverResult(False, target, "DISPATCHED", (), "", message_id, digest, str(accepted))
+        return DeliverResult(False, target, "DISPATCHED", (), _receipt_output(accepted),
+                             message_id, digest, str(accepted))
 
     # A same-id caller publishing outside the guard may hold the inbox file open for a moment, and Windows then
     # refuses the claim's rename. Retry briefly instead of reporting IN_FLIGHT with nobody dispatching.
@@ -294,12 +397,14 @@ def _deliver_unlocked(
         # A contender may have checked before the first sender wrote this
         # receipt, then acquired the claim after the first sender returned it.
         if accepted.is_file():
-            return DeliverResult(False, target, "DISPATCHED", (), "", message_id, digest, str(accepted))
+            return DeliverResult(False, target, "DISPATCHED", (), _receipt_output(accepted),
+                                 message_id, digest, str(accepted))
         # The claim serializes competing dispatchers. The original is returned
         # to inbox after the attempt; only recipient coord ack may settle it.
-        envelope = (f"[UAOS relay id={message_id} digest={digest}]\n{message}\n"
-                    f"After processing, run coord ack --id {message_id} for this project. "
-                    "The sender keeps this message in the inbox until ACK.")
+        envelope = f"[UAOS relay id={message_id} digest={digest}]\n{message}"
+        if target != "claude":
+            envelope += (f"\nAfter processing, run coord ack --id {message_id} for this project. "
+                         "The sender keeps this message in the inbox until ACK.")
         if target == "codex":
             if not thread:
                 from v7_harness.coord.notify import resolve_thread
@@ -316,7 +421,8 @@ def _deliver_unlocked(
         attempts = box.root / "delivery" / "attempts"
         receipt = {"message_id": message_id, "digest": digest, "target": target,
                    "state": "DISPATCHED" if result.delivered else "FAILED", "reason": result.reason,
-                   "attempt": _dispatch_count(attempts, message_id) + 1, "timestamp_ns": time.time_ns()}
+                   "attempt": _dispatch_count(attempts, message_id) + 1, "timestamp_ns": time.time_ns(),
+                   "output": result.output}
         attempt_path = attempts / f"{message_id}_{uuid.uuid4().hex}.json"
         _write_receipt(attempt_path, receipt)
         if result.delivered:
