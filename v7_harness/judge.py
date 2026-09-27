@@ -21,7 +21,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-JUDGE_TOOL = {"agy": "antigravity"}
+JUDGE_TOOL = {"agy": "antigravity", "codex": "codex"}
+# U47-J6: `codex exec` answers headlessly (codex-cli 0.157.1, 2026-09-27), so Codex judges without a person relaying
+# a letter. The re-review of that day asked for this route first, agy second, and REVIEW (no approval) when neither
+# answers. Codex's desk state does not gate its own judgement; only agy acts *for* an away Codex.
+CODEX_BINARY = "codex"
 # U46-J1 live review used 71,299 tokens and the U46-J3 consult 89,263; 100,000 is the cap the consult proposed.
 DEFAULT_BUDGET = 100_000
 # U47-J5: R1c's 34 KB bundle cost 114,644 tokens against the fixed 100,000 cap (UNUSABLE); O3's 2-file bundle 35,126.
@@ -77,6 +81,35 @@ def _provider_message(stdout: bytes) -> str:
 
 class JudgeRefused(Exception):
     pass
+
+
+def build_codex_command(runs: Path, schema: Path, last: Path) -> list[str]:
+    """Read-only `codex exec` in the run folder; the prompt goes on stdin and the verdict JSON to `last`."""
+    return [CODEX_BINARY, "exec", "-s", "read-only", "--skip-git-repo-check", "-C", str(runs), "--json",
+            "--output-schema", str(schema), "-o", str(last), "-"]
+
+
+def parse_codex_events(stdout: bytes) -> tuple[dict[str, int], str | None, str]:
+    """Usage, thread id and the last error from `codex exec --json` lines. Cached input stays inside input_tokens."""
+    usage: dict[str, int] = {}
+    thread_id = None
+    error = ""
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind == "thread.started":
+            thread_id = event.get("thread_id")
+        elif kind == "turn.completed" and isinstance(event.get("usage"), dict):
+            usage = {key: int(value) for key, value in event["usage"].items() if isinstance(value, int)}
+        elif kind in ("error", "turn.failed"):
+            detail = event.get("message") or (event.get("error") or {})
+            error = str(detail.get("message") if isinstance(detail, dict) else detail)[:PROVIDER_MESSAGE_CHARS]
+    return usage, thread_id, error
 
 
 def codex_away(desk: dict[str, Any]) -> tuple[bool, str]:
@@ -137,9 +170,12 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     if budget is not None and budget <= 0:
         raise JudgeRefused("JUDGE_WITHOUT_BUDGET: pass --budget > 0 (a judgement is a paid call)")
     work_dir, source, manual_path = Path(work_dir).resolve(), Path(source).resolve(), Path(manual_path).resolve()
-    away, why = codex_away(desk if desk is not None else read_all(Path(project or source).resolve()))
-    if not away:
-        raise JudgeRefused(why)
+    if judge == "codex":
+        why = "codex judges its own contract (U47-J6)"
+    else:
+        away, why = codex_away(desk if desk is not None else read_all(Path(project or source).resolve()))
+        if not away:
+            raise JudgeRefused(why)
     manual_text = manual_path.read_text(encoding="utf-8")
     contract = parse_contract(manual_text) or {}
     if contract.get("work_id") != task_id:
@@ -171,19 +207,30 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     tail = log.read_text(encoding="utf-8", errors="replace")[-ACCEPTANCE_TAIL_CHARS:] if log.is_file() else "(no log)"
 
     diff = bundle_diff(source, staging, changed)
+    from .review import MAX_DIFF_CHARS
+
+    # U47-RW1d: the binding judge must see the complete diff. judge_prompt's display cap is not permission to hide
+    # a changed tail, so refuse before starting a paid judge call instead of presenting a truncated bundle.
+    if len(diff) > MAX_DIFF_CHARS:
+        raise JudgeRefused(f"DIFF_TOO_LARGE_FOR_BINDING_JUDGEMENT:{len(diff)}>{MAX_DIFF_CHARS}")
     if budget is None:
         budget = judge_budget(len(diff))  # U47-J5: the cap follows what the judge must read
-    request = runs / "judge_agy_request.md"
-    request.write_text(judge_prompt(task_id, bundle_id, manual_text, diff,
-                                    summary.get("acceptance_exit"), tail), encoding="utf-8")
+    request = runs / f"judge_{judge}_request.md"
+    prompt_text = judge_prompt(task_id, bundle_id, manual_text, diff, summary.get("acceptance_exit"), tail)
+    request.write_text(prompt_text, encoding="utf-8")
     schema = runs / "judge_verdict.schema.json"
-    schema.write_text(json.dumps(VERDICT_SCHEMA), encoding="utf-8")
-    short = (f"Read {request.name} in this folder: a judge request with the contract, the acceptance result and the "
-             "complete diff. Do not edit any file. Answer with the JSON verdict it asks for.")
-    argv = build_agy_command(AgyRequest(task_id=task_id, title="judge", prompt=short, workspace=runs,
-                                        isolation_mode="staging", print_timeout_s=timeout_s, schema_path=schema))
-    # Read-only planning (consult "Facts about agy"); skip_permissions stays False, so no bypass flag is added.
-    argv += ["--mode", "plan"]
+    # codex's --output-schema is strict: every object closes its properties.
+    schema.write_text(json.dumps({**VERDICT_SCHEMA, "additionalProperties": False}), encoding="utf-8")
+    last = runs / "judge_codex_last.json"
+    if judge == "codex":
+        argv = build_codex_command(runs, schema, last)
+    else:
+        short = (f"Read {request.name} in this folder: a judge request with the contract, the acceptance result and "
+                 "the complete diff. Do not edit any file. Answer with the JSON verdict it asks for.")
+        argv = build_agy_command(AgyRequest(task_id=task_id, title="judge", prompt=short, workspace=runs,
+                                            isolation_mode="staging", print_timeout_s=timeout_s, schema_path=schema))
+        # Read-only planning (consult "Facts about agy"); skip_permissions stays False, so no bypass flag is added.
+        argv += ["--mode", "plan"]
     started = time.monotonic()
     usage: dict[str, int] = {}
     conversation_id = None
@@ -194,26 +241,47 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     presence_marked = ""
     marked_at = None
     try:
-        done = runner(argv, cwd=str(runs), env={**os.environ, "UAOS_WORKER": "1"}, capture_output=True,
-                      timeout=timeout_s + 60)
-        stdout = done.stdout or b""
-        envelope_sha = hashlib.sha256(stdout).hexdigest()
-        outcome = parse_agy_result(stdout=stdout, stderr=done.stderr or b"", exit_code=done.returncode)
-        usage, conversation_id = dict(outcome.usage), outcome.conversation_id
-        if outcome.successful:
-            judgement = parse_judgement(json.loads(stdout.decode("utf-8", errors="replace")))
-            if judgement is None:
-                error = "JUDGE_UNPARSED: agy did not return the JSON verdict"
+        # UAOS_WORKER=1 keeps the judge's own session hooks from writing a heartbeat: a headless judge call is not
+        # the tool sitting at its desk (U47-J6 saw `codex exec` re-mark codex ACTIVE through its SessionStart hook).
+        env = {**os.environ, "UAOS_WORKER": "1"}
+        if judge == "codex":
+            last.unlink(missing_ok=True)
+            done = runner(argv, cwd=str(runs), env=env, input=prompt_text.encode("utf-8"), capture_output=True,
+                          timeout=timeout_s + 60)
+            stdout = done.stdout or b""
+            usage, conversation_id, provider_message = parse_codex_events(stdout)
+            answer = last.read_bytes() if last.is_file() else b""
+            envelope_sha = hashlib.sha256(answer).hexdigest() if answer else ""
+            # U47-RW1c: Codex's counterexample (2026-09-27) exited 1 but left a valid APPROVE file, which approved.
+            # A failed call is never a verdict, whatever it wrote.
+            if done.returncode != 0:
+                error = f"JUDGE_FAILED:codex exit {done.returncode}"
+            elif provider_message:
+                error = "JUDGE_FAILED:codex error event"
+            else:
+                judgement = parse_judgement({"response": answer.decode("utf-8", errors="replace")})
+                if judgement is None:
+                    error = "JUDGE_UNPARSED: codex did not return the JSON verdict"
         else:
-            error = f"JUDGE_FAILED:agy {outcome.error_class}"
-            provider_message = _provider_message(stdout)
-            if outcome.error_class == "QUOTA":
-                from .coord.presence import mark
+            done = runner(argv, cwd=str(runs), env=env, capture_output=True, timeout=timeout_s + 60)
+            stdout = done.stdout or b""
+            envelope_sha = hashlib.sha256(stdout).hexdigest()
+            outcome = parse_agy_result(stdout=stdout, stderr=done.stderr or b"", exit_code=done.returncode)
+            usage, conversation_id = dict(outcome.usage), outcome.conversation_id
+            if outcome.successful:
+                judgement = parse_judgement(json.loads(stdout.decode("utf-8", errors="replace")))
+                if judgement is None:
+                    error = "JUDGE_UNPARSED: agy did not return the JSON verdict"
+            else:
+                error = f"JUDGE_FAILED:agy {outcome.error_class}"
+                provider_message = _provider_message(stdout)
+                if outcome.error_class == "QUOTA":
+                    from .coord.presence import mark
 
-                marked_at = time.time()
-                mark(Path(project or source).resolve(), JUDGE_TOOL[judge], "LIMITED",
-                     ttl_s=quota_ttl(provider_message), now=marked_at)
-                presence_marked = "LIMITED"
+                    marked_at = time.time()
+                    mark(Path(project or source).resolve(), JUDGE_TOOL[judge], "LIMITED",
+                         ttl_s=quota_ttl(provider_message), now=marked_at, lease=True)  # U47-A1b
+                    presence_marked = "LIMITED"
     except subprocess.TimeoutExpired:
         error = f"JUDGE_TIMEOUT:{timeout_s}s"
     except (OSError, ValueError) as exc:
@@ -226,7 +294,8 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
         else:
             error = f"BUNDLE_MISMATCH: verdict names {judgement['bundle_id']!r}"
     record: dict[str, Any] = {
-        "task_id": task_id, "judge": JUDGE_TOOL[judge], "acting_for": "codex", "codex_state": why,
+        "task_id": task_id, "judge": JUDGE_TOOL[judge], "acting_for": None if judge == "codex" else "codex",
+        "codex_state": why,
         "author_worker": author, "bundle_id": bundle_id, "verdict": verdict,
         "evidence": (judgement or {}).get("evidence", []),
         "judge_conversation_id": conversation_id, "envelope_sha256": envelope_sha,
@@ -248,22 +317,23 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
         record["applied"] = done.returncode == 0 and "APPLIED" in tail_out
     out.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     record["judge_path"] = str(out)
-    _record_usage(source, task_id, usage, record, out)
+    _record_usage(source, task_id, usage, record, out, judge)
     return record
 
 
-def _record_usage(source: Path, task_id: str, usage: dict[str, int], record: dict, receipt: Path) -> None:
+def _record_usage(source: Path, task_id: str, usage: dict[str, int], record: dict, receipt: Path,
+                  judge: str = "agy") -> None:
     if not ((source / ".git").exists() or (source / ".coord" / "PLAN.md").is_file()):
         return
     from .coord.usage_ledger import record_usage
 
     entry = {
-        "schema": "uaos-usage-v2", "work_id": f"{task_id}-judge-agy", "actor": "antigravity", "model": "agy-default",
+        "schema": "uaos-usage-v2", "work_id": f"{task_id}-judge-{judge}", "actor": JUDGE_TOOL[judge], "model": f"{judge}-default",
         "kind": "judge", "collection_mode": "automatic",
         "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
         "wall_time_s": record["elapsed_s"], "outcome": record["verdict"], "receipt": str(receipt.resolve()),
-        "independent_verifier": "antigravity", "rsi_eligible": False, "exclusion_reason": "JUDGEMENT",
-        "worker": "agy", "cost_gate": record["cost_gate"],
+        "independent_verifier": JUDGE_TOOL[judge], "rsi_eligible": False, "exclusion_reason": "JUDGEMENT",
+        "worker": judge, "cost_gate": record["cost_gate"],
     }
     if "thinking_tokens" in usage:
         entry["thinking_tokens"] = usage["thinking_tokens"]

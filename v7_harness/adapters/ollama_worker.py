@@ -206,15 +206,32 @@ def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
         if rel not in written:
             written.append(rel)
 
+    endings = {target: _line_ending(rel, target) for target, (rel, _content) in pending.items()}
     for target, (rel, content) in pending.items():
         _guard(rel, target, content, task)
     # 모든 블록이 검증된 뒤에만 쓴다. 중간에 하나라도 실패하면 아무 파일도 바뀌지 않는다.
     for target, (_rel, content) in pending.items():
         # U47-N1: write_text turned every "\n" into "\r\n" on Windows, so an LF file came back CRLF and exact-byte
         # acceptance failed on a correct edit. Keep the line ending the file already uses; a new file gets LF.
-        eol = "\r\n" if target.is_file() and b"\r\n" in target.read_bytes() else "\n"
-        target.write_bytes(content.replace("\r\n", "\n").replace("\n", eol).encode("utf-8"))
+        target.write_bytes(content.replace("\r\n", "\n").replace("\n", endings[target]).encode("utf-8"))
     return written
+
+
+def _line_ending(rel: str, target: Path) -> str:
+    """The one line ending an existing file uses; LF for a new file or one without line breaks.
+
+    U47-N1d: Codex's re-review (2026-09-27) sent b"a\\r\\nb\\n" and got every line back as CRLF. One ending per file
+    cannot keep a mixed file's bytes, and guessing per line after a model rewrote it is not reliable, so a file that
+    mixes CRLF, LF or a bare CR is refused before anything is written.
+    """
+    if not target.is_file():
+        return "\n"
+    data = target.read_bytes()
+    crlf = data.count(b"\r\n")
+    kinds = [eol for eol, n in (("\r\n", crlf), ("\n", data.count(b"\n") - crlf), ("\r", data.count(b"\r") - crlf)) if n]
+    if len(kinds) > 1:
+        raise ValueError(f"MIXED_LINE_ENDINGS:{rel}")
+    return kinds[0] if kinds else "\n"
 
 
 def context_files(prompt: str, workspace: Path) -> list[str]:

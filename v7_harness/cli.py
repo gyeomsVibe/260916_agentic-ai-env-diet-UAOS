@@ -647,7 +647,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pilot_judge.add_argument("--source", default=".")
     p_pilot_judge.add_argument("--manual", required=True, help="The contract manual the bundle was built from")
     p_pilot_judge.add_argument("--project", default=None, help="Project whose presence desk says Codex is away")
-    p_pilot_judge.add_argument("--judge", default="agy", choices=["agy"])
+    p_pilot_judge.add_argument("--judge", default="agy", choices=["agy", "codex"])
     p_pilot_judge.add_argument("--budget", type=int, default=None,
                                help="Token cap; default scales with the diff: clamp(30,000 + 3 x diff chars, "
                                     "100,000, 250,000) (U47-J5: R1c's 34 KB bundle cost 114,644)")

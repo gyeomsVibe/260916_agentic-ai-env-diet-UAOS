@@ -55,7 +55,9 @@ class RunJudgeBudgetTest(unittest.TestCase):
         for folder in (self.runs, self.source, stage):
             folder.mkdir(parents=True)
         (self.source / "a.py").write_text("X = 1\n", encoding="utf-8")
-        (stage / "a.py").write_text("".join(f"X{i} = {i}\n" for i in range(6000)), encoding="utf-8")  # ~60 KB diff
+        (stage / "a.py").write_text("".join(f"X{i} = {i}\n" for i in range(4000)), encoding="utf-8")
+        # U47-RW1e: 4,000 lines = a 53,826-char diff (budget 191,478). RW1d refuses a diff over 60,000 chars,
+        # so the old 6,000-line fixture (81,826 chars) could no longer reach the budget formula.
         (self.runs / "worker").write_text("claude", encoding="utf-8")
         (self.runs / "summary.json").write_text(json.dumps(
             {"agy_workspace": str(stage), "changed_files": ["a.py"], "bundle_id": "b1",
