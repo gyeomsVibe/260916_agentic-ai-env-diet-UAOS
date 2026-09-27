@@ -112,7 +112,9 @@
 | U49-G1R | DONE-ACTING (Claude 대행 판정; 자기 계보 → Codex 재검토) | claude · apply | 가드 해제를 `<guard>.recover` 잠금 아래 소유자 비교·unlink로 직렬화(`RELEASE_WAIT_S=5.0`). bundle `38308558` APPLIED, 커밋 5d3badd. 주입 복구 테스트 0633dd1에서 2 fail·G1 코드에서 1 fail → 통과, 인수 35 OK — `tests/test_u49_guard_release_race.py` |
 | U53 | DONE-ACTING (Codex 작성 0633dd1, Claude 대행 APPROVE; Codex 재검토) | codex(구현) · claude(대행 판정) | 무중단 릴레이: `claude-session.turn.lock`, `--session-id/--resume` 세션 유지, 영수증에 응답 `output` 저장, 응답 속 비밀 fail-closed. 새 테스트 099c783에서 red 3 → 통과. PR #19 |
 | U53-F1 | DONE-ACTING (Claude 대행 판정; 자기 계보 → Codex 재검토) | claude · apply | U53 기반 8프로세스 관문 1/30에서 삭제 대기 턴 잠금 PermissionError로 작업자 사망 → 대기 후 재시도. bundle `7b219e29` APPLIED, 커밋 e608caa. 새 테스트 HEAD 1 error → 통과, 8프로세스 관문 3종×30 = 30/30, 전체 1005 OK skip 6(145 s)·compileall 0. PR #19에 포함 |
-| U54 | BACKLOG (U51→U50→U52 재작업 후) | claude(구현) · apply · 판정 codex | 도구 실행 방화벽 빈틈 감사; POLICY_DENIED는 fail-closed |
+| U54 | DONE-ACTING (1단계 감사만; Claude 대행 판정, Codex 재검토) | claude(초안: 신문기사 세션, 구현: 대행) · apply | 도구 실행 방화벽 빈틈 감사: `v7_harness/firewall_audit.py`(AST, 동작 변경 없음) → 생성 문서 `docs/50`. 15dd362 기준 35지점, GAP 0, CALLER_INPUT 21(사람 검토 대상), GUARDED 2, FIXED 8, PASS_THROUGH 4. bundle `c59108dd` APPLIED, 6 OK, 전체 1068 OK skip 6. 막기·바꾸기는 U54-S2(별도 계약, CALLER_INPUT 21건 검토 뒤) |
+| U54-S2 | BACKLOG | codex·user | docs/50 CALLER_INPUT 21건 중 모델 출력이 닿는 곳을 판정한 뒤 POLICY_DENIED fail-closed 관문 |
+| DOCS49-C | DONE-ACTING | claude(신문기사 세션 작성) · claude(대행 판정) | docs/49 ACCEPT-WITH-CORRECTIONS 반영(85%·98.7% 블로그 보고치·UNMEASURED, 가리기 근거는 SWE-agent 한정, 5.0 카드 대응표) + U54/U55 계약 초안. 커밋 bb3c0e4(원본 895466d) |
 | U55 | BACKLOG (U51→U50→U52 재작업 후) | codex·user | 토큰 래칫 보정은 유효 표본 10개로; 새 유료 측정은 별도 승인(U50/U52 S2 승인은 이전 불가) |
 | U56 | DESIGN (Claude 대행 작성, 사용자 지시 2026-09-27; Codex 재검토) | codex(요청 수신, 5%에서 정지) · claude(대행 작성) | Codex 절약모드: NORMAL → THRIFT(표시 잔량 20% 미만) → PACKET_READY → ACTING → RETURN_REVIEW. 잔량% → 토큰 환산 금지, 인계 패킷을 정지 전에 파일로 — `.coord/tasks/U56-thrift-mode-20260927.md` |
 | U51-R2 | DONE-ACTING (Claude 대행 판정; Codex 재검토) | claude(U51 세션 작성) · claude(대행 판정) | 신원 위조 가능 REJECT(relay_d8ff049c) 수리: score는 기록 안 함, qualify가 공급자를 직접 호출·전후 digest·호출별 영수증. 인수 16/16, 위조 score·가짜 --expect-digest 0파일. bundle `13b121b9` APPLIED, 커밋 8526bc5 |
@@ -120,7 +122,7 @@
 | U52-R2 | DONE-ACTING (Claude 대행 판정; Codex 재검토) | claude(U52 세션 작성) · claude(대행 판정) | 1000자 상한에 1096자 REJECT(relay_7da75610) 수리: 표식 포함 상한. 인수 246 OK, 상한 1..3000 전수 초과 0. bundle `8b41b0ee` APPLIED, 커밋 36d5ea2 |
 | U52-M | OPEN | codex·user | recent-k 관찰 마스킹 미구현; 도착 전까지 U50/U52 유료 S2 차단 유지 |
 | U57 | DONE-ACTING (Claude 작성·대행 판정 = 자기 계보 → Codex 재검토 우선) | claude · apply | 사용자 개입 오류 영구 제거(사용자 지시 2026-09-28): (A) Codex 로그의 usage_limit_exceeded → presence LIMITED(리셋 시각까지), (B) `coord watch` 0토큰 새 편지 대기, (C) 대화형 Claude가 watch 중이면 deliver가 `QUEUED_INTERACTIVE`(콜드 claude -p 금지), (D) `coord presence --lease`, 세션 안내문(훅 한 줄·CLAUDE/AGENTS·전역 블록). bundle `41332a8c` APPLIED, 새 테스트 HEAD import error → 19 OK, 병렬 관문 20/20, 전체 1062 OK skip 6 |
-| RT-0928 | DONE | claude | 런타임 0.3.0-2ea96b30670e 설치(52ce81d 트리) |
+| RT-0928 | DONE | claude | 런타임 0.3.0-2ea96b30670e 설치(52ce81d 트리) → PR #20 병합 뒤 0.3.0-05ee984dd166(15dd362 트리, v7_harness 94파일 바이트 일치) |
 | P09 | DONE (역사 기록) | Ollama 로컬 pilot(bundle 2e3927305284) | `src/util.py` `sort_csv_rows` + 테스트 3개. 같은 커밋에서 P08이 지운 `coord log`를 복구(카드 밖 작업) — `.coord/tasks/P09-csv-sort-manual.md` |
 - 2026-09-19 [R4] 중간 크기 과제(P06, P07) 추가 실측 완료 (DONE, n=3):
   - **P06 (통계 7함수)**: Codex 입력 **−80.2%** (94.0k → 18.6k), 비캐시 **−26.9%** (9.5k → 7.0k), 출력 **−98.3%**, 벽시계 **−9.9%** (91.8s → 82.7s), 품질 PASS (A 31, B 37, 숨은 인수 통과).
