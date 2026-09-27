@@ -63,13 +63,18 @@ Valid searches:
   worker refuses (`MIXED_LINE_ENDINGS`). Both files were backed up to `.work/backup_20260927/u47os_f1/` and normalized
   to LF, matching HEAD. `git diff` sha256 was identical before and after (`b450ecd3…`).
 - **Bundle.** Manual `.coord/tasks/U47-OLLA-SCOPE-F1-apply-manual.md`, bundle
-  `da4162331555a91f11be9cf63568f096a211c48b96c096a6a80be65ce5c5fe82`, DRY_RUN acceptance exit 0 (11 tests), stage
-  `.work/u47os_run4/stage/U47-OLLA-SCOPE-F1`.
+  `6a34e8fb8f3ce70c65be6951a0dd9738cdc68fe545fb7a44e53b4532bb9d8acd`, DRY_RUN acceptance exit 0 (12 tests), stage
+  `.work/u47os_run5/stage/U47-OLLA-SCOPE-F1`.
 - **Not applied.** The author is Claude, so the bundle waits for the independent codex judge. Apply command:
-  `python -m v7_harness.cli pilot run --task U47-OLLA-SCOPE-F1 --worker apply --source . --work-dir .work/u47os_run4 --manual .coord/tasks/U47-OLLA-SCOPE-F1-apply-manual.md --approve da4162331555a91f11be9cf63568f096a211c48b96c096a6a80be65ce5c5fe82 --coord-actor codex`
+  `python -m v7_harness.cli pilot run --task U47-OLLA-SCOPE-F1 --worker apply --source . --work-dir .work/u47os_run5 --manual .coord/tasks/U47-OLLA-SCOPE-F1-apply-manual.md --approve 6a34e8fb8f3ce70c65be6951a0dd9738cdc68fe545fb7a44e53b4532bb9d8acd --coord-actor codex`
 
 - **F2 in the same bundle (finding 2).** Loop variables renamed (`filename`, `child`) so `call_tool` never rebinds
   `name`. A new AST test lists every rebinding of `name` in `call_tool`: red on the F1 version (`[60]`), green after.
+
+- **F3 in the same bundle (finding 3).** A file that cannot be read is skipped by `local_search` instead of failing the
+  whole search. An `OSError` that carries a filename is reported as `local file error`; socket and URL errors stay
+  `local model unreachable`. New test: red on the F1+F2 version, green after.
+- **Full suite on a copy with the bundle overlaid** (`.work/u47os/full`): Ran 974, OK (skipped=6), 166 s, exit 0.
 
 ## Scope and cost
 

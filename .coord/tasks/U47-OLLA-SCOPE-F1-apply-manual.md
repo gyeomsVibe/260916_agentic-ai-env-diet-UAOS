@@ -1,7 +1,7 @@
 ```contract
 work_id: U47-OLLA-SCOPE-F1
 worker: apply
-goal: local_search prunes whole repository copies (.coord/pilot stages, .claude/worktrees) before the scan cap and candidate budget, and call_tool never rebinds the tool-name variable (finding 2).
+goal: local_search prunes whole repository copies (.coord/pilot stages, .claude/worktrees) before the scan cap and candidate budget, call_tool never rebinds the tool-name variable (finding 2), and a local file error is skipped in search and reported as a file error, not an unreachable model (finding 3).
 inputs:
 - v7_harness/olla_mcp.py sha256=319e7b1d518f7cfe02f0b60aabd4f9f064b078fcf1ee53783c7b7c4c73291179
 - tests/test_u17_olla_mcp.py sha256=7dd81df854ca03e5473d91faac863f5fb5ccfd767121e5ae747b7a6d2cab27a1
@@ -219,7 +219,10 @@ def call_tool(name: str, args: dict[str, Any]) -> dict:
                     path = Path(directory) / filename
                     if not path.is_file() or path.suffix not in olla.TEXT_SUFFIXES:
                         continue
-                    body = path.read_text(encoding="utf-8", errors="replace")[:2000]
+                    try:
+                        body = path.read_text(encoding="utf-8", errors="replace")[:2000]
+                    except OSError:  # one locked or vanished file must not fail the whole search
+                        continue
                     if body.strip():
                         candidates.append((path, body))
                     if len(candidates) >= SEARCH_CANDIDATE_LIMIT:
@@ -235,6 +238,10 @@ def call_tool(name: str, args: dict[str, Any]) -> dict:
             top = int(args.get("top") or 5)
             return _text("\n".join(f"{olla._cosine(query, v):.3f}  {p.as_posix()}" for (p, _), v in ranked[:top]))
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # File operations set OSError.filename; socket and URL errors (also OSError subclasses) leave it None. Without
+        # this split a PermissionError on a file was reported as "local model unreachable".
+        if not isinstance(exc, urllib.error.URLError) and getattr(exc, "filename", None):
+            return _text(f"local file error: {exc}", True)
         return _text(f"local model unreachable: {exc}", True)
     return _text(f"unknown tool: {name}", True)
 
@@ -462,6 +469,35 @@ class OllaMcpTests(unittest.TestCase):
                    + [item.optional_vars for item in getattr(node, "items", []) if item.optional_vars]
                    for sub in ast.walk(target) if isinstance(sub, ast.Name) and sub.id == "name"]
         self.assertEqual([], rebinds)
+
+    def test_file_errors_are_not_reported_as_an_unreachable_model(self) -> None:
+        base = Path(self.tmp.name) / "project"
+        base.mkdir()
+        locked, wanted = base / "locked.txt", base / "wanted.txt"
+        locked.write_text("locked needle", encoding="utf-8")
+        wanted.write_text("the semantic needle", encoding="utf-8")
+        real_read = Path.read_text
+
+        def read(path, *args, **kwargs):
+            if path.name == "locked.txt":
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_read(path, *args, **kwargs)
+
+        with mock.patch("v7_harness.adapters.gpu_priority.pilot_active", return_value=False), \
+             mock.patch.object(Path, "read_text", read), \
+             mock.patch.object(olla, "_embed", side_effect=lambda texts: [[1.0]] * len(texts)):
+            found = olla_mcp.call_tool("local_search", {"query": "needle", "folder": str(base)})
+        self.assertFalse(found["isError"], found["content"][0]["text"])  # the locked file is skipped, not fatal
+        self.assertIn(wanted.resolve().as_posix(), found["content"][0]["text"])
+        self.assertNotIn("locked.txt", found["content"][0]["text"])
+
+        with mock.patch.object(olla, "digest_file", side_effect=PermissionError(13, "Permission denied", str(wanted))):
+            denied = olla_mcp.call_tool("local_read_map", {"path": str(wanted)})
+        self.assertTrue(denied["isError"])
+        self.assertIn("local file error", denied["content"][0]["text"])
+        with mock.patch.object(olla, "digest_file", side_effect=ConnectionRefusedError(10061, "refused")):
+            down = olla_mcp.call_tool("local_read_map", {"path": str(wanted)})
+        self.assertIn("local model unreachable", down["content"][0]["text"])
 
     def test_unknown_method_and_server_down_are_reported_not_raised(self) -> None:
         self.assertEqual(-32601, olla_mcp.handle({"id": 9, "method": "nope"})["error"]["code"])
