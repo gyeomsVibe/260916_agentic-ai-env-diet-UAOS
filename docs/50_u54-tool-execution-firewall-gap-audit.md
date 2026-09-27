@@ -11,9 +11,9 @@
 
 ## 요약
 
-- 전체 지점: 35
+- 전체 지점: 36
 - GAP: 0
-- CALLER_INPUT: 21
+- CALLER_INPUT: 22
 - GUARDED: 2
 - FIXED: 8
 - PASS_THROUGH: 4
@@ -27,9 +27,10 @@
 | `v7_harness/calculator_gate.py:84` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
 | `v7_harness/calculator_gate.py:90` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/calculator_gate.py:99` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
-| `v7_harness/coord/deliver.py:71` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/deliver.py:195` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/deliver.py:86` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/deliver.py:210` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/notify.py:219` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/thrift.py:58` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/deploy_pc.py:219` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/deploy_pc.py:237` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/execution/agy_launcher.py:85` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
@@ -66,9 +67,10 @@
 
 - `v7_harness/adapters/claude_worker.py:170` DIRECT `subprocess.run`
 - `v7_harness/adapters/lane_worker.py:78` DIRECT `subprocess.run`
-- `v7_harness/coord/deliver.py:71` INDIRECT `execute -> subprocess.run`
-- `v7_harness/coord/deliver.py:195` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/deliver.py:86` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/deliver.py:210` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/notify.py:219` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/thrift.py:58` DIRECT `subprocess.run`
 - `v7_harness/deploy_pc.py:219` INDIRECT `runner -> subprocess.run`
 - `v7_harness/deploy_pc.py:237` INDIRECT `runner -> subprocess.run`
 - `v7_harness/execution/agy_launcher.py:85` DIRECT `subprocess.Popen`

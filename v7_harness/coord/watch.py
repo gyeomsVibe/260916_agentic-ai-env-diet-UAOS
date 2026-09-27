@@ -109,6 +109,10 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                 if message_id in seen:
                     continue
                 seen.add(message_id)
+                # U64-F: `coord deliver` already handed this letter to a Claude process (its accepted receipt
+                # exists); waking the interactive session too would pay a second turn for the same letter.
+                if (mailbox_dir / "delivery" / "accepted" / f"{message_id}.json").is_file():
+                    continue
                 if _addressed(payload, tools):
                     body = payload if isinstance(payload, dict) else {}
                     return {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),
