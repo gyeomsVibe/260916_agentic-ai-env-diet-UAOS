@@ -1,3 +1,26 @@
+```contract
+work_id: U61
+worker: apply
+goal: Auto-routed mail reaches a waiting Claude session whose heartbeat expired while its `coord watch` is still live, and `coord deliver` on a project with no mailbox folder creates it instead of crashing.
+inputs:
+- v7_harness/coord/deliver.py sha256=7f1385e60ae7fb20f92b3a0e45f0a1f46ada33f4102792844c6cadcb2672f644
+- v7_harness/coord/watch.py sha256=356cf0c0c50209848ed37b83dbe1fc71a1b010788b0670f9531e8cc53b037796
+allow:
+- v7_harness/coord/deliver.py
+- tests/test_u61_watcher_routes.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u61_watcher_routes tests.test_u57_desk_signals
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: U61, found by the acting conductor's red-team pass after PR #28 (user order 2026-09-28: critique again and proceed step by step). (1) The Claude heartbeat lasts 3600 s after the last prompt; `coord watch` beats every 30 s. An overnight wait expires the heartbeat, auto routing then returns mailbox_only/PUBLISHED and the live watcher never sees a letter addressed to claude. Fix: auto routing treats watcher_live(claude) like ACTIVE (codex ACTIVE still first). (2) The new test hit MailboxRejected: deliver raised on a project without .coord/mailbox (same crash watch had before U59). Fix: _project_mailbox() creates the folder at both call sites. Judge claude (ACTING); Codex re-reviews. Red on HEAD 3 errors, 20 OK with U57 tests.
+
+===FILE: v7_harness/coord/deliver.py===
 """coord deliver: 도구 간 직접 전달기 — 사용자 수동 릴레이 영구 제거.
 
 근본 결함(2026-09-27 사용자 지적):
@@ -550,3 +573,78 @@ def deliver(
                                  thread=thread, runner=runner)
     finally:
         _release_guard(guard, owner)
+===FILE: tests/test_u61_watcher_routes.py===
+"""U61 frozen acceptance (written by Claude): a live `coord watch` receives auto-routed mail after the heartbeat expires.
+
+The Claude session heartbeat lasts an hour after the last prompt; an overnight wait let it expire while the watcher
+kept beating, and an auto-routed letter then stayed in the mailbox (PUBLISHED, mailbox_only) with nothing to wake.
+"""
+
+import json
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from v7_harness.coord import presence
+from v7_harness.coord.deliver import deliver
+from v7_harness.coord.watch import watch_file
+
+
+class _NoColdStart:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, command, **_kw):
+        self.calls.append(command)
+        raise AssertionError("no cold session may start")
+
+
+class WatcherRoutesTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name)
+        (self.project / ".coord").mkdir()
+        (self.project / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _live_watch(self):
+        target = watch_file(self.project, "claude")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"tool": "claude", "token": "t", "expires_at": time.time() + 300}),
+                          encoding="utf-8")
+
+    def test_expired_heartbeat_with_live_watcher_is_queued_for_claude(self):
+        presence.mark(self.project, "claude", "ACTIVE", ttl_s=1, now=time.time() - 7200)
+        self._live_watch()
+        runner = _NoColdStart()
+        result = deliver(self.project, message="U61", actor="antigravity", runner=runner)
+        self.assertEqual(("claude", "QUEUED_INTERACTIVE"), (result.target, result.reason))
+        self.assertEqual([], runner.calls)
+
+    def test_no_heartbeat_and_no_watcher_stays_mailbox_only(self):
+        result = deliver(self.project, message="U61 none", actor="antigravity", runner=_NoColdStart())
+        self.assertEqual(("mailbox_only", "PUBLISHED"), (result.target, result.reason))
+
+    def test_active_codex_still_comes_first(self):
+        presence.mark(self.project, "codex", "ACTIVE")
+        self._live_watch()
+        calls = []
+
+        def runner(command, **_kw):
+            calls.append(command)
+            raise OSError("codex not installed here")
+
+        result = deliver(self.project, message="U61 codex", actor="antigravity", runner=runner, thread="t1")
+        self.assertEqual("codex", result.target)
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
