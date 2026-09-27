@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 from pathlib import Path
@@ -19,6 +20,15 @@ from typing import Any
 from v7_harness import olla
 
 PROTOCOL_VERSION = "2025-06-18"
+# Keep the existing embedding batch bound, and inspect at most ten filesystem entries per possible candidate. This
+# prevents skipped trees from turning one semantic search into an unbounded drive walk while retaining 300 documents.
+SEARCH_CANDIDATE_LIMIT = 300
+SEARCH_SCAN_LIMIT = SEARCH_CANDIDATE_LIMIT * 10
+# (parent, child) directory pairs that hold whole copies of the repository: pilot stages and agent worktrees. The main
+# project root has 25,025 entries, 23,132 under .coord/pilot; a root search filled 289 of its 300 candidates with those
+# duplicates (4 after pruning), and a copy walked before the real files could exhaust the scan cap. Pairs, not bare
+# names, so an ordinary `pilot/` source folder is still searched.
+SEARCH_COPY_TREES = {(".coord", "pilot"), (".claude", "worktrees")}
 
 TOOLS = [
     {
@@ -66,7 +76,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "folder": {"type": "string", "description": "Absolute folder path."},
+                "folder": {"type": "string", "description": "Existing absolute non-root folder path."},
                 "top": {"type": "integer"},
             },
             "required": ["query", "folder"],
@@ -100,9 +110,35 @@ def _needs_gpu(name: str, args: dict[str, Any]) -> bool:
     return name in ("local_draft", "local_search")
 
 
+def _search_folder(value: Any) -> tuple[Path | None, str | None]:
+    """Resolve one explicitly supplied project/subfolder without falling back to the server working directory."""
+    raw = value if isinstance(value, str) else ""
+    if not raw.strip():
+        return None, "local_search requires a non-empty absolute folder"
+    supplied = Path(raw).expanduser()
+    if not supplied.is_absolute():
+        return None, f"local_search folder must be absolute: {supplied}"
+    if supplied == Path(supplied.anchor):
+        return None, f"local_search refuses a filesystem root: {supplied}"
+    try:
+        base = supplied.resolve(strict=True)
+    except OSError:
+        return None, f"no such folder: {supplied}"
+    if base == Path(base.anchor):
+        return None, f"local_search refuses a filesystem root: {base}"
+    if not base.is_dir():
+        return None, f"no such folder: {base}"
+    return base, None
+
+
 def call_tool(name: str, args: dict[str, Any]) -> dict:
     from v7_harness.adapters.gpu_priority import BUSY_MESSAGE, pilot_active
 
+    search_base = None
+    if name == "local_search":
+        search_base, folder_error = _search_folder(args.get("folder"))
+        if folder_error:
+            return _text(folder_error, True)
     if _needs_gpu(name, args) and pilot_active():  # 파일럿 우선(B74). 캐시된 지도는 GPU 없이 바로 준다
         olla.log_usage("yield_to_pilot", via="mcp")
         return _text(BUSY_MESSAGE, True)
@@ -141,18 +177,32 @@ def call_tool(name: str, args: dict[str, Any]) -> dict:
             note = f"\n\n[check: references not found, likely invented: {', '.join(fake)}]" if fake else ""
             return _text(text.strip() + note)
         if name == "local_search":
-            base = Path(str(args.get("folder") or ""))
-            if not base.is_dir():
-                return _text(f"no such folder: {base}", True)
+            assert search_base is not None  # validated before the GPU gate, so invalid paths never traverse
+            base = search_base
             skip = {".git", ".work", "__pycache__", "node_modules", ".venv"}
             candidates = []
-            for path in base.rglob("*"):
-                if any(p in skip for p in path.parts) or not path.is_file() or path.suffix not in olla.TEXT_SUFFIXES:
-                    continue
-                body = path.read_text(encoding="utf-8", errors="replace")[:2000]
-                if body.strip():
-                    candidates.append((path, body))
-                if len(candidates) >= 300:
+            scanned = 0
+            for directory, names, files in os.walk(base):
+                # Prune before counting: a repository's .git/.work trees must never consume the useful-search budget.
+                parent = Path(directory).name
+                names[:] = [child for child in names if child not in skip and (parent, child) not in SEARCH_COPY_TREES]
+                for _ in (*names, *files):
+                    scanned += 1
+                    if scanned > SEARCH_SCAN_LIMIT:
+                        return _text(f"local_search scan limit reached: {SEARCH_SCAN_LIMIT} entries", True)
+                for filename in files:  # never rebind `name`: it is the tool name used by the fallback reply
+                    path = Path(directory) / filename
+                    if not path.is_file() or path.suffix not in olla.TEXT_SUFFIXES:
+                        continue
+                    try:
+                        body = path.read_text(encoding="utf-8", errors="replace")[:2000]
+                    except OSError:  # one locked or vanished file must not fail the whole search
+                        continue
+                    if body.strip():
+                        candidates.append((path, body))
+                    if len(candidates) >= SEARCH_CANDIDATE_LIMIT:
+                        break
+                if len(candidates) >= SEARCH_CANDIDATE_LIMIT:
                     break
             if not candidates:
                 return _text("no text files", True)
@@ -163,6 +213,10 @@ def call_tool(name: str, args: dict[str, Any]) -> dict:
             top = int(args.get("top") or 5)
             return _text("\n".join(f"{olla._cosine(query, v):.3f}  {p.as_posix()}" for (p, _), v in ranked[:top]))
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # File operations set OSError.filename; socket and URL errors (also OSError subclasses) leave it None. Without
+        # this split a PermissionError on a file was reported as "local model unreachable".
+        if not isinstance(exc, urllib.error.URLError) and getattr(exc, "filename", None):
+            return _text(f"local file error: {exc}", True)
         return _text(f"local model unreachable: {exc}", True)
     return _text(f"unknown tool: {name}", True)
 

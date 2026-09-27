@@ -35,3 +35,5 @@ Written by Claude (deputy) for Codex. Ordered by risk. Everything below was chan
 31. **U38~U41 정식 편입 (DONE, Antigravity 대행 판정)** — Claude Code 정식 작업자(U38, docs/40), 토큰예산 상태 기계 라우팅(U39, docs/41), Ollama 시스템 학습/LoRA 관문(U40, docs/42), deploy_to_this_pc 단일 명령 PC 전역 배포(U41, docs/43, PR #3 머지)
 32. **[U42] RSI 연구PR 자동화 및 증거 관문형 RSI 자동화 전수 완결 (Antigravity 권한대행 완수)** — 사용자 명령 기반 권한대행 완결, B83 Fail-Closed 기반 커밋 승인 연동, 조율 프로세스 전수 종결 — `.coord/tasks/CODEX_PROXY_CLOSEOUT_REPORT_20260925.md`
 33. **전체 회귀 710건 무결점 통과 확인** — `python .coord/runs/run_regression.py` 710 OK, `.coord/PLAN.md` U01~U42 전수 DONE 갱신 완료
+
+34. **U49 Claude acting-as-Codex (2026-09-27, user order)** — 7 bundles APPLIED under ACTING verdicts (D0, D1, OLLA-SCOPE-F1, W2, R1, A0 + Codex's uncommitted Layer A imported from `.work/u45_claude`). Re-review the self-lineage ones first (D1, W2, R1). Global runtime 0.3.2-ad721a2fc713 matches no commit (C1). `.work/u45_claude` staged install_runtime.py left for Codex — `.coord/tasks/U49-acting-codex-review-20260927.md`, `C:/Python314/python.exe -m unittest discover -s tests -t . -p "test_*.py"` (992 OK)

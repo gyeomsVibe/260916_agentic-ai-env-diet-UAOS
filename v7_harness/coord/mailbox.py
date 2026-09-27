@@ -39,6 +39,23 @@ def _is_symlink_or_reparse(path: Path) -> bool:
     return False
 
 MESSAGE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+# U48-D0 (Claude, 2026-09-27): on Windows a file another process is renaming or unlinking briefly raises
+# PermissionError (delete pending); 3 of 50 eight-process runs failed that way. 50 x 20 ms bounds a publish at
+# about 1 s, well above the few ms such a rename takes.
+PUBLISH_TRIES = 50
+SETTLE_SLEEP_S = 0.02
+
+
+def _read_settled(path: Path) -> bytes | None:
+    """Read a file that may be mid-rename by another process; None means it is gone (or never settled)."""
+    for _ in range(PUBLISH_TRIES):
+        try:
+            return path.read_bytes()
+        except FileNotFoundError:
+            return None
+        except PermissionError:
+            time.sleep(SETTLE_SLEEP_S)
+    return None
 
 
 def _fsync_dir(path: Path) -> None:
@@ -124,9 +141,8 @@ class Mailbox:
         # One message id carries one content wherever it is (inbox, claimed or ack). An acked id is not
         # delivered again, and a different content under a known id is refused instead of replacing it.
         for existing in (self.ack_dir / f"{message_id}.json", *self._claimed_files(message_id)):
-            try:
-                existing_bytes = existing.read_bytes()
-            except FileNotFoundError:
+            existing_bytes = _read_settled(existing)
+            if existing_bytes is None:
                 continue
             if existing_bytes == encoded:
                 return existing
@@ -141,15 +157,27 @@ class Mailbox:
                 f.write(encoded)
                 f.flush()
                 os.fsync(f.fileno())
-            try:
-                os.link(str(tmp_file), str(inbox_file))
-            except FileExistsError:
-                existing_bytes = inbox_file.read_bytes()
-                if existing_bytes == encoded:
+            for _ in range(PUBLISH_TRIES):
+                try:
+                    os.link(str(tmp_file), str(inbox_file))
+                except FileExistsError:
+                    existing_bytes = _read_settled(inbox_file)
+                    if existing_bytes is None:
+                        # Another process claimed the inbox link between the
+                        # hard-link collision and this read. Find that exact
+                        # claim or retry; never treat its move as data loss.
+                        for existing in (self.ack_dir / f"{message_id}.json", *self._claimed_files(message_id)):
+                            if _read_settled(existing) == encoded:
+                                return existing
+                        time.sleep(SETTLE_SLEEP_S)
+                        continue
+                    if existing_bytes == encoded:
+                        return inbox_file
+                    raise MailboxRejected(f"collision with different content for {message_id}")
+                else:
+                    _fsync_dir(self.inbox_dir)
                     return inbox_file
-                raise MailboxRejected(f"collision with different content for {message_id}")
-            _fsync_dir(self.inbox_dir)
-            return inbox_file
+            raise MailboxRejected(f"publish race did not settle for {message_id}")
         finally:
             try:
                 tmp_file.unlink(missing_ok=True)
