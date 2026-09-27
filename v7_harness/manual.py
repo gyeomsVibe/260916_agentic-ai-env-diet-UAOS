@@ -37,7 +37,8 @@ from typing import Any
 
 CONTRACT_RE = re.compile(r"^```contract[ \t]*\r?\n(?P<body>.*?)^```", re.M | re.S)
 REQUIRED = ("work_id", "worker", "goal", "inputs", "allow", "acceptance", "forbidden", "stop", "judge", "timeout_s")
-LIST_KEYS = ("inputs", "allow")
+# U50: context_allow is optional; without it a list key would swallow its "- " items into the previous list.
+LIST_KEYS = ("inputs", "allow", "context_allow")
 WORKERS = ("local", "apply", "agy", "lane", "cascade", "claude")
 # Workers that spend a paid account (B85). lane runs Claude Code on the local model, so it is not one of them.
 REMOTE_WORKERS = ("agy", "claude")
@@ -176,6 +177,10 @@ def lint(text: str, project: Path) -> ManualReport:
     for item in allow:
         if not _safe_relative(item) or item.strip() in ("*", "**"):
             report.errors.append(f"ALLOW_TOO_WIDE:{item}")
+    # U50: a wildcard list would admit the whole workspace and undo the gate.
+    for item in contract.get("context_allow", []):
+        if not _safe_relative(item) or item.strip().replace("\\", "/") in ("*", "**", "*/", "**/", "**/*"):
+            report.errors.append(f"CONTEXT_ALLOW_TOO_WIDE:{item}")
 
     try:
         timeout = int(contract.get("timeout_s", ""))
@@ -261,6 +266,7 @@ def new_manual(
     forbidden: str = "design changes; edits outside allow; editing or deleting tests; network; commit/push",
     stop: str = "two failures with the same cause; input hash mismatch; no output",
     instructions: str = "",
+    context_allow: list[str] | None = None,
 ) -> str:
     """A manual skeleton with the input hashes computed now, so the worker is pinned to these exact bytes."""
     project = Path(project)
@@ -274,6 +280,7 @@ def new_manual(
         *pinned,
         "allow:",
         *[f"- {item}" for item in allow],
+        *(["context_allow:", *[f"- {item}" for item in context_allow]] if context_allow is not None else []),
         f"acceptance: {acceptance}",
         f"forbidden: {forbidden}",
         f"stop: {stop}",

@@ -470,6 +470,7 @@ def cmd_pilot_manual_new(args: argparse.Namespace) -> int:
         remote_budget_tokens=args.remote_budget,
         remote_budget_usd=args.remote_budget_usd,
         instructions=instructions,
+        context_allow=args.context_allow,
     )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -614,6 +615,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_manual_new.add_argument("--goal", required=True)
     p_manual_new.add_argument("--input", action="append", default=[], help="Input file to pin by SHA-256 (repeatable)")
     p_manual_new.add_argument("--allow", action="append", default=[], required=True)
+    p_manual_new.add_argument("--context-allow", action="append", default=None,
+                              help="U50: extra file or pattern the worker may see (repeatable); omit to keep all")
     p_manual_new.add_argument("--accept", required=True, help="Acceptance command")
     p_manual_new.add_argument("--judge", required=True, choices=["codex", "claude", "antigravity", "user"])
     p_manual_new.add_argument("--timeout", type=int, default=180)
