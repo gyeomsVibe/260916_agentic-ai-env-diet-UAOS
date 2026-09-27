@@ -654,6 +654,27 @@ class OllaSqueezeTests(unittest.TestCase):
             self.assertEqual(3, olla.main(["squeeze", "--script", str(script)]))
         self.assertEqual("hi\n", out.getvalue().replace("\r", ""))
 
+    def test_windows_ignores_powershell_shell_and_falls_back_to_git_bash(self) -> None:
+        script = self.tmp / "s.sh"
+        script.write_text("echo hi\nexit 3\n", encoding="utf-8", newline="\n")
+        powershell = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        git_bash = r"C:\Program Files\Git\bin\bash.exe"
+
+        def run(command, **_kwargs):
+            return olla.subprocess.CompletedProcess(command, 3 if command[0] == git_bash else 0, b"hi\n")
+
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"SHELL": powershell}), \
+                mock.patch.object(olla.sys, "platform", "win32"), \
+                mock.patch.object(olla.shutil, "which", return_value=None), \
+                mock.patch.object(olla.os.path, "exists", side_effect=lambda path: path == git_bash), \
+                mock.patch.object(olla.subprocess, "run", side_effect=run) as runner, \
+                redirect_stdout(out):
+            self.assertEqual(3, olla.main(["squeeze", "--script", str(script)]))
+
+        self.assertEqual(git_bash, runner.call_args.args[0][0])
+        self.assertEqual("hi\n", out.getvalue().replace("\r", ""))
+
     def test_context_size_note_reads_the_last_usage(self) -> None:
         transcript = self.tmp / "t.jsonl"
         rows = [{"message": {"usage": {"input_tokens": 1, "cache_read_input_tokens": 1000}}},

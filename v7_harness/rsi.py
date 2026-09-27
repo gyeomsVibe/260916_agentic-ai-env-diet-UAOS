@@ -242,6 +242,57 @@ def analyze(rows: list[dict[str, Any]], policy: dict[str, Any] | None = None) ->
     }
 
 
+def local_usage(usage_log: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """U47-D1: the local model's `pilot_local` rows, without the fake ones, joined to the pilot ledger by work_id.
+
+    A row with exactly 1 input and 1 output token is a test leftover (docs/48 §2: 64 of 193). It stays in the file and
+    is counted as `fake_rows`, never summed. Unreadable lines are counted, not silently dropped.
+    """
+    path = Path(usage_log)
+    ledger_ids = {str(row["work_id"]) for row in rows if row.get("work_id")}
+    real: dict[str, Any] = {"runs": 0, "input_tokens": 0, "output_tokens": 0, "wall_s": 0.0,
+                            "by_status": Counter(), "by_model": Counter()}
+    out: dict[str, Any] = {"source": str(path), "present": path.is_file(), "rows": 0, "unreadable": 0,
+                           "fake_rows": 0, "joined": 0, "unjoined": 0, "no_work_id": 0}
+    lines = path.read_text(encoding="utf-8").splitlines() if out["present"] else []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            out["unreadable"] += 1
+            continue
+        if not isinstance(rec, dict) or rec.get("event") != "pilot_local":
+            continue
+        out["rows"] += 1
+        tokens_in, tokens_out = rec.get("input_tokens"), rec.get("output_tokens")
+        if tokens_in == 1 and tokens_out == 1:
+            out["fake_rows"] += 1
+            continue
+        real["runs"] += 1
+        real["input_tokens"] += tokens_in if isinstance(tokens_in, int) and not isinstance(tokens_in, bool) else 0
+        real["output_tokens"] += tokens_out if isinstance(tokens_out, int) and not isinstance(tokens_out, bool) else 0
+        elapsed = rec.get("elapsed_s")
+        real["wall_s"] += float(elapsed) if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) else 0.0
+        real["by_status"][str(rec.get("status") or "unknown")] += 1
+        real["by_model"][str(rec.get("model") or "unknown")] += 1
+        work_id = rec.get("work_id")
+        if not work_id:
+            out["no_work_id"] += 1
+        elif str(work_id) in ledger_ids:
+            out["joined"] += 1
+        else:
+            out["unjoined"] += 1
+    real["wall_s"] = round(real["wall_s"], 1)
+    real["by_status"] = dict(real["by_status"])
+    real["by_model"] = dict(real["by_model"])
+    out["real"] = real
+    out["note"] = ("Local tokens use no paid API tokens but are not zero total cost (local inference, wall time, "
+                   "electricity); account savings stay UNMEASURED.")
+    return out
+
+
 # ---------------------------------------------------------------- propose
 
 

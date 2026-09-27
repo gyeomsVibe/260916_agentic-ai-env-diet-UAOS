@@ -137,7 +137,7 @@ class JudgeTest(unittest.TestCase):
     def test_cli_parses_pilot_judge(self):
         from v7_harness.cli import build_parser
         args = build_parser().parse_args(["pilot", "judge", "--task", "T1", "--work-dir", "w", "--manual", "m"])
-        self.assertEqual(("agy", 100_000, True), (args.judge, args.budget, not args.no_apply))
+        self.assertEqual(("agy", None, True), (args.judge, args.budget, not args.no_apply))  # U47-J5: auto
 
 
 if __name__ == "__main__":
