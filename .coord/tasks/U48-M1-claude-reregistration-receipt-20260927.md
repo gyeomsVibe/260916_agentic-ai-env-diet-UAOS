@@ -36,3 +36,18 @@ This receipt is evidence for Codex's re-review, not a verdict.
 ## Rollback
 
 Copy the three backup files back to their original paths.
+
+## Canary attempt (Claude, 2026-09-27 17:30) — not a valid fresh-session canary
+
+- **Call.** This long-running Claude session called `mcp__olla__local_search` with folder
+  `…\.work\u45_claude\.work\u48w2\new` (2 `.py` files). The result was `no text files`.
+- **Why.** The tool schema this session sees still reads `"Absolute folder path."`, not the runtime's
+  `"Existing absolute non-root folder path."`. So its `olla` process was spawned before the 16:23 re-registration and
+  runs older code.
+- **Proof.** Running the runtime `0.3.2-ad721a2fc713` code directly on the same folder, with mocked embeddings, found
+  both files. The Claude registration still points at the runtime (`claude mcp get olla`: Connected).
+- **Canary status.** Still UNKNOWN. It needs a new session started after 16:23.
+- **Side counterexample for U47-OLLA-SCOPE.** The committed `rglob` version on main skips any path with a `.work`
+  part, including parts of the absolute base path. So it finds nothing inside `.work/...`, where all stage and
+  scratch folders live. The os.walk version (Codex's uncommitted edit, plus bundle 6a34e8fb) prunes only below the
+  base.
