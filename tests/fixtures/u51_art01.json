@@ -1,0 +1,43 @@
+{
+ "meta": {
+  "n": 1,
+  "file": "u51_synthetic_mailbox.md",
+  "sha256": "78b3f1160a24de71abbd4da148598f22b69a7613fc3fcc994fb5a35ce39492bf"
+ },
+ "data": {
+  "candidates": [
+   {
+    "name": "MAILBOX-R1 — model note",
+    "quote": "Rule 1 of the mailbox keeps step 1 idempotent and records its receipt."
+   },
+   {
+    "name": "MAILBOX-R2",
+    "quote": "Rule 2 of the mailbox keeps step 2 idempotent and records its receipt."
+   },
+   {
+    "name": "MAILBOX-R3 — model note",
+    "quote": "Rule 3 of the mailbox keeps step 3 idempotent and records its receipt."
+   },
+   {
+    "name": "MAILBOX-R4",
+    "quote": "Rule 4 of the mailbox keeps step 4 idempotent and records its receipt."
+   },
+   {
+    "name": "MAILBOX-R5 — model note",
+    "quote": "The mailbox makes step 5 safe to repeat."
+   },
+   {
+    "name": "MAILBOX-R6",
+    "quote": "The mailbox makes step 6 safe to repeat."
+   },
+   {
+    "name": "MAILBOX-R7 — model note",
+    "quote": "The mailbox makes step 7 safe to repeat."
+   },
+   {
+    "name": "MAILBOX-R8",
+    "quote": "The mailbox makes step 8 safe to repeat."
+   }
+  ]
+ }
+}
