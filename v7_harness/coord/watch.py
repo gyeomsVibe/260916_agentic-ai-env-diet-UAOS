@@ -90,7 +90,10 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     sleep = sleep or time.sleep  # looked up per call so tests and callers can patch time.sleep
     for tool in tools:
         watch_file(project, tool)  # validates the name before anything is written
-    box = Mailbox(Path(project) / ".coord" / "mailbox")
+    # U59: a project whose first letter has not arrived yet has no mailbox folder; waiting on it is still valid.
+    mailbox_dir = Path(project) / ".coord" / "mailbox"
+    mailbox_dir.mkdir(parents=True, exist_ok=True)
+    box = Mailbox(mailbox_dir)
     seen = set(box.list_inbox())
     token = uuid.uuid4().hex
     deadline = clock() + timeout_s
