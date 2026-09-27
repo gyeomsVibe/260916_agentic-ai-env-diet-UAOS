@@ -39,7 +39,22 @@ DEFAULT_EXCLUDES = {
     ".coord/usage",    # Runtime telemetry ledger and must not trigger SOURCE_DIVERGED
     ".coord/presence",  # Heartbeats written by other tools' session hooks while a pilot runs
     ".coord/codex_brief.md",
+    # U48-W1: `pilot run` defaults to `--work-dir .coord`, which puts the broker DB and its writer lock inside the
+    # source. The pilot holds that lock with a byte lock while it hashes the source, so reading it raised
+    # PermissionError. The staging copy also lives there and is written during the run. None of it is source.
+    # `.coord/runs` stays in: 177 tracked records live there, including the regression entry point; the pilot excludes
+    # only its own task's run folder (pilot.work_dir_excludes), which also covers a --work-dir elsewhere in the source.
+    ".coord/coord.sqlite3",
+    ".coord/coord.sqlite3-wal",
+    ".coord/coord.sqlite3-shm",
+    ".coord/coord.sqlite3-journal",
+    ".coord/coord.sqlite3.writer.lock",
+    ".coord/stage",
 }
+
+# A broker writer lock anywhere in the source (a --work-dir nested elsewhere) is held with a byte lock while the pilot
+# hashes the source, and holds no content.
+_WRITER_LOCK_SUFFIX = ".sqlite3.writer.lock"
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -125,7 +140,7 @@ def build_manifest(root_dir: Path, excludes: Sequence[str] | None = None) -> Det
         dirs[:] = surviving_dirs
 
         for f in files:
-            if f.endswith(".pyc"):
+            if f.endswith(".pyc") or f.endswith(_WRITER_LOCK_SUFFIX):
                 continue
             file_full = root_path / f
             if is_symlink_or_reparse(file_full):
