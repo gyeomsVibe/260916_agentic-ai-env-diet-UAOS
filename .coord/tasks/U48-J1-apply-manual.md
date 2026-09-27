@@ -1,3 +1,74 @@
+```contract
+work_id: U48-J1
+worker: apply
+goal: Make the judge receipt on disk carry the acceptance outcome and a usage-ledger reference, per Codex's binding J1 design.
+inputs:
+- v7_harness/judge.py sha256=84807a9e6ae2648b1a80fcb3455e4cec2ab3678bba9ac568dc7dc8bca9443c2b
+allow:
+- v7_harness/judge.py
+- tests/test_u48_j1_judge_receipt.py
+acceptance: C:/Python314/python.exe D:/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.work/u45_claude/.coord/tasks/U48-J1-fixed-gate.py
+forbidden: design changes; edits outside allow; editing or deleting other tests; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: codex
+timeout_s: 600
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Fixed acceptance gate SHA-256: `373b05e86dab55055cab537bc6140fe42ad6f07eeff22438f00f717a384700bd`. Design: `.coord/tasks/U48-J1-codex-judgement-20260927.md`.
+Red-first: the test below fails 3 (1 failure, 2 errors) against HEAD judge.py.
+
+===FILE: tests/test_u48_j1_judge_receipt.py===
+"""U48-J1 frozen acceptance (written by Claude from Codex's design judgement, 2026-09-27).
+
+Codex's binding J1 design: a binding approval needs a receipt holding the bundle digest, the judge's conversation id,
+parsed usage and the gate outcome, plus a ledger reference. The U46 receipt had no acceptance outcome and was written
+*before* the usage-ledger call, so a ledger failure never reached the file on disk.
+"""
+
+import json
+import unittest
+
+from tests.test_u46_pilot_judge import JudgeTest
+
+
+class JudgeReceiptTest(JudgeTest):
+    def test_receipt_on_disk_carries_digest_conversation_usage_gate_and_ledger(self):
+        (self.source / ".coord").mkdir()
+        (self.source / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+        record = self.judge(codex="ABSENT")
+        on_disk = json.loads((self.runs / "judge_agy.json").read_text(encoding="utf-8"))
+        for receipt in (record, on_disk):
+            self.assertEqual("b1", receipt["bundle_id"])
+            self.assertEqual("conv-9", receipt["judge_conversation_id"])
+            self.assertEqual({"input_tokens": 100, "output_tokens": 20}, receipt["usage"])
+            self.assertEqual("WITHIN", receipt["cost_gate"])
+            self.assertEqual(0, receipt["acceptance_exit"])
+            self.assertEqual("T1-judge-agy", receipt["usage_ledger"]["work_id"])
+            self.assertTrue(receipt["usage_ledger"]["path"].endswith("runs.jsonl"))
+        self.assertTrue(record["applied"])
+
+    def test_receipt_names_a_skipped_ledger_instead_of_omitting_it(self):
+        record = self.judge(codex="ABSENT")
+        on_disk = json.loads((self.runs / "judge_agy.json").read_text(encoding="utf-8"))
+        self.assertEqual("NOT_A_PROJECT", on_disk["usage_ledger"]["skipped"])
+        self.assertEqual(record["usage_ledger"], on_disk["usage_ledger"])
+
+    def test_over_budget_receipt_still_records_the_ledger_and_never_applies(self):
+        record = self.judge(codex="ABSENT", runner=self.runner(usage={"input_tokens": 9_000, "output_tokens": 5_000}))
+        self.assertEqual("UNUSABLE", record["verdict"])
+        self.assertFalse(record["applied"])
+        self.assertIn("usage_ledger", json.loads((self.runs / "judge_agy.json").read_text(encoding="utf-8")))
+        self.assertEqual([], self.approvals)
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+===FILE: v7_harness/judge.py===
 """U46-J4: while Codex is away, the acting conductor gets a binding Antigravity verdict through the agy CLI
 (`pilot judge`), so no person relays a mailbox letter. docs/47 §2-1; Antigravity's consult
 .coord/notes/U46_J3_agy_consult.md (option A); user decision 2026-09-26: "허용한다 — codex 부재중 권한대행 프로세스".
@@ -345,3 +416,8 @@ def _record_usage(source: Path, task_id: str, usage: dict[str, int], record: dic
         record["usage_ledger_error"] = f"{type(exc).__name__}: {exc}"[:200]
         return {"work_id": entry["work_id"], "error": record["usage_ledger_error"]}
     return {"work_id": entry["work_id"], "path": str(path)}
+===END===
+
+## Output
+
+- Reply with ===FILE / ===EDIT blocks only. No explanations. Do not claim success; the acceptance command decides.
