@@ -1,0 +1,43 @@
+{
+ "meta": {
+  "n": 3,
+  "file": "u51_synthetic_sentinel.md",
+  "sha256": "8b8a7cfeb211c1e528199f46fa2db908643175cf8628b945e8a2575f99ed3359"
+ },
+ "data": {
+  "candidates": [
+   {
+    "name": "SENTINEL-R1 — model note",
+    "quote": "Rule 1 of the sentinel keeps step 1 idempotent and records its receipt."
+   },
+   {
+    "name": "SENTINEL-R2",
+    "quote": "Rule 2 of the sentinel keeps step 2 idempotent and records its receipt."
+   },
+   {
+    "name": "SENTINEL-R3 — model note",
+    "quote": "Rule 3 of the sentinel keeps step 3 idempotent and records its receipt."
+   },
+   {
+    "name": "SENTINEL-R4",
+    "quote": "Rule 4 of the sentinel keeps step 4 idempotent and records its receipt."
+   },
+   {
+    "name": "SENTINEL-R5 — model note",
+    "quote": "The sentinel makes step 5 safe to repeat."
+   },
+   {
+    "name": "SENTINEL-R6",
+    "quote": "The sentinel makes step 6 safe to repeat."
+   },
+   {
+    "name": "SENTINEL-R7 — model note",
+    "quote": "The sentinel makes step 7 safe to repeat."
+   },
+   {
+    "name": "SENTINEL-R8",
+    "quote": "The sentinel makes step 8 safe to repeat."
+   }
+  ]
+ }
+}

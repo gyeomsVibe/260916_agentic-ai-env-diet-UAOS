@@ -41,10 +41,18 @@ def bundle_diff(source: Path, staging: Path, changed: list[str]) -> str:
     return "".join(parts)
 
 
-def review_prompt(task_id: str, manual_text: str, diff: str) -> str:
-    return (f"[{task_id}] Review this change against its contract. The diff below is the complete change: judge from it. "
+def review_prompt(task_id: str, manual_text: str, diff: str, spill_path: str | Path | None = None) -> str:
+    # U52: a plain diff[:MAX] cut the tail silently while the prompt called the diff complete; the gate keeps head and
+    # tail, marks the cut, and the prompt says the diff is partial so the reviewer reads the changed files instead.
+    from .output_gate import gate_output
+
+    gated = gate_output(diff, MAX_DIFF_CHARS, spill_path)
+    scope = ("The diff below is PARTIAL (see the U52 OUTPUT CUT marker): read the changed files in the current "
+             "directory for the omitted part before judging it. " if gated.truncated else
+             "The diff below is the complete change: judge from it. ")
+    return (f"[{task_id}] Review this change against its contract. {scope}"
             "Read a file only to confirm one specific counterexample, and answer within a few turns.\n\n"
-            f"## Contract\n{manual_text}\n\n## Diff\n```diff\n{diff[:MAX_DIFF_CHARS]}\n```\n\n"
+            f"## Contract\n{manual_text}\n\n## Diff\n```diff\n{gated.text}\n```\n\n"
             f"Reply with exactly one JSON object: {SCHEMA_HINT}")
 
 
@@ -103,7 +111,8 @@ def run_review(*, task_id: str, work_dir: Path, source: Path, manual_text: str, 
     if not changed or not staging.is_dir():
         raise ReviewRefused("NOTHING_TO_REVIEW: no changed files or no staged copy")
 
-    prompt = review_prompt(task_id, manual_text, bundle_diff(Path(source), staging, changed))
+    # The spill goes in the run folder, never in staging: a file written there would become part of the bundle.
+    prompt = review_prompt(task_id, manual_text, bundle_diff(Path(source), staging, changed), runs / "review.diff")
     started = time.monotonic()
     usage: dict[str, int] = {}
     error = ""

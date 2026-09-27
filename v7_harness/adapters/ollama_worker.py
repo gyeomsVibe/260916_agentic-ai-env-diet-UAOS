@@ -250,6 +250,20 @@ def context_files(prompt: str, workspace: Path) -> list[str]:
     return list(dict.fromkeys([*pinned, *named]))
 
 
+def admitted_context(prompt: str, workspace: Path) -> list[tuple[str, str]]:
+    """U50: context_files() filtered by the manual's context_allow; each denied file is recorded, never dropped
+    silently, so an acceptance failure can be traced to a missing file instead of widening the list blindly.
+    U50-R2: returns (name, text) read once through a checked handle; callers must not re-open the name (TOCTOU)."""
+    from v7_harness.context_admission import admit
+
+    admission = admit(prompt, context_files(prompt, workspace), workspace)
+    if admission.escaped:
+        _log("context_escape", work_id=contract_work_id(prompt), escaped=admission.escaped)
+    if admission.denied:
+        _log("context_denied", work_id=contract_work_id(prompt), denied=admission.denied)
+    return [(name, admission.snapshots[name]) for name in admission.admitted]
+
+
 def contract_work_id(prompt: str) -> str | None:
     """U47-O2: the work id from the manual's contract block, so a `pilot_local` row can be joined to its pilot run."""
     found = re.search(r"^work_id:\s*(\S+)\s*$", prompt, re.M)
@@ -292,15 +306,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if status == "SUCCESS" else 1
 
     # 과제가 가리키는 파일의 현재 내용을 함께 준다. 7B 모델은 파일을 스스로 찾지 못한다.
-    named = context_files(args.prompt, workspace)
-    context = "".join(
-        f"\n===CURRENT FILE: {name}===\n{(workspace / name).read_text(encoding='utf-8')}\n"
-        for name in named[:4]
-    )
+    # U50-R2: the admitted text itself travels on; re-reading workspace / name here let a swapped link leak.
+    named = admitted_context(args.prompt, workspace)[:4]
+    context = "".join(f"\n===CURRENT FILE: {name}===\n{text}\n" for name, text in named)
 
     # 대상 파일 중 하나라도 길면 찾아서 바꾸기 형식을 요구한다. 짧은 파일은 전체 재작성이
     # 더 안정적이다(벤치 6과제 모두 전체 재작성으로 통과).
-    longest = max((len((workspace / name).read_text(encoding="utf-8").splitlines()) for name in named[:4]), default=0)
+    longest = max((len(text.splitlines()) for _name, text in named), default=0)
     rules = EDIT_RULES if longest >= EDIT_MODE_MIN_LINES else FORMAT_RULES
     prompt = f"{rules}\n\nTASK:\n{args.prompt}\n\nCURRENT CONTENTS:{context}\n\nNow output the blocks."
     # 문맥을 넘는 프롬프트는 모델을 부르지 않고 바로 실패시킨다. 잘린 입력으로 600초를 기다린 뒤 실패하던 것을

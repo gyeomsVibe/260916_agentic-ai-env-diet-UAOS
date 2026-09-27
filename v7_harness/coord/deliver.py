@@ -421,7 +421,15 @@ def _deliver_unlocked(
                 # 둘 다 부재: 사서함에만 보존, 사용자 릴레이 요청 금지
                 return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
 
-    accepted = box.root / "delivery" / "accepted" / f"{message_id}.json"
+    # U57-C (2026-09-28): an interactive Claude session running `coord watch` wakes on this inbox letter by itself.
+    # A cold `claude -p` would answer without the conversation and race the live session, so leave the letter queued.
+    if target == "claude":
+        from v7_harness.coord.watch import watcher_live
+        if watcher_live(project, "claude"):
+            return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
+                                 str(box.inbox_dir / f"{message_id}.json"))
+
+    accepted =box.root / "delivery" / "accepted" / f"{message_id}.json"
     if accepted.is_file():
         return DeliverResult(False, target, "DISPATCHED", (), _receipt_output(accepted),
                              message_id, digest, str(accepted))

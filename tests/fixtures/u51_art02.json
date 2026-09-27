@@ -1,0 +1,43 @@
+{
+ "meta": {
+  "n": 2,
+  "file": "u51_synthetic_ledger.md",
+  "sha256": "3b1500f42aa61351c35174b7763196d53e4a1b3acb6eb2edf6afd652b46bad2a"
+ },
+ "data": {
+  "candidates": [
+   {
+    "name": "LEDGER-R1 — model note",
+    "quote": "Rule 1 of the ledger keeps step 1 idempotent and records its receipt."
+   },
+   {
+    "name": "LEDGER-R2",
+    "quote": "Rule 2 of the ledger keeps step 2 idempotent and records its receipt."
+   },
+   {
+    "name": "LEDGER-R3 — model note",
+    "quote": "Rule 3 of the ledger keeps step 3 idempotent and records its receipt."
+   },
+   {
+    "name": "LEDGER-R4",
+    "quote": "Rule 4 of the ledger keeps step 4 idempotent and records its receipt."
+   },
+   {
+    "name": "LEDGER-R5 — model note",
+    "quote": "The ledger makes step 5 safe to repeat."
+   },
+   {
+    "name": "LEDGER-R6",
+    "quote": "The ledger makes step 6 safe to repeat."
+   },
+   {
+    "name": "LEDGER-R7 — model note",
+    "quote": "The ledger makes step 7 safe to repeat."
+   },
+   {
+    "name": "LEDGER-R8",
+    "quote": "The ledger makes step 8 safe to repeat."
+   }
+  ]
+ }
+}

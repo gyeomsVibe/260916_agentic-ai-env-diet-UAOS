@@ -1,7 +1,7 @@
 ## UAOS — 모든 프로젝트에 공통인 협업 운영 체계(Unified Agent Operating System)
 
 - 명령 `uaos` = `{uaos}`. UAOS 저장소의 `v7_harness`를 어느 폴더에서든 실행한다. 아래 `uaos …`는 이 명령으로 바꿔 읽는다.
-- 프로젝트 안이나 그 상위 폴더에 `.coord/PLAN.md`가 있으면 UAOS 프로젝트다. 시작할 때 계획·소유자·`uaos coord inbox --project <루트>`를 확인한다.
+- 프로젝트 안이나 그 상위 폴더에 `.coord/PLAN.md`가 있으면 UAOS 프로젝트다. 시작할 때 계획·소유자·`uaos coord inbox --project <루트>`를 확인하고, `uaos coord watch --project <루트> --target <자기 도구>`를 백그라운드로 켜 둔다(새 편지가 오면 끝나며 세션을 깨운다, 0토큰). 도구끼리는 `uaos coord deliver`로 보내고 사용자에게 전달·복사·승인을 부탁하지 않는다.
 - UAOS 프로젝트가 아니고 둘 이상의 도구가 협업할 일이면 `uaos coord init --project <루트>`로 준비한다. 기존 파일은 덮어쓰지 않는다.
 - 프로젝트 시작 전에 `.coord/PROJECT_MANUAL.md`, 모든 위임 전에 해시 고정 계약 매뉴얼을 발행·lint하고 그 내용 전체를 호출에 전달한다. 유료 작업자는 token/USD/time 상한을 따로 두며 초과 결과는 승인하지 않는다.
 - 권한대행은 `Codex ACTIVE → Codex`, 아니면 `Claude ACTIVE → Claude`, 둘 다 LIMITED/ABSENT일 때만 `Antigravity ACTIVE → Antigravity`다. UNKNOWN은 대행 근거가 아니며 `uaos coord route`가 fail-closed 한다. 잔여율·리셋 창을 토큰으로 환산하지 않는다.

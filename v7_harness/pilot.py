@@ -741,7 +741,12 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                 accept_log_path = runs_dir / "acceptance.log"
                 try:
                     combined = accept_stdout + b"\n--- STDERR ---\n" + accept_stderr
-                    accept_log_path.write_bytes(combined[-4000:])
+                    # U52: head+tail with a marked cut instead of a silent tail; the full log sits beside it.
+                    from .output_gate import gate_output
+
+                    gated = gate_output(combined.decode("utf-8", "replace"), 4000,
+                                        runs_dir / "acceptance.full.log")
+                    accept_log_path.write_text(gated.text, encoding="utf-8", errors="replace")
                 except OSError:
                     pass
 
