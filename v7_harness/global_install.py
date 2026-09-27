@@ -209,7 +209,12 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
     if uninstall:
         changes.append(Change("launcher", launcher, "REMOVE" if launcher.exists() else "UNCHANGED"))
     else:
-        changes.append(_text_change("launcher", launcher, _read(launcher), launcher_text(repo)))
+        # U48-R1: once a versioned runtime is current, the launcher follows it; writing the repo launcher here would
+        # put the worktree back on sys.path and undo the install.
+        from v7_harness import runtime_install
+        wanted = (runtime_install.launcher_text() if runtime_install.read_current(home).get("version")
+                  else launcher_text(repo))
+        changes.append(_text_change("launcher", launcher, _read(launcher), wanted))
 
     tools = {
         "claude": home / ".claude",
