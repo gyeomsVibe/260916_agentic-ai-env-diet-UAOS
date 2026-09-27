@@ -1,3 +1,25 @@
+```contract
+work_id: U49-D2
+worker: apply
+goal: deliver._dispatch_count counts a receipt that is valid JSON but not an object instead of raising AttributeError.
+inputs:
+- v7_harness/coord/deliver.py sha256=d04dd2ddc707a820516c02b8a26e51883aab9cea7d3d58a9d6656d65727139a1
+allow:
+- v7_harness/coord/deliver.py
+- tests/test_u49_dispatch_count.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u49_dispatch_count tests.test_u48_deliver tests.test_u48_deliver_d1 tests.test_u49_mailbox_locked_ack tests.test_u15_coord_cli
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: PLAN U49-D2, REDTEAM P3 from .coord/tasks/U49-acting-codex-review-20260927.md (D1 _dispatch_count). New test red on HEAD (AttributeError on a JSON list or number receipt), 2 guard tests green. Acting judge Claude (user order 2026-09-27); Codex re-reviews.
+
+===FILE: v7_harness/coord/deliver.py===
 """coord deliver: 도구 간 직접 전달기 — 사용자 수동 릴레이 영구 제거.
 
 근본 결함(2026-09-27 사용자 지적):
@@ -375,3 +397,48 @@ def deliver(
                                  thread=thread, runner=runner)
     finally:
         guard.unlink(missing_ok=True)
+===FILE: tests/test_u49_dispatch_count.py===
+"""U49-D2: a dispatch receipt that is valid JSON but not an object is counted, not a crash (REDTEAM P3 on U48-D1)."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from v7_harness.coord.deliver import _dispatch_count
+
+
+class DispatchCountTests(unittest.TestCase):
+    def _write(self, attempts: Path, name: str, text: str) -> None:
+        (attempts / name).write_text(text, encoding="utf-8")
+
+    def test_non_object_json_is_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            attempts = Path(d)
+            self._write(attempts, "m1_a.json", "[1, 2]")
+            self._write(attempts, "m1_b.json", "7")
+            self.assertEqual(2, _dispatch_count(attempts, "m1"))
+
+    def test_guard_recovered_not_counted_and_other_states_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            attempts = Path(d)
+            self._write(attempts, "m1_a.json", json.dumps({"state": "GUARD_RECOVERED"}))
+            self._write(attempts, "m1_b.json", json.dumps({"state": "DISPATCHED"}))
+            self._write(attempts, "m1_c.json", "not json")
+            self._write(attempts, "m2_d.json", json.dumps({"state": "FAILED"}))
+            self.assertEqual(2, _dispatch_count(attempts, "m1"))
+
+    def test_missing_directory_counts_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(0, _dispatch_count(Path(d) / "absent", "m1"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
