@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -133,7 +134,118 @@ def read(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any
         return unknown
     if expires_at <= moment:
         return {**unknown, "observed_at": record.get("observed_at"), "expires_at": expires_at}
+    if tool == "codex" and record["state"] == "ACTIVE":
+        blocked = codex_quota_block(_epoch(record.get("observed_at")), moment)
+        if blocked is not None:
+            return {"tool": tool, "state": "LIMITED", "observed_at": record.get("observed_at"),
+                    "expires_at": blocked["until"], "evidence": blocked}
     return {"tool": tool, "state": record["state"], "observed_at": record.get("observed_at"), "expires_at": expires_at}
+
+
+# U57-A (2026-09-27): Codex's UserPromptSubmit hook writes ACTIVE before the turn runs, so a relay prompt that Codex
+# then refused with `usage_limit_exceeded` left the desk saying ACTIVE. `coord route` sent work to Codex and the
+# acting conductor had to write a LIMITED lease by hand. Codex records the refusal in its own rollout log; reading
+# the newest one turns that ACTIVE into LIMITED until the reset time Codex printed. Reading is local and costs no
+# tokens; a missing or unreadable log changes nothing.
+CODEX_SESSIONS_ENV = "UAOS_CODEX_SESSIONS"
+# The last task_complete line of a rollout sits in its final lines; 64 KiB held 20+ events in the 2026-09-27 logs.
+ROLLOUT_TAIL_BYTES = 64 * 1024
+# Newest three rollouts of the newest two day folders: sessions run in parallel and one may cross midnight.
+ROLLOUT_DAYS = 2
+ROLLOUT_FILES = 3
+# The hook stamps observed_at in whole seconds just before the turn starts; 5 s covers the truncation and the gap.
+HEARTBEAT_SLACK_S = 5
+# When the reset time cannot be parsed, assume one hour; the next refused prompt writes a fresh refusal anyway.
+UNPARSED_RESET_S = 3600
+
+
+def _epoch(stamp: Any) -> float | None:
+    if not isinstance(stamp, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _codex_rollouts() -> list[Path]:
+    root = Path(os.environ.get(CODEX_SESSIONS_ENV) or (Path.home() / ".codex" / "sessions"))
+    try:
+        days = sorted((d for d in root.glob("*/*/*") if d.is_dir()), key=lambda d: d.parts[-3:], reverse=True)
+        files = [f for d in days[:ROLLOUT_DAYS] for f in d.glob("rollout-*.jsonl") if f.is_file()]
+        return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)[:ROLLOUT_FILES]
+    except OSError:
+        return []
+
+
+def _last_task_complete(path: Path) -> dict[str, Any] | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - ROLLOUT_TAIL_BYTES))
+            lines = handle.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        if '"task_complete"' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # the first line of the tail may be cut
+        payload = event.get("payload") if isinstance(event, dict) else None
+        if isinstance(payload, dict) and payload.get("type") == "task_complete":
+            return payload
+    return None
+
+
+def _reset_at(message: str, completed_at: float) -> float:
+    match = re.search(r"try again at (\d{1,2}):(\d{2})\s*([AP]M)", message or "", re.IGNORECASE)
+    if not match:
+        return completed_at + UNPARSED_RESET_S
+    hour, minute, half = int(match.group(1)) % 12, int(match.group(2)), match.group(3).upper()
+    hour += 12 if half == "PM" else 0
+    # Codex prints the reset in the machine's local time; roll to the next day when that clock time has passed.
+    local = datetime.fromtimestamp(completed_at).astimezone()
+    reset = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if reset.timestamp() <= completed_at:
+        reset += timedelta(days=1)
+    return reset.timestamp()
+
+
+def codex_quota_block(observed_epoch: float | None, moment: float) -> dict[str, Any] | None:
+    """Return the refusal that outranks an ACTIVE heartbeat, or None.
+
+    It counts only when Codex refused a turn at or after the heartbeat (the heartbeat was for that failed prompt), the
+    refusal is not in the future of `moment`, and the reset time has not passed. A heartbeat written after the refusal
+    is a newer prompt and wins; if that prompt is refused too, its own refusal is newer again.
+    """
+    if observed_epoch is None:
+        return None
+    newest: dict[str, Any] | None = None
+    for path in _codex_rollouts():
+        payload = _last_task_complete(path)
+        completed = payload.get("completed_at") if payload else None
+        if isinstance(completed, (int, float)) and not isinstance(completed, bool) and (
+                newest is None or completed > newest["completed_at"]):
+            newest = {"completed_at": completed, "payload": payload, "rollout": str(path)}
+    if newest is None:
+        return None
+    error = newest["payload"].get("error")
+    if not isinstance(error, dict) or error.get("codex_error_info") != "usage_limit_exceeded":
+        return None
+    completed_at = float(newest["completed_at"])
+    if completed_at + HEARTBEAT_SLACK_S < observed_epoch or completed_at > moment:
+        return None
+    until = _reset_at(str(error.get("message", "")), completed_at)
+    if until <= moment:
+        return None
+    return {"source": "codex_rollout", "reason": "usage_limit_exceeded", "completed_at": completed_at,
+            "until": until, "rollout": newest["rollout"]}
 
 
 def read_all(project: Path, *, now: float | None = None) -> dict[str, dict[str, Any]]:

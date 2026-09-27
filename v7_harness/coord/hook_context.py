@@ -105,7 +105,10 @@ def brief_line(project: Path, presence: dict[str, Any]) -> str:
     reviews = sum(1 for item in inbox if item.startswith("rsi_review_"))
     desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
     return (f"UAOS project {Path(project).name}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
-            "Read .coord/PLAN.md; `coord inbox` lists what waits.")[:400]
+            "Read .coord/PLAN.md; `coord inbox` lists what waits. "
+            # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
+            "Keep `coord watch --target <you>` running in the background; send by `coord deliver`, never via the user."
+            )[:400]
 
 
 def p1_line(project: Path, presence: dict[str, Any]) -> str:

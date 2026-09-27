@@ -73,8 +73,10 @@ and records the difference.
    bundle digest (no `Calculator-Exempt` for deputy work).
 4. Judge other authors' bundles independently: re-run the acceptance, repeat the Windows parallel gates (≥ 20 runs;
    today they caught U53's 1/30 defect), and try one counterexample per boundary.
-5. Watch the mailbox with the local zero-token sentinel (a shell loop checking every 30 s). Wake only on messages
-   addressed to the deputy. Never poll with a paid model.
+5. Watch the mailbox with `coord watch --target claude` in the background (U57: zero tokens, exits 0 on a new letter,
+   3 on timeout; re-arm after each wake). Never poll with a paid model. Codex's own quota refusal now turns its
+   desk LIMITED by itself (U57-A); `coord presence --tool codex --state LIMITED --ttl <s> --lease` is the manual
+   fallback.
 6. Push feature branches and open PRs under the user's standing grant. When a merge is blocked by platform
    permission, report it; never work around it.
 7. Record every ACTING verdict in the PLAN and in `.coord/codex_return_checklist.md`.

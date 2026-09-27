@@ -745,7 +745,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_presence.add_argument("--say", choices=["json", "brief", "none", "empty-json", "p1"], default="json",
                                   help="What to print: presence JSON (default), one context line, nothing, {}, or "
                                        "p1 = one line only when a P1 wake waits and Codex is not ACTIVE (U38)")
+    # U57-D: the acting conductor had to write a Codex quota lease through Python (2026-09-27); the lease itself
+    # (U47-A1b) already existed in presence.mark, only the flag was missing.
+    p_coord_presence.add_argument("--lease", action="store_true", default=False,
+                                  help="Record a capability lease that ordinary heartbeats cannot overwrite until --ttl")
     p_coord_presence.set_defaults(func=cmd_coord_presence)
+
+    p_coord_watch = p_coord_subs.add_parser("watch", help="Block until a new mailbox letter for a target arrives")
+    p_coord_watch.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_watch.add_argument("--target", action="append", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_watch.add_argument("--timeout", type=float, default=4 * 3600.0, help="Seconds before exit 3 (default: 4 h)")
+    p_coord_watch.add_argument("--interval", type=float, default=30.0, help="Seconds between inbox scans (default: 30)")
+    p_coord_watch.set_defaults(func=cmd_coord_watch)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1088,7 +1099,8 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
 
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
                      target=args.target, thread=args.thread)
-    ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED")
+    # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
+    ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE")
     print(json.dumps({"ok": ok, "target": result.target, "reason": result.reason,
                       "message_id": result.message_id, "digest": result.digest,
                       "receipt": result.receipt, "output": result.output[:500]}, ensure_ascii=False))
@@ -1244,9 +1256,21 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
         if not (args.tool and args.state):
             print(json.dumps({"ok": False, "error": "--tool and --state go together"}, ensure_ascii=False))
             return 2
-        mark(project, args.tool, args.state, ttl_s=args.ttl)
+        mark(project, args.tool, args.state, ttl_s=args.ttl, lease=getattr(args, "lease", False))
     presence = read_all(project)
     _emit({"ok": True, "presence": presence, "conductor": conductor(presence)})
+    return 0
+
+
+def cmd_coord_watch(args: argparse.Namespace) -> int:
+    """U57-B: wait at zero model tokens until a new letter for one of the targets lands; exit 3 on timeout."""
+    from .coord.watch import watch
+
+    found = watch(Path(args.project), tuple(args.target), timeout_s=args.timeout, interval_s=args.interval)
+    if found is None:
+        print(json.dumps({"ok": False, "reason": "TIMEOUT", "targets": args.target}, ensure_ascii=False))
+        return 3
+    print(json.dumps({"ok": True, "reason": "NEW_LETTER", **found}, ensure_ascii=False))
     return 0
 
 
