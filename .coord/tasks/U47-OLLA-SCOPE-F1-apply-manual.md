@@ -1,7 +1,7 @@
 ```contract
 work_id: U47-OLLA-SCOPE-F1
 worker: apply
-goal: local_search prunes whole repository copies (.coord/pilot stages, .claude/worktrees) before the scan cap and candidate budget.
+goal: local_search prunes whole repository copies (.coord/pilot stages, .claude/worktrees) before the scan cap and candidate budget, and call_tool never rebinds the tool-name variable (finding 2).
 inputs:
 - v7_harness/olla_mcp.py sha256=319e7b1d518f7cfe02f0b60aabd4f9f064b078fcf1ee53783c7b7c4c73291179
 - tests/test_u17_olla_mcp.py sha256=7dd81df854ca03e5473d91faac863f5fb5ccfd767121e5ae747b7a6d2cab27a1
@@ -210,13 +210,13 @@ def call_tool(name: str, args: dict[str, Any]) -> dict:
             for directory, names, files in os.walk(base):
                 # Prune before counting: a repository's .git/.work trees must never consume the useful-search budget.
                 parent = Path(directory).name
-                names[:] = [name for name in names if name not in skip and (parent, name) not in SEARCH_COPY_TREES]
+                names[:] = [child for child in names if child not in skip and (parent, child) not in SEARCH_COPY_TREES]
                 for _ in (*names, *files):
                     scanned += 1
                     if scanned > SEARCH_SCAN_LIMIT:
                         return _text(f"local_search scan limit reached: {SEARCH_SCAN_LIMIT} entries", True)
-                for name in files:
-                    path = Path(directory) / name
+                for filename in files:  # never rebind `name`: it is the tool name used by the fallback reply
+                    path = Path(directory) / filename
                     if not path.is_file() or path.suffix not in olla.TEXT_SUFFIXES:
                         continue
                     body = path.read_text(encoding="utf-8", errors="replace")[:2000]
@@ -446,6 +446,22 @@ class OllaMcpTests(unittest.TestCase):
         lines = result["content"][0]["text"].splitlines()
         self.assertEqual(1, len(lines))
         self.assertTrue(lines[0].endswith(wanted.resolve().as_posix()))
+
+    def test_call_tool_never_rebinds_the_tool_name(self) -> None:
+        # A loop `for name in files` once shadowed the tool name, so a fall-through reply would name a file instead.
+        # Comprehension variables are excluded: they have their own scope in Python 3 and cannot rebind `name`.
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(olla_mcp.call_tool)))
+        rebinds = [sub.lineno for node in ast.walk(tree)
+                   if isinstance(node, (ast.For, ast.Assign, ast.AugAssign, ast.AnnAssign,
+                                        ast.With, ast.NamedExpr))
+                   for target in ([node.target] if hasattr(node, "target") else getattr(node, "targets", []))
+                   + [item.optional_vars for item in getattr(node, "items", []) if item.optional_vars]
+                   for sub in ast.walk(target) if isinstance(sub, ast.Name) and sub.id == "name"]
+        self.assertEqual([], rebinds)
 
     def test_unknown_method_and_server_down_are_reported_not_raised(self) -> None:
         self.assertEqual(-32601, olla_mcp.handle({"id": 9, "method": "nope"})["error"]["code"])
