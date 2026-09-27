@@ -85,6 +85,132 @@ class OllaMcpTests(unittest.TestCase):
             flagged = olla_mcp.call_tool("local_draft", {"instruction": "x"})
         self.assertIn("likely invented", flagged["content"][0]["text"])
 
+    def test_search_refuses_unsafe_folder_before_traversal_or_embedding(self) -> None:
+        file_path = Path(self.tmp.name) / "not-a-folder.txt"
+        file_path.write_text("x", encoding="utf-8")
+        root = Path(self.tmp.name).anchor
+        cases = (
+            {},
+            {"folder": ""},
+            {"folder": "   "},
+            {"folder": "relative/path"},
+            {"folder": root},
+            {"folder": str(Path(self.tmp.name) / "missing")},
+            {"folder": str(file_path)},
+        )
+        with mock.patch("v7_harness.adapters.gpu_priority.pilot_active", return_value=False), \
+             mock.patch.object(Path, "rglob") as rglob, mock.patch.object(olla, "_embed") as embed:
+            for args in cases:
+                with self.subTest(args=args):
+                    result = olla_mcp.call_tool("local_search", {"query": "needle", **args})
+                    self.assertTrue(result["isError"])
+        rglob.assert_not_called()
+        embed.assert_not_called()
+
+    def test_search_ranks_a_valid_absolute_subfolder_with_mocked_embeddings(self) -> None:
+        base = Path(self.tmp.name) / "project" / "docs"
+        base.mkdir(parents=True)
+        wanted = base / "wanted.txt"
+        wanted.write_text("the semantic needle", encoding="utf-8")
+        (base / "other.txt").write_text("unrelated", encoding="utf-8")
+
+        def vectors(texts):
+            return [[1.0, 0.0]] + [[1.0, 0.0] if "semantic needle" in text else [0.0, 1.0]
+                                   for text in texts[1:]]
+
+        with mock.patch("v7_harness.adapters.gpu_priority.pilot_active", return_value=False), \
+             mock.patch.object(olla, "_embed", side_effect=vectors):
+            result = olla_mcp.call_tool("local_search", {"query": "needle", "folder": str(base), "top": 1})
+        self.assertFalse(result["isError"])
+        self.assertTrue(result["content"][0]["text"].splitlines()[0].endswith(wanted.resolve().as_posix()))
+
+    def test_search_scan_cap_counts_irrelevant_paths(self) -> None:
+        base = Path(self.tmp.name) / "project"
+        base.mkdir()
+        irrelevant = []
+        for index in range(12):
+            path = base / f"skip-{index}.bin"
+            path.write_bytes(b"x")
+            irrelevant.append(path)
+        with mock.patch("v7_harness.adapters.gpu_priority.pilot_active", return_value=False), \
+             mock.patch("v7_harness.olla_mcp.os.walk", return_value=[(str(base),
+                                                                         [path.name for path in irrelevant], [])]), \
+             mock.patch.object(olla_mcp, "SEARCH_SCAN_LIMIT", 5, create=True), \
+             mock.patch.object(olla, "_embed") as embed:
+            result = olla_mcp.call_tool("local_search", {"query": "needle", "folder": str(base)})
+        self.assertTrue(result["isError"])
+        self.assertIn("scan limit reached", result["content"][0]["text"])
+        embed.assert_not_called()
+
+    def test_search_prunes_repository_copies_before_the_scan_cap(self) -> None:
+        # Main project root counterexample: 23,132 of 25,025 entries sat under .coord/pilot, so root search always failed.
+        base = Path(self.tmp.name) / "project"
+        for copy in (base / ".coord" / "pilot" / "stage", base / ".claude" / "worktrees" / "wt"):
+            copy.mkdir(parents=True)
+            for index in range(20):
+                (copy / f"dup-{index}.md").write_text("semantic needle copy", encoding="utf-8")
+        source = base / "src" / "pilot"  # an ordinary folder named pilot is still searched
+        source.mkdir(parents=True)
+        wanted = source / "wanted.md"
+        wanted.write_text("the semantic needle", encoding="utf-8")
+
+        def vectors(texts):
+            return [[1.0, 0.0]] + [[1.0, 0.0] if "needle" in text else [0.0, 1.0] for text in texts[1:]]
+
+        with mock.patch("v7_harness.adapters.gpu_priority.pilot_active", return_value=False), \
+             mock.patch.object(olla_mcp, "SEARCH_SCAN_LIMIT", 15), \
+             mock.patch.object(olla, "_embed", side_effect=vectors):
+            result = olla_mcp.call_tool("local_search", {"query": "needle", "folder": str(base), "top": 5})
+        self.assertFalse(result["isError"], result["content"][0]["text"])
+        lines = result["content"][0]["text"].splitlines()
+        self.assertEqual(1, len(lines))
+        self.assertTrue(lines[0].endswith(wanted.resolve().as_posix()))
+
+    def test_call_tool_never_rebinds_the_tool_name(self) -> None:
+        # A loop `for name in files` once shadowed the tool name, so a fall-through reply would name a file instead.
+        # Comprehension variables are excluded: they have their own scope in Python 3 and cannot rebind `name`.
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(olla_mcp.call_tool)))
+        rebinds = [sub.lineno for node in ast.walk(tree)
+                   if isinstance(node, (ast.For, ast.Assign, ast.AugAssign, ast.AnnAssign,
+                                        ast.With, ast.NamedExpr))
+                   for target in ([node.target] if hasattr(node, "target") else getattr(node, "targets", []))
+                   + [item.optional_vars for item in getattr(node, "items", []) if item.optional_vars]
+                   for sub in ast.walk(target) if isinstance(sub, ast.Name) and sub.id == "name"]
+        self.assertEqual([], rebinds)
+
+    def test_file_errors_are_not_reported_as_an_unreachable_model(self) -> None:
+        base = Path(self.tmp.name) / "project"
+        base.mkdir()
+        locked, wanted = base / "locked.txt", base / "wanted.txt"
+        locked.write_text("locked needle", encoding="utf-8")
+        wanted.write_text("the semantic needle", encoding="utf-8")
+        real_read = Path.read_text
+
+        def read(path, *args, **kwargs):
+            if path.name == "locked.txt":
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_read(path, *args, **kwargs)
+
+        with mock.patch("v7_harness.adapters.gpu_priority.pilot_active", return_value=False), \
+             mock.patch.object(Path, "read_text", read), \
+             mock.patch.object(olla, "_embed", side_effect=lambda texts: [[1.0]] * len(texts)):
+            found = olla_mcp.call_tool("local_search", {"query": "needle", "folder": str(base)})
+        self.assertFalse(found["isError"], found["content"][0]["text"])  # the locked file is skipped, not fatal
+        self.assertIn(wanted.resolve().as_posix(), found["content"][0]["text"])
+        self.assertNotIn("locked.txt", found["content"][0]["text"])
+
+        with mock.patch.object(olla, "digest_file", side_effect=PermissionError(13, "Permission denied", str(wanted))):
+            denied = olla_mcp.call_tool("local_read_map", {"path": str(wanted)})
+        self.assertTrue(denied["isError"])
+        self.assertIn("local file error", denied["content"][0]["text"])
+        with mock.patch.object(olla, "digest_file", side_effect=ConnectionRefusedError(10061, "refused")):
+            down = olla_mcp.call_tool("local_read_map", {"path": str(wanted)})
+        self.assertIn("local model unreachable", down["content"][0]["text"])
+
     def test_unknown_method_and_server_down_are_reported_not_raised(self) -> None:
         self.assertEqual(-32601, olla_mcp.handle({"id": 9, "method": "nope"})["error"]["code"])
         target = Path(self.tmp.name) / "f.py"

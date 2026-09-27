@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 VALID_STATES = frozenset({"ACTIVE", "LIMITED", "ABSENT", "UNKNOWN"})
+AWAY = frozenset({"LIMITED", "ABSENT"})
 
 
 def route_authority(codex: str, claude: str, antigravity: str) -> str:
@@ -10,17 +11,17 @@ def route_authority(codex: str, claude: str, antigravity: str) -> str:
 
     Provider percentages and reset windows are deliberately absent: they describe provider
     availability, not fungible token balances. Call-level token/USD/time caps remain contracts.
+
+    U49-R1 (2026-09-27): tools are consulted in succession order and an UNKNOWN blocks only when that
+    tool's state decides the answer. Before, codex ABSENT + claude ACTIVE + antigravity UNKNOWN was
+    BLOCKED_UNKNOWN although Antigravity may act only when both Codex and Claude are away.
     """
     states = tuple(str(value).upper() for value in (codex, claude, antigravity))
-    if any(value not in VALID_STATES for value in states) or "UNKNOWN" in states:
+    if any(value not in VALID_STATES for value in states):
         return "BLOCKED_UNKNOWN"
-    codex_state, claude_state, antigravity_state = states
-    if codex_state == "ACTIVE":
-        return "codex"
-    if codex_state in {"LIMITED", "ABSENT"} and claude_state == "ACTIVE":
-        return "claude"
-    if (codex_state in {"LIMITED", "ABSENT"} and claude_state in {"LIMITED", "ABSENT"}
-            and antigravity_state == "ACTIVE"):
-        return "antigravity"
+    for tool, state in zip(("codex", "claude", "antigravity"), states):
+        if state == "UNKNOWN":
+            return "BLOCKED_UNKNOWN"
+        if state == "ACTIVE":
+            return tool
     return "BLOCKED_NO_ACTIVE_AUTHORITY"
-

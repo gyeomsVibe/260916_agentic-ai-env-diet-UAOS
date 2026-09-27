@@ -1,3 +1,25 @@
+```contract
+work_id: U49-A0
+worker: apply
+goal: Add Codex's `coord deliver` CLI subcommand (uncommitted in .work/u45_claude since 2026-09-27) so the applied U48-D0/D1 deliver module has its command-line entry.
+inputs:
+- v7_harness/cli.py sha256=4625b0f40c261f7dcfa8c2facbb202bba9069f4f4254fcdb0098ff56f3f848e8
+- v7_harness/coord/deliver.py sha256=d04dd2ddc707a820516c02b8a26e51883aab9cea7d3d58a9d6656d65727139a1
+allow:
+- v7_harness/cli.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u15_coord_cli tests.test_u48_deliver tests.test_u48_deliver_d1
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 600
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: PLAN U49 (acting conductor). Imports verbatim the 20-line `coord deliver` parser + cmd_coord_deliver that Codex left uncommitted in .work/u45_claude (git diff of v7_harness/cli.py there). Author Codex; acting judge Claude.
+
+===FILE: v7_harness/cli.py===
 """
 Command-line interface for v7 harness.
 
@@ -1630,3 +1652,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
