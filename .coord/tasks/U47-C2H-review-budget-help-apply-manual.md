@@ -1,3 +1,26 @@
+```contract
+work_id: U47-C2H
+worker: apply
+goal: `pilot review --help` names the decided U47-C2 review budget (120000 tokens with cache reads, $0.25) while --budget stays required.
+inputs:
+- v7_harness/cli.py sha256=27255ce64b69767ee90cfa1026693d305bcb9588c596db4a509554818af741b9
+- docs/47_claude-code-uaos-intake-audit-and-no-approval-process.md sha256=bcd610c5b2098265515d1a80aa8e024c1f592e966d2bbb6270feec14eebb6a4f
+allow:
+- v7_harness/cli.py
+- tests/test_u47_c2_review_budget_help.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u47_c2_review_budget_help
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: U47-C2 follow-up from the acting conductor's red-team pass after PR #30 (user order 2026-09-28: critique again and proceed step by step). The decided value lived only in docs/47 and PLAN, so an operator could again pass 80,000, which failed as UNUSABLE (measured 94,953 counted tokens, $0.176). Help text only; no default is added, so every paid review still states its cap. Red on HEAD: 1 failure. Judge claude (ACTING); Codex re-reviews.
+
+===FILE: v7_harness/cli.py===
 """
 Command-line interface for v7 harness.
 
@@ -1676,3 +1699,53 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "deliver", "sentinel",
 
 if __name__ == "__main__":
     sys.exit(main())
+===FILE: tests/test_u47_c2_review_budget_help.py===
+"""U47-C2 frozen acceptance (written by Claude): `pilot review --help` names the decided budget and keeps it required.
+
+The decision (docs/47 §1-1 C2) lived only in the docs, so an operator could still pass the 80,000 that failed as
+UNUSABLE. The help is where the value is read at the moment of the paid call.
+"""
+
+import contextlib
+import io
+import unittest
+
+from v7_harness.cli import build_parser
+
+
+def _review_help() -> str:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), self_exit():
+        build_parser().parse_args(["pilot", "review", "--help"])
+    return " ".join(out.getvalue().split())
+
+
+@contextlib.contextmanager
+def self_exit():
+    try:
+        yield
+    except SystemExit:
+        pass
+
+
+class ReviewBudgetHelpTest(unittest.TestCase):
+    def test_help_names_the_decided_values(self):
+        text = _review_help()
+        self.assertIn("120000", text)
+        self.assertIn("0.25", text)
+        self.assertIn("cache reads included", text)
+
+    def test_budget_is_still_required(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+            build_parser().parse_args(["pilot", "review", "--task", "T", "--manual", "m.md"])
+        self.assertIn("--budget", err.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
