@@ -64,6 +64,7 @@ def dry_run_promotion(
     allowed_scopes: Sequence[str | Path] | None = None,
     current_owner: str | None = None,
     active_leases: Sequence[dict[str, Any]] | None = None,
+    excludes: Sequence[str] | None = None,
 ) -> PromotionDryRunResult:
     """
     Perform fail-closed promotion dry-run with ZERO mutation to source_dir.
@@ -84,7 +85,7 @@ def dry_run_promotion(
     assert_no_reparse_or_symlink(canonical_source)
 
     # 1. Take initial source snapshot to verify zero mutation at end
-    initial_manifest = build_manifest(canonical_source)
+    initial_manifest = build_manifest(canonical_source, excludes=excludes)
     initial_hash = initial_manifest.manifest_hash
 
     # Stale fence verification (explicit fence args)
@@ -255,7 +256,7 @@ def dry_run_promotion(
         )
 
     # 7. Post-check ZERO source mutation
-    post_manifest = build_manifest(canonical_source)
+    post_manifest = build_manifest(canonical_source, excludes=excludes)
     if post_manifest.manifest_hash != initial_hash:
         raise SourceMutationError("CRITICAL INVARIANT VIOLATION: Source was mutated during dry-run promotion!")
 
@@ -281,6 +282,7 @@ def apply_promotion(
     staging_dir: Path,
     patch_bundle: PatchBundle,
     approve_bundle_id: str,
+    excludes: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Apply approved promotion patch bundle from staging to source with fail-closed safety."""
     from v7_harness.isolation.errors import IsolationError
@@ -305,7 +307,7 @@ def apply_promotion(
     # 3. Patch bundle integrity and source divergence (TOCTOU)
     patch_bundle.verify_integrity()
 
-    current_source_manifest = build_manifest(canonical_source)
+    current_source_manifest = build_manifest(canonical_source, excludes=excludes)
     if current_source_manifest.manifest_hash != patch_bundle.base_manifest_hash:
         raise SourceDivergenceError(
             f"Source diverged from base manifest: base={patch_bundle.base_manifest_hash} "

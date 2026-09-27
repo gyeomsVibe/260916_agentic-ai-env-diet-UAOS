@@ -259,6 +259,23 @@ def _release_active_leases(core: BrokerCore, attempt_id: str) -> None:
         pass
 
 
+def work_dir_excludes(work_dir: Path, source_dir: Path, task_id: str) -> list[str]:
+    """Source-relative paths the pilot itself writes while it hashes the source (U48-W1).
+
+    With the default `--work-dir .coord` the broker DB, its held writer lock, this run's records and the staging copy
+    sit inside the source: hashing the lock raised PermissionError, and the run records written mid-run read as
+    SOURCE_DIVERGED. Only this task's run folder is excluded, because older run records under runs/ are tracked files.
+    """
+    try:
+        rel = Path(work_dir).resolve().relative_to(Path(source_dir).resolve()).as_posix()
+    except ValueError:
+        return []  # work dir outside the source: nothing of the pilot's is hashed
+    prefix = "" if rel == "." else rel + "/"
+    names = ("coord.sqlite3", "coord.sqlite3-wal", "coord.sqlite3-shm", "coord.sqlite3-journal",
+             "coord.sqlite3.writer.lock", "stage", f"runs/{task_id}")
+    return [prefix + name for name in names]
+
+
 def reconcile_pilot(*, work_dir: Path, task_id: str) -> dict[str, Any]:
     work_dir = Path(work_dir)
     db_path = work_dir / "coord.sqlite3"
@@ -350,6 +367,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
     runs_dir = work_dir / "runs" / config.task_id
     runs_dir.mkdir(parents=True, exist_ok=True)
     summary_path = runs_dir / "summary.json"
+    source_excludes = work_dir_excludes(work_dir, Path(config.source_dir), config.task_id)
 
     db_path = work_dir / "coord.sqlite3"
     core = BrokerCore(db_path)
@@ -492,12 +510,13 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                         return replayed_summary
 
                     staging_dir = work_dir / "stage" / config.task_id
-                    base_manifest = build_manifest(Path(config.source_dir))
+                    base_manifest = build_manifest(Path(config.source_dir), excludes=source_excludes)
                     replay_workspace = StagingWorkspace(
                         source_dir=Path(config.source_dir).resolve(),
                         staging_dir=staging_dir.resolve(),
                         base_manifest=base_manifest,
                         base_manifest_hash=base_manifest.manifest_hash,
+                        excludes=source_excludes,
                     )
                     replay_bundle = replay_workspace.create_patch_bundle()
                     if replay_bundle.bundle_id != saved_bundle_id:
@@ -508,6 +527,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                         staging_dir=staging_dir,
                         patch_bundle=replay_bundle,
                         approve_bundle_id=config.approve_bundle_id,
+                        excludes=source_excludes,
                     )
                     replayed_summary["promotion"] = "APPLIED"
                     try:
@@ -527,7 +547,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
 
         # 5. Staging directory setup
         staging_dir = work_dir / "stage" / config.task_id
-        workspace = NonGitStagingAdapter().create_staging(config.source_dir, staging_dir)
+        workspace = NonGitStagingAdapter(excludes=source_excludes).create_staging(config.source_dir, staging_dir)
 
         # 6. AgyRequest (isolation_mode derived exclusively from workspace object)
         request = AgyRequest(
@@ -659,7 +679,8 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
             dry_run_passed = False
             try:
                 dry = dry_run_promotion(
-                    source_dir=config.source_dir, patch_bundle=bundle, allowed_scopes=config.allowed_scopes
+                    source_dir=config.source_dir, patch_bundle=bundle, allowed_scopes=config.allowed_scopes,
+                    excludes=source_excludes,
                 )
                 promotion = "DRY_RUN_PASSED" if dry.success else dry.status
                 dry_run_passed = dry.success
@@ -776,6 +797,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                             staging_dir=workspace.staging_dir,
                             patch_bundle=bundle,
                             approve_bundle_id=config.approve_bundle_id,
+                            excludes=source_excludes,
                         )
                         promotion = "APPLIED"
                     except SourceDivergenceError:
