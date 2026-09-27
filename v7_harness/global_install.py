@@ -313,28 +313,36 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
     return changes
 
 
+# Codex 0.157.1 (`codex features list`, 2026-09-28) names the hooks feature `hooks` (stable) and no longer lists
+# `codex_hooks`, the name earlier installs wrote. Either spelling set to true counts; a new line uses the current name.
+CODEX_HOOKS_KEY = "hooks"
+_CODEX_HOOKS_KEYS = r"(?:hooks|codex_hooks)"
+
+
 def _codex_feature_change(path: Path, uninstall: bool, state: dict[str, Any]) -> Change:
     text = _read(path)
     current = text or ""
-    on = re.search(r"(?m)^\s*codex_hooks\s*=\s*true\s*$", current)
-    off = re.search(r"(?m)^\s*codex_hooks\s*=\s*false\s*$", current)
+    on = re.search(rf"(?m)^\s*{_CODEX_HOOKS_KEYS}\s*=\s*true\s*$", current)
+    off = re.search(rf"(?m)^\s*{_CODEX_HOOKS_KEYS}\s*=\s*false\s*$", current)
     if uninstall:
-        if on and state.get("codex_hooks_added"):
-            after = re.sub(r"(?m)^\s*codex_hooks\s*=\s*true\s*\n?", "", current)
-            return Change("codex hooks feature", path, "UPDATE", "removed the line this installer added", new_text=after,
-                          state={"codex_hooks_added": False})
+        # Installs before the rename recorded only codex_hooks_added, and they wrote codex_hooks.
+        added = state.get("codex_hooks_line", "codex_hooks")
+        line = re.compile(rf"(?m)^\s*{re.escape(added)}\s*=\s*true\s*\n?")
+        if state.get("codex_hooks_added") and line.search(current):
+            return Change("codex hooks feature", path, "UPDATE", "removed the line this installer added",
+                          new_text=line.sub("", current, count=1), state={"codex_hooks_added": False})
         return Change("codex hooks feature", path, "UNCHANGED", "left as it was before the install")
     if on:
-        return Change("codex hooks feature", path, "UNCHANGED", "codex_hooks already true")
+        return Change("codex hooks feature", path, "UNCHANGED", "hooks feature already true")
     if off:
-        return Change("codex hooks feature", path, "SKIP", "codex_hooks = false was set by hand; left as is")
+        return Change("codex hooks feature", path, "SKIP", "hooks feature = false was set by hand; left as is")
     if re.search(r"(?m)^\[features\]\s*$", current):
-        after = re.sub(r"(?m)^\[features\]\s*$", "[features]\ncodex_hooks = true", current, count=1)
+        after = re.sub(r"(?m)^\[features\]\s*$", f"[features]\n{CODEX_HOOKS_KEY} = true", current, count=1)
     else:
-        after = current.rstrip("\n") + ("\n\n" if current.strip() else "") + "[features]\ncodex_hooks = true\n"
+        after = current.rstrip("\n") + ("\n\n" if current.strip() else "") + f"[features]\n{CODEX_HOOKS_KEY} = true\n"
     return Change("codex hooks feature", path, "UPDATE" if text is not None else "CREATE",
                   "Codex runs hooks.json only with this flag (Codex may ask to trust the new hook)", new_text=after,
-                  state={"codex_hooks_added": True})
+                  state={"codex_hooks_added": True, "codex_hooks_line": CODEX_HOOKS_KEY})
 
 
 def apply(changes: list[Change], home: Path, backup_root: Path | None = None) -> dict[str, Any]:

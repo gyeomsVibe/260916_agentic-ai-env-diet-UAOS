@@ -91,7 +91,7 @@ class InstallerTests(unittest.TestCase):
         self.assertIn((self.home / ".uaos" / "uaos.py").as_posix(), rules)
         self.assertNotIn("{uaos}", rules)
         toml = (self.home / ".codex" / "config.toml").read_text(encoding="utf-8")
-        self.assertIn("[features]\ncodex_hooks = true\nweb = true", toml)
+        self.assertIn("[features]\nhooks = true\nweb = true", toml)
         agy = json.loads((self.home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
         self.assertIn("lint", agy)
         self.assertIn("--say empty-json", agy["uaos-presence"]["PreInvocation"][0]["command"])

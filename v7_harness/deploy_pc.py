@@ -63,7 +63,10 @@ CANON_PATTERNS = {
     "codex": ("core.md",),
     "antigravity": ("core.md",),
 }
-SKIP_DIRS = {"dist", "build", "scripts", "fixtures", "tests", "backup", "backups", ".git", "node_modules", "history"}
+# `adapters/` holds per-tool adapters, never a rule source for the block: since canon v5.26.0 it also has claude.md,
+# which made the claude pattern ambiguous (CANON_SOURCES_AMBIGUOUS on 2026-09-28) next to the standalone claude.md.
+SKIP_DIRS = {"dist", "build", "scripts", "fixtures", "tests", "backup", "backups", ".git", "node_modules", "history",
+             "adapters"}
 RUNTIME_RULES = {"claude": Path(".claude") / "CLAUDE.md", "codex": Path(".codex") / "AGENTS.md",
                  "antigravity": Path(".gemini") / "GEMINI.md"}
 
