@@ -1,3 +1,585 @@
+```contract
+work_id: U58
+worker: apply
+goal: Session-aware presence: one Claude or Codex session ending must not mark the whole tool ABSENT while another session of that tool is still live.
+inputs:
+- v7_harness/coord/presence.py sha256=3d2067b6c710ae154517cce5337867534137d69397d4fbeea6bcf79abcb36eb9
+- v7_harness/coord/hook_context.py sha256=cd76e6ad6152a457ba6ba87d1c180893aa25c0d1f55be680fa082b2ab057fe72
+- v7_harness/cli.py sha256=792f6055c2355d4746857d87fc5f9649c790de81cfb5519082b58284a3a6562c
+allow:
+- v7_harness/coord/presence.py
+- v7_harness/coord/hook_context.py
+- v7_harness/cli.py
+- tests/test_u58_session_presence.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u58_session_presence tests.test_u47_a1b_presence_lease tests.test_u57_desk_signals
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: U58. Seen 2026-09-28 16:08Z: coord deliver cold-dispatched claude -p for relay_bd1f5b29; its SessionEnd hook wrote claude ABSENT ttl 86400, so coord route returned BLOCKED_NO_ACTIVE_AUTHORITY while the acting conductor session was open. Fix: hook_session() reads session_id from the hook payload; mark(session=) keeps sessions{id: expires_at}; ACTIVE registers, ABSENT removes only that id and the tool stays ACTIVE until the last live session expires; calls without a session and leases behave as before. Issued by the acting conductor under the user's order of 2026-09-28 ('프로젝트 완성될때까지 논스톱 무승인 진행하라'), judge claude (ACTING); Codex re-reviews. Red on HEAD (ImportError hook_session); 33 OK in overlay.
+
+===FILE: v7_harness/coord/presence.py===
+"""Who is at the desk: one heartbeat file per tool, written by that tool's own session hooks.
+
+The user used to declare "Codex is absent" by hand in PLAN.md, and that line stayed true until someone edited it.
+A heartbeat carries its own expiry, so a tool that stops reporting (quota, crash, closed window) turns UNKNOWN
+by itself. Reading and writing a small JSON file costs no model tokens.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+PRESENCE_DIR = Path(".coord") / "presence"
+TOOLS = ("codex", "claude", "antigravity")
+STATES = ("ACTIVE", "LIMITED", "ABSENT")
+DEFAULT_TTL_S = 3600
+
+
+class PresenceRejected(ValueError):
+    pass
+
+
+def _path(project: Path, tool: str) -> Path:
+    if tool not in TOOLS:
+        raise PresenceRejected(f"unknown tool: {tool}")
+    return Path(project) / PRESENCE_DIR / f"{tool}.json"
+
+
+def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, now: float | None = None,
+         lease: bool = False, session: str | None = None) -> Path:
+    """Write one heartbeat. `lease=True` records a capability fact (e.g. a provider's quota answer) that a session
+    heartbeat of another state cannot overwrite before it expires.
+
+    U47-A1b: Codex's re-review (2026-09-27) found that the next ACTIVE session hook replaced the LIMITED state
+    `pilot judge` had recorded from agy's 429 answer, so routing again sent verdict requests to a tool that could not
+    answer. A live lease is kept and the heartbeat is dropped; another lease replaces it.
+    """
+    if state not in STATES:
+        raise PresenceRejected(f"unknown state: {state}")
+    if ttl_s <= 0:
+        raise PresenceRejected("ttl_s must be positive")
+    moment = time.time() if now is None else now
+    target = _path(project, tool)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "tool": tool,
+        "state": state,
+        "observed_at": (datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=moment)).isoformat(timespec="seconds"),
+        "expires_at": moment + ttl_s,
+    }
+    if lease:
+        record["lease"] = True
+    # U47-RW1c: Codex's race (2026-09-27) let a heartbeat pass the lease check, a lease land, and the heartbeat then
+    # replace it. The check and the replace now happen under one lock shared by threads and processes.
+    with _tool_lock(target):
+        if not lease and _live_lease(target, moment, state):
+            return target
+        if session and not lease:
+            record = _merge_session(target, record, session, state, moment, ttl_s)
+        tmp = target.with_name(f".{tool}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, target)
+    return target
+
+
+# A heartbeat write takes milliseconds; 10 s of waiting means a stuck writer, and a lock file older than 60 s is taken
+# as left by a dead process (the same bounds as coord/stream.py, measured there under an 8-process race).
+LOCK_TIMEOUT_S = 10.0
+LOCK_STALE_S = 60.0
+_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _tool_lock(target: Path):
+    """Exclusive O_EXCL lock file beside the heartbeat; raises PresenceRejected on timeout (the write is dropped)."""
+    lock_path = target.with_name(f".{target.stem}.lock")
+    deadline = time.monotonic() + LOCK_TIMEOUT_S
+    with _THREAD_LOCK:
+        handle = None
+        while handle is None:
+            try:
+                handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except (FileExistsError, PermissionError):
+                # Windows answers PermissionError for a lock file pending deletion: another writer holds it.
+                try:
+                    age = time.time() - lock_path.stat().st_mtime
+                except (FileNotFoundError, PermissionError):
+                    time.sleep(0.01)
+                    continue
+                if age > LOCK_STALE_S:
+                    lock_path.unlink(missing_ok=True)
+                    continue
+                if time.monotonic() > deadline:
+                    raise PresenceRejected("PRESENCE_LOCK_TIMEOUT") from None
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            os.close(handle)
+            lock_path.unlink(missing_ok=True)
+
+
+def _merge_session(target: Path, record: dict[str, Any], session: str, state: str, moment: float,
+                   ttl_s: int) -> dict[str, Any]:
+    """U58: one tool can have several sessions open; the desk reads ACTIVE while any of them is live.
+
+    Seen 2026-09-28: `coord deliver` started a cold `claude -p`, its SessionEnd hook wrote claude ABSENT for 24 h,
+    and `coord route` returned BLOCKED_NO_ACTIVE_AUTHORITY while the acting conductor's session was still open.
+    Each ACTIVE heartbeat now registers its session id; ABSENT removes only that id, and the tool reads ABSENT only
+    when no registered session is still within its TTL. Called under the tool lock.
+    """
+    sessions: dict[str, float] = {}
+    try:
+        previous = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(previous, dict) and isinstance(previous.get("sessions"), dict):
+            sessions = {str(k): float(v) for k, v in previous["sessions"].items()
+                        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > moment}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        pass
+    if state == "ACTIVE":
+        sessions[session] = moment + ttl_s
+    else:
+        sessions.pop(session, None)
+    if state != "ACTIVE" and sessions:
+        # Another session is still at the desk: keep ACTIVE until the last live session's heartbeat expires.
+        return {**record, "state": "ACTIVE", "expires_at": max(sessions.values()), "sessions": sessions}
+    if state == "ACTIVE":
+        return {**record, "expires_at": max(sessions.values()), "sessions": sessions}
+    return {**record, "sessions": {}}
+
+
+def _live_lease(target: Path, moment: float, state: str) -> bool:
+    """True while the file holds an unexpired lease of a different state; an unreadable file holds nothing."""
+    try:
+        record = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    # U47-RW1d: a capability lease protects its original expiry from every ordinary heartbeat. A same-state
+    # heartbeat is not new quota evidence and must not shorten a 162-hour provider lease to the session TTL.
+    if not isinstance(record, dict) or record.get("lease") is not True:
+        return False
+    expires_at = record.get("expires_at")
+    return isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > moment
+
+
+def read(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any]:
+    moment = time.time() if now is None else now
+    unknown = {"tool": tool, "state": "UNKNOWN", "observed_at": None, "expires_at": None}
+    try:
+        record = json.loads(_path(project, tool).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return unknown
+    if not isinstance(record, dict):
+        return unknown
+    expires_at = record.get("expires_at")
+    if record.get("state") not in STATES or isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+        return unknown
+    if expires_at <= moment:
+        return {**unknown, "observed_at": record.get("observed_at"), "expires_at": expires_at}
+    if tool == "codex" and record["state"] == "ACTIVE":
+        blocked = codex_quota_block(_epoch(record.get("observed_at")), moment)
+        if blocked is not None:
+            return {"tool": tool, "state": "LIMITED", "observed_at": record.get("observed_at"),
+                    "expires_at": blocked["until"], "evidence": blocked}
+    return {"tool": tool, "state": record["state"], "observed_at": record.get("observed_at"), "expires_at": expires_at}
+
+
+# U57-A (2026-09-27): Codex's UserPromptSubmit hook writes ACTIVE before the turn runs, so a relay prompt that Codex
+# then refused with `usage_limit_exceeded` left the desk saying ACTIVE. `coord route` sent work to Codex and the
+# acting conductor had to write a LIMITED lease by hand. Codex records the refusal in its own rollout log; reading
+# the newest one turns that ACTIVE into LIMITED until the reset time Codex printed. Reading is local and costs no
+# tokens; a missing or unreadable log changes nothing.
+CODEX_SESSIONS_ENV = "UAOS_CODEX_SESSIONS"
+# The last task_complete line of a rollout sits in its final lines; 64 KiB held 20+ events in the 2026-09-27 logs.
+ROLLOUT_TAIL_BYTES = 64 * 1024
+# Newest three rollouts of the newest two day folders: sessions run in parallel and one may cross midnight.
+ROLLOUT_DAYS = 2
+ROLLOUT_FILES = 3
+# The hook stamps observed_at in whole seconds just before the turn starts; 5 s covers the truncation and the gap.
+HEARTBEAT_SLACK_S = 5
+# When the reset time cannot be parsed, assume one hour; the next refused prompt writes a fresh refusal anyway.
+UNPARSED_RESET_S = 3600
+
+
+def _epoch(stamp: Any) -> float | None:
+    if not isinstance(stamp, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _codex_rollouts() -> list[Path]:
+    root = Path(os.environ.get(CODEX_SESSIONS_ENV) or (Path.home() / ".codex" / "sessions"))
+    try:
+        days = sorted((d for d in root.glob("*/*/*") if d.is_dir()), key=lambda d: d.parts[-3:], reverse=True)
+        files = [f for d in days[:ROLLOUT_DAYS] for f in d.glob("rollout-*.jsonl") if f.is_file()]
+        return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)[:ROLLOUT_FILES]
+    except OSError:
+        return []
+
+
+def _last_task_complete(path: Path) -> dict[str, Any] | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - ROLLOUT_TAIL_BYTES))
+            lines = handle.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        if '"task_complete"' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # the first line of the tail may be cut
+        payload = event.get("payload") if isinstance(event, dict) else None
+        if isinstance(payload, dict) and payload.get("type") == "task_complete":
+            return payload
+    return None
+
+
+def _reset_at(message: str, completed_at: float) -> float:
+    match = re.search(r"try again at (\d{1,2}):(\d{2})\s*([AP]M)", message or "", re.IGNORECASE)
+    if not match:
+        return completed_at + UNPARSED_RESET_S
+    hour, minute, half = int(match.group(1)) % 12, int(match.group(2)), match.group(3).upper()
+    hour += 12 if half == "PM" else 0
+    # Codex prints the reset in the machine's local time; roll to the next day when that clock time has passed.
+    local = datetime.fromtimestamp(completed_at).astimezone()
+    reset = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if reset.timestamp() <= completed_at:
+        reset += timedelta(days=1)
+    return reset.timestamp()
+
+
+def codex_quota_block(observed_epoch: float | None, moment: float) -> dict[str, Any] | None:
+    """Return the refusal that outranks an ACTIVE heartbeat, or None.
+
+    It counts only when Codex refused a turn at or after the heartbeat (the heartbeat was for that failed prompt), the
+    refusal is not in the future of `moment`, and the reset time has not passed. A heartbeat written after the refusal
+    is a newer prompt and wins; if that prompt is refused too, its own refusal is newer again.
+    """
+    if observed_epoch is None:
+        return None
+    newest: dict[str, Any] | None = None
+    for path in _codex_rollouts():
+        payload = _last_task_complete(path)
+        completed = payload.get("completed_at") if payload else None
+        if isinstance(completed, (int, float)) and not isinstance(completed, bool) and (
+                newest is None or completed > newest["completed_at"]):
+            newest = {"completed_at": completed, "payload": payload, "rollout": str(path)}
+    if newest is None:
+        return None
+    error = newest["payload"].get("error")
+    if not isinstance(error, dict) or error.get("codex_error_info") != "usage_limit_exceeded":
+        return None
+    completed_at = float(newest["completed_at"])
+    if completed_at + HEARTBEAT_SLACK_S < observed_epoch or completed_at > moment:
+        return None
+    until = _reset_at(str(error.get("message", "")), completed_at)
+    if until <= moment:
+        return None
+    return {"source": "codex_rollout", "reason": "usage_limit_exceeded", "completed_at": completed_at,
+            "until": until, "rollout": newest["rollout"]}
+
+
+def read_all(project: Path, *, now: float | None = None) -> dict[str, dict[str, Any]]:
+    return {tool: read(project, tool, now=now) for tool in TOOLS}
+
+
+# U45 G1/G3: the succession order of docs/27 §4. Codex conducts; Claude acts while Codex is LIMITED or ABSENT;
+# Antigravity acts only while both are. Only desk states count: a quota figure beside a state is ignored on purpose.
+SUCCESSION = ("codex", "claude", "antigravity")
+AWAY = ("LIMITED", "ABSENT")
+
+
+def conductor(desk: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    for position, tool in enumerate(SUCCESSION):
+        state = (desk.get(tool) or {}).get("state", "UNKNOWN")
+        if state == "ACTIVE":
+            acting = position > 0
+            reason = f"{tool} ACTIVE" + (f"; {', '.join(SUCCESSION[:position])} away" if acting else "")
+            return {"conductor": tool, "acting": acting, "reason": reason}
+        if state not in AWAY:
+            # An expired heartbeat is not absence: stop here instead of handing authority to the next tool.
+            return {"conductor": "UNKNOWN", "acting": False, "reason": f"{tool} {state}: heartbeat not current"}
+    return {"conductor": "none", "acting": False, "reason": "all three tools LIMITED or ABSENT"}
+===FILE: v7_harness/coord/hook_context.py===
+"""Find the UAOS project a tool's session hook fired for, and say one line about it.
+
+Global hooks fire in every project, from wherever the tool chose to run them:
+- Claude Code passes `cwd` on stdin and sets CLAUDE_PROJECT_DIR.
+- Codex passes `cwd` on stdin (SessionStart, UserPromptSubmit).
+- Antigravity runs hooks inside ~/.gemini/config/ (antigravity-cli#1005) and passes `workspacePaths` on stdin (#893).
+So the project comes from the payload first, the environment second and the current folder last, and the search walks
+up to the folder that holds `.coord/PLAN.md` (a session may start in a subfolder). No such folder means no UAOS project,
+and the hook stays silent: other projects pay nothing, not even a line of context.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sys
+import threading
+from pathlib import Path
+from typing import Any, Iterable
+
+PLAN = Path(".coord") / "PLAN.md"
+_PAYLOAD_KEYS = ("cwd", "workspacePaths", "workspace_paths", "workspaceRoots", "workspace_roots", "project_dir")
+
+
+def read_stdin(timeout_s: float = 2.0) -> str:
+    """The hook payload, or "" for a terminal or a runner that never closes stdin."""
+    stream = sys.stdin
+    if stream is None or stream.closed:
+        return ""
+    try:
+        if stream.isatty():
+            return ""
+    except (ValueError, OSError):
+        return ""
+    box: list[str] = []
+
+    def _read() -> None:
+        try:
+            box.append(stream.read())
+        except (OSError, ValueError, UnicodeDecodeError):
+            box.append("")
+
+    reader = threading.Thread(target=_read, daemon=True)
+    reader.start()
+    reader.join(timeout_s)
+    return box[0] if box else ""
+
+
+def payload_candidates(stdin_text: str) -> list[str]:
+    try:
+        payload = json.loads(stdin_text) if stdin_text.strip() else {}
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    found: list[str] = []
+    for key in _PAYLOAD_KEYS:
+        value = payload.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, dict):
+                item = item.get("path") or item.get("uri")
+            if isinstance(item, str) and item.strip():
+                item = item.removeprefix("file://")
+                # file:///C:/work becomes /C:/work; the drive letter needs the leading slash removed on Windows.
+                if len(item) > 2 and item[0] == "/" and item[2] == ":" and item[1].isalpha():
+                    item = item[1:]
+                found.append(item)
+    return found
+
+
+def hook_session(stdin_text: str) -> str | None:
+    """U58: the session id a Claude Code or Codex hook payload carries, or None (a terminal, or no id)."""
+    try:
+        payload = json.loads(stdin_text) if stdin_text.strip() else {}
+    except json.JSONDecodeError:
+        return None
+    value = payload.get("session_id") if isinstance(payload, dict) else None
+    # 200 characters bounds a key that lands in a small JSON file; real ids are 36-character UUIDs.
+    return value.strip()[:200] if isinstance(value, str) and value.strip() else None
+
+
+def find_project(candidates: Iterable[str | Path], max_depth: int = 25) -> Path | None:
+    for candidate in candidates:
+        try:
+            current = Path(candidate).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        for _ in range(max_depth):
+            if (current / PLAN).is_file():
+                return current
+            if current.parent == current:
+                break
+            current = current.parent
+    return None
+
+
+def hook_project(stdin_text: str, fallback: str | Path | None, env: dict[str, str] | None = None) -> Path | None:
+    env = os.environ if env is None else env
+    candidates: list[str | Path] = payload_candidates(stdin_text)
+    if env.get("CLAUDE_PROJECT_DIR"):
+        candidates.append(env["CLAUDE_PROJECT_DIR"])
+    if fallback is not None:
+        candidates.append(fallback)
+    return find_project(candidates)
+
+
+def brief_line(project: Path, presence: dict[str, Any]) -> str:
+    """One line of session context (a SessionStart hook's stdout becomes context in Claude Code and Codex)."""
+    inbox: list[str] = []
+    box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
+    if box_dir.is_dir():
+        inbox = sorted(path.stem for path in box_dir.glob("*.json"))
+    wakes = sum(1 for item in inbox if item.startswith("wake_"))
+    reviews = sum(1 for item in inbox if item.startswith("rsi_review_"))
+    desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
+    return (f"UAOS project {Path(project).name}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
+            "Read .coord/PLAN.md; `coord inbox` lists what waits. "
+            # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
+            "Keep `coord watch --target <you>` running in the background; send by `coord deliver`, never via the user."
+            )[:400]
+
+
+def p1_line(project: Path, presence: dict[str, Any]) -> str:
+    """U38: the P1 hand-off to Claude while Codex is away. Empty unless a wake waits and Codex is not ACTIVE, so an
+    ordinary prompt carries nothing (a hook's stdout on UserPromptSubmit is added to the prompt)."""
+    if (presence.get("codex") or {}).get("state") == "ACTIVE":
+        return ""  # the sentinel rings Codex itself (codex queue)
+    box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
+    wakes = sorted(box_dir.glob("wake_*.json")) if box_dir.is_dir() else []
+    if not wakes:
+        return ""
+    reason = ""
+    try:
+        data = json.loads(wakes[0].read_text(encoding="utf-8"))
+        payload = data.get("payload") if isinstance(data, dict) else None
+        if isinstance(payload, dict):
+            reason = str(payload.get("wake_reason") or "")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    codex = (presence.get("codex") or {}).get("state", "UNKNOWN")
+    return (f"UAOS P1 waiting ({len(wakes)}), Codex {codex}: {reason or 'see mailbox'}. Claude acts as deputy: "
+            "`coord inbox`, handle it, then `coord ack --id <id>`.")[:400]
+
+
+# Runtime state beside the presence files (.coord/presence/ is git-ignored); presence reads only <tool>.json.
+P1_SEEN = Path(".coord") / "presence" / "p1_hook_seen.txt"
+
+
+def p1_is_new(project: Path, line: str) -> bool:
+    """U46-P1: say a P1 line only when it differs from the last one said. The line carries the wake count, Codex's
+    state and the first reason, and the fingerprint adds the wake ids, so any new wake or state change speaks again."""
+    if not line:
+        return False
+    box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
+    ids = sorted(path.stem for path in box_dir.glob("wake_*.json")) if box_dir.is_dir() else []
+    fingerprint = hashlib.sha256("\n".join([line, *ids]).encode("utf-8")).hexdigest()
+    seen = Path(project) / P1_SEEN
+    try:
+        if seen.read_text(encoding="utf-8").strip() == fingerprint:
+            return False
+    except OSError:
+        pass
+    try:
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass  # a hook never fails the session; the line is said again next time
+    return True
+
+
+RETENTION_SEEN = Path(".coord") / "presence" / "retention_seen.txt"
+
+
+def _scan_zone(target_path: Path | str) -> tuple[int, int]:
+    count = 0
+    total_bytes = 0
+    stack = [str(target_path)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            count += 1
+                            total_bytes += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return count, total_bytes
+
+
+def retention_alert(project: Path | str, policy: dict[str, Any] | None = None) -> str:
+    """Walk retention zones with stat only and return an alert line if any zone exceeds count or byte caps."""
+    if policy is None:
+        from v7_harness.retention import default_policy
+        policy = default_policy()
+
+    root = Path(project)
+    over_cap: list[str] = []
+
+    for zone in policy.get("zones", []):
+        zone_path = zone.get("path")
+        if not zone_path:
+            continue
+        target = root / zone_path
+        if not target.is_dir():
+            continue
+        count, total_bytes = _scan_zone(target)
+        max_count = zone.get("max_count")
+        max_bytes = zone.get("max_bytes")
+
+        is_over_count = max_count is not None and count > max_count
+        is_over_bytes = max_bytes is not None and total_bytes > max_bytes
+
+        if is_over_count or is_over_bytes:
+            cur_mb = round(total_bytes / 10**6, 1)
+            max_mb = round((max_bytes or 0) / 10**6, 1)
+            cur_mb_s = f"{int(cur_mb) if cur_mb.is_integer() else cur_mb}"
+            max_mb_s = f"{int(max_mb) if max_mb.is_integer() else max_mb}"
+            over_cap.append(f"{zone_path} {count}/{max_count} files, {cur_mb_s}/{max_mb_s} MB")
+
+    if not over_cap:
+        return ""
+
+    line = f"UAOS retention: {'; '.join(over_cap)} - run `rsi retention` (dry run), then `--archive`"
+    line = line.replace("\n", " ")
+    return line[:299]
+
+
+def retention_alert_is_new(project: Path | str, line: str) -> bool:
+    """Say a retention alert line only when it differs from the last one said."""
+    if not line:
+        return False
+    fingerprint = hashlib.sha256(line.encode("utf-8")).hexdigest()
+    seen = Path(project) / RETENTION_SEEN
+    try:
+        if seen.read_text(encoding="utf-8").strip() == fingerprint:
+            return False
+    except OSError:
+        pass
+    try:
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass  # a hook never fails the session
+    return True
+===FILE: v7_harness/cli.py===
 """
 Command-line interface for v7 harness.
 
@@ -1655,20 +2237,110 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 pass
     parser = build_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "coord_subcommand", None) in _DESK_COMMANDS and getattr(args, "project", None):
-        from .coord.hook_context import shared_desk
-
-        desk = shared_desk(args.project)
-        if desk != Path(args.project):  # unchanged paths keep the caller's spelling
-            args.project = str(desk)
     return args.func(args)
-
-
-# U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
-# when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
-# brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "deliver", "sentinel", "inbox", "ack", "archive"})
 
 
 if __name__ == "__main__":
     sys.exit(main())
+===FILE: tests/test_u58_session_presence.py===
+"""U58 frozen acceptance (written by Claude): one session ending does not mark the whole tool absent.
+
+Seen 2026-09-28: `coord deliver` started a cold `claude -p`; its SessionEnd hook wrote claude ABSENT for 24 h and
+`coord route` answered BLOCKED_NO_ACTIVE_AUTHORITY while the acting conductor's own session was still open.
+"""
+
+import io
+import json
+import os
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
+from unittest import mock
+
+from v7_harness.cli import main
+from v7_harness.coord.hook_context import hook_session
+from v7_harness.coord.presence import mark, read
+
+T0 = 1_000_000.0
+
+
+class SessionPresenceTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_one_session_ending_leaves_the_other_at_the_desk(self):
+        mark(self.project, "claude", "ACTIVE", ttl_s=3600, now=T0, session="A")
+        mark(self.project, "claude", "ACTIVE", ttl_s=3600, now=T0 + 10, session="B")
+        mark(self.project, "claude", "ABSENT", ttl_s=86400, now=T0 + 20, session="B")
+        desk = read(self.project, "claude", now=T0 + 30)
+        self.assertEqual("ACTIVE", desk["state"])
+        self.assertEqual(T0 + 3600, desk["expires_at"])
+
+    def test_last_session_ending_marks_absent(self):
+        mark(self.project, "claude", "ACTIVE", ttl_s=3600, now=T0, session="A")
+        mark(self.project, "claude", "ACTIVE", ttl_s=3600, now=T0 + 10, session="B")
+        mark(self.project, "claude", "ABSENT", ttl_s=86400, now=T0 + 20, session="B")
+        mark(self.project, "claude", "ABSENT", ttl_s=86400, now=T0 + 30, session="A")
+        self.assertEqual("ABSENT", read(self.project, "claude", now=T0 + 40)["state"])
+
+    def test_an_expired_session_does_not_keep_the_desk(self):
+        mark(self.project, "claude", "ACTIVE", ttl_s=100, now=T0, session="A")
+        mark(self.project, "claude", "ACTIVE", ttl_s=3600, now=T0 + 200, session="B")
+        mark(self.project, "claude", "ABSENT", ttl_s=86400, now=T0 + 300, session="B")
+        self.assertEqual("ABSENT", read(self.project, "claude", now=T0 + 310)["state"])
+
+    def test_a_session_heartbeat_extends_to_the_latest_live_session(self):
+        mark(self.project, "claude", "ACTIVE", ttl_s=3600, now=T0, session="A")
+        mark(self.project, "claude", "ACTIVE", ttl_s=60, now=T0 + 10, session="B")
+        self.assertEqual(T0 + 3600, read(self.project, "claude", now=T0 + 20)["expires_at"])
+
+    def test_calls_without_a_session_still_replace_the_state(self):
+        mark(self.project, "claude", "ACTIVE", ttl_s=3600, now=T0, session="A")
+        mark(self.project, "claude", "ABSENT", ttl_s=86400, now=T0 + 10)
+        self.assertEqual("ABSENT", read(self.project, "claude", now=T0 + 20)["state"])
+
+    def test_a_live_lease_still_wins_over_session_heartbeats(self):
+        mark(self.project, "codex", "LIMITED", ttl_s=7200, now=T0, lease=True)
+        mark(self.project, "codex", "ACTIVE", ttl_s=3600, now=T0 + 10, session="A")
+        self.assertEqual("LIMITED", read(self.project, "codex", now=T0 + 20)["state"])
+
+
+class HookSessionTest(unittest.TestCase):
+    def test_hook_session_reads_the_payload_id(self):
+        self.assertEqual("abc", hook_session(json.dumps({"session_id": "abc", "cwd": "."})))
+        for text in ("", "not json", "[]", json.dumps({"session_id": 5}), json.dumps({"session_id": "  "})):
+            self.assertIsNone(hook_session(text))
+
+    def test_hook_path_passes_the_session_to_the_desk(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / ".coord").mkdir()
+            (Path(d) / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+
+            def hook(state, session):
+                payload = json.dumps({"session_id": session, "cwd": d})
+                with redirect_stdout(io.StringIO()), \
+                        mock.patch("v7_harness.coord.hook_context.read_stdin", return_value=payload), \
+                        mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": "", "UAOS_WORKER": ""}):
+                    return main(["coord", "presence", "--tool", "claude", "--state", state, "--from-hook",
+                                 "--project", d, "--say", "none"])
+
+            self.assertEqual(0, hook("ACTIVE", "main-session"))
+            self.assertEqual(0, hook("ACTIVE", "cold-child"))
+            self.assertEqual(0, hook("ABSENT", "cold-child"))
+            self.assertEqual("ACTIVE", read(Path(d), "claude")["state"])
+            self.assertEqual(0, hook("ABSENT", "main-session"))
+            self.assertEqual("ABSENT", read(Path(d), "claude")["state"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.

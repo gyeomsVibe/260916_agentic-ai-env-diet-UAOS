@@ -1,3 +1,426 @@
+```contract
+work_id: U59
+worker: apply
+goal: One desk per repository: sessions and desk commands run from a linked git worktree use the main checkout's presence, mailbox and watch files; coord watch no longer crashes when the mailbox folder does not exist yet.
+inputs:
+- v7_harness/coord/hook_context.py sha256=1cf050efa36cd5e49f866963bdd5529e193af77a0d4db75fd5a801c444ca8b6d
+- v7_harness/coord/watch.py sha256=9c5d11426e9771d22f97f98c2798f6d67d3cd8e3adeb1ac2a3d19b1d9e218823
+- v7_harness/cli.py sha256=e4eb962732e4b2da6e74446ec659b1ed0b585672f996d5fcae6ab075d578aa7d
+allow:
+- v7_harness/coord/hook_context.py
+- v7_harness/coord/watch.py
+- v7_harness/cli.py
+- tests/test_u59_shared_desk.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u59_shared_desk tests.test_u58_session_presence tests.test_u57_desk_signals
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: U59. Seen 2026-09-28: the acting conductor ran in .claude/worktrees/agentic-ai-diet-process-2e7a13 (own tracked .coord/PLAN.md); its hooks wrote presence there, `coord watch --project .` crashed with MailboxRejected (no .coord/mailbox), and the main checkout, where 126 letters and routing live, kept claude ABSENT. Fix: shared_desk() maps <main>/.git/worktrees/<name> to <main> when main holds .coord/PLAN.md (submodules and plain folders unchanged); find_project returns it so hooks write the main desk; cli main maps --project for presence/watch/route/deliver/sentinel/inbox/ack/archive only (PLAN readers keep the branch copy); watch creates the mailbox folder. Issued by the acting conductor under the user's order of 2026-09-28 ('프로젝트 완성될때까지 논스톱 무승인 진행하라'), judge claude (ACTING); Codex re-reviews. Red on HEAD (ImportError shared_desk); 31 OK in overlay.
+
+===FILE: v7_harness/coord/hook_context.py===
+"""Find the UAOS project a tool's session hook fired for, and say one line about it.
+
+Global hooks fire in every project, from wherever the tool chose to run them:
+- Claude Code passes `cwd` on stdin and sets CLAUDE_PROJECT_DIR.
+- Codex passes `cwd` on stdin (SessionStart, UserPromptSubmit).
+- Antigravity runs hooks inside ~/.gemini/config/ (antigravity-cli#1005) and passes `workspacePaths` on stdin (#893).
+So the project comes from the payload first, the environment second and the current folder last, and the search walks
+up to the folder that holds `.coord/PLAN.md` (a session may start in a subfolder). No such folder means no UAOS project,
+and the hook stays silent: other projects pay nothing, not even a line of context.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sys
+import threading
+from pathlib import Path
+from typing import Any, Iterable
+
+PLAN = Path(".coord") / "PLAN.md"
+_PAYLOAD_KEYS = ("cwd", "workspacePaths", "workspace_paths", "workspaceRoots", "workspace_roots", "project_dir")
+
+
+def read_stdin(timeout_s: float = 2.0) -> str:
+    """The hook payload, or "" for a terminal or a runner that never closes stdin."""
+    stream = sys.stdin
+    if stream is None or stream.closed:
+        return ""
+    try:
+        if stream.isatty():
+            return ""
+    except (ValueError, OSError):
+        return ""
+    box: list[str] = []
+
+    def _read() -> None:
+        try:
+            box.append(stream.read())
+        except (OSError, ValueError, UnicodeDecodeError):
+            box.append("")
+
+    reader = threading.Thread(target=_read, daemon=True)
+    reader.start()
+    reader.join(timeout_s)
+    return box[0] if box else ""
+
+
+def payload_candidates(stdin_text: str) -> list[str]:
+    try:
+        payload = json.loads(stdin_text) if stdin_text.strip() else {}
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    found: list[str] = []
+    for key in _PAYLOAD_KEYS:
+        value = payload.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, dict):
+                item = item.get("path") or item.get("uri")
+            if isinstance(item, str) and item.strip():
+                item = item.removeprefix("file://")
+                # file:///C:/work becomes /C:/work; the drive letter needs the leading slash removed on Windows.
+                if len(item) > 2 and item[0] == "/" and item[2] == ":" and item[1].isalpha():
+                    item = item[1:]
+                found.append(item)
+    return found
+
+
+def hook_session(stdin_text: str) -> str | None:
+    """U58: the session id a Claude Code or Codex hook payload carries, or None (a terminal, or no id)."""
+    try:
+        payload = json.loads(stdin_text) if stdin_text.strip() else {}
+    except json.JSONDecodeError:
+        return None
+    value = payload.get("session_id") if isinstance(payload, dict) else None
+    # 200 characters bounds a key that lands in a small JSON file; real ids are 36-character UUIDs.
+    return value.strip()[:200] if isinstance(value, str) and value.strip() else None
+
+
+def shared_desk(project: str | Path) -> Path:
+    """U59: a linked git worktree shares the main checkout's desk (presence, mailbox, watch files).
+
+    Seen 2026-09-28: the acting conductor ran in `.claude/worktrees/<name>`, a worktree with its own tracked
+    `.coord/PLAN.md`. Its hooks wrote presence there, `coord watch` there crashed on a missing mailbox, and the main
+    checkout, where letters and routing live, kept claude ABSENT. Presence and mail are gitignored runtime state, so
+    one desk per repository is the main checkout. A submodule (`.git/modules/...`) or a plain folder is unchanged.
+    """
+    path = Path(project)
+    marker = path / ".git"
+    try:
+        if not marker.is_file():
+            return path
+        text = marker.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return path
+    if not text.startswith("gitdir:"):
+        return path
+    gitdir = Path(text[len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = path / gitdir
+    # <main>/.git/worktrees/<name> -> <main>
+    if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
+        return path
+    main = gitdir.parent.parent.parent
+    return main if (main / PLAN).is_file() else path
+
+
+def find_project(candidates: Iterable[str | Path], max_depth: int = 25) -> Path | None:
+    for candidate in candidates:
+        try:
+            current = Path(candidate).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        for _ in range(max_depth):
+            if (current / PLAN).is_file():
+                return shared_desk(current)
+            if current.parent == current:
+                break
+            current = current.parent
+    return None
+
+
+def hook_project(stdin_text: str, fallback: str | Path | None, env: dict[str, str] | None = None) -> Path | None:
+    env = os.environ if env is None else env
+    candidates: list[str | Path] = payload_candidates(stdin_text)
+    if env.get("CLAUDE_PROJECT_DIR"):
+        candidates.append(env["CLAUDE_PROJECT_DIR"])
+    if fallback is not None:
+        candidates.append(fallback)
+    return find_project(candidates)
+
+
+def brief_line(project: Path, presence: dict[str, Any]) -> str:
+    """One line of session context (a SessionStart hook's stdout becomes context in Claude Code and Codex)."""
+    inbox: list[str] = []
+    box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
+    if box_dir.is_dir():
+        inbox = sorted(path.stem for path in box_dir.glob("*.json"))
+    wakes = sum(1 for item in inbox if item.startswith("wake_"))
+    reviews = sum(1 for item in inbox if item.startswith("rsi_review_"))
+    desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
+    return (f"UAOS project {Path(project).name}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
+            "Read .coord/PLAN.md; `coord inbox` lists what waits. "
+            # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
+            "Keep `coord watch --target <you>` running in the background; send by `coord deliver`, never via the user."
+            )[:400]
+
+
+def p1_line(project: Path, presence: dict[str, Any]) -> str:
+    """U38: the P1 hand-off to Claude while Codex is away. Empty unless a wake waits and Codex is not ACTIVE, so an
+    ordinary prompt carries nothing (a hook's stdout on UserPromptSubmit is added to the prompt)."""
+    if (presence.get("codex") or {}).get("state") == "ACTIVE":
+        return ""  # the sentinel rings Codex itself (codex queue)
+    box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
+    wakes = sorted(box_dir.glob("wake_*.json")) if box_dir.is_dir() else []
+    if not wakes:
+        return ""
+    reason = ""
+    try:
+        data = json.loads(wakes[0].read_text(encoding="utf-8"))
+        payload = data.get("payload") if isinstance(data, dict) else None
+        if isinstance(payload, dict):
+            reason = str(payload.get("wake_reason") or "")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    codex = (presence.get("codex") or {}).get("state", "UNKNOWN")
+    return (f"UAOS P1 waiting ({len(wakes)}), Codex {codex}: {reason or 'see mailbox'}. Claude acts as deputy: "
+            "`coord inbox`, handle it, then `coord ack --id <id>`.")[:400]
+
+
+# Runtime state beside the presence files (.coord/presence/ is git-ignored); presence reads only <tool>.json.
+P1_SEEN = Path(".coord") / "presence" / "p1_hook_seen.txt"
+
+
+def p1_is_new(project: Path, line: str) -> bool:
+    """U46-P1: say a P1 line only when it differs from the last one said. The line carries the wake count, Codex's
+    state and the first reason, and the fingerprint adds the wake ids, so any new wake or state change speaks again."""
+    if not line:
+        return False
+    box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
+    ids = sorted(path.stem for path in box_dir.glob("wake_*.json")) if box_dir.is_dir() else []
+    fingerprint = hashlib.sha256("\n".join([line, *ids]).encode("utf-8")).hexdigest()
+    seen = Path(project) / P1_SEEN
+    try:
+        if seen.read_text(encoding="utf-8").strip() == fingerprint:
+            return False
+    except OSError:
+        pass
+    try:
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass  # a hook never fails the session; the line is said again next time
+    return True
+
+
+RETENTION_SEEN = Path(".coord") / "presence" / "retention_seen.txt"
+
+
+def _scan_zone(target_path: Path | str) -> tuple[int, int]:
+    count = 0
+    total_bytes = 0
+    stack = [str(target_path)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            count += 1
+                            total_bytes += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return count, total_bytes
+
+
+def retention_alert(project: Path | str, policy: dict[str, Any] | None = None) -> str:
+    """Walk retention zones with stat only and return an alert line if any zone exceeds count or byte caps."""
+    if policy is None:
+        from v7_harness.retention import default_policy
+        policy = default_policy()
+
+    root = Path(project)
+    over_cap: list[str] = []
+
+    for zone in policy.get("zones", []):
+        zone_path = zone.get("path")
+        if not zone_path:
+            continue
+        target = root / zone_path
+        if not target.is_dir():
+            continue
+        count, total_bytes = _scan_zone(target)
+        max_count = zone.get("max_count")
+        max_bytes = zone.get("max_bytes")
+
+        is_over_count = max_count is not None and count > max_count
+        is_over_bytes = max_bytes is not None and total_bytes > max_bytes
+
+        if is_over_count or is_over_bytes:
+            cur_mb = round(total_bytes / 10**6, 1)
+            max_mb = round((max_bytes or 0) / 10**6, 1)
+            cur_mb_s = f"{int(cur_mb) if cur_mb.is_integer() else cur_mb}"
+            max_mb_s = f"{int(max_mb) if max_mb.is_integer() else max_mb}"
+            over_cap.append(f"{zone_path} {count}/{max_count} files, {cur_mb_s}/{max_mb_s} MB")
+
+    if not over_cap:
+        return ""
+
+    line = f"UAOS retention: {'; '.join(over_cap)} - run `rsi retention` (dry run), then `--archive`"
+    line = line.replace("\n", " ")
+    return line[:299]
+
+
+def retention_alert_is_new(project: Path | str, line: str) -> bool:
+    """Say a retention alert line only when it differs from the last one said."""
+    if not line:
+        return False
+    fingerprint = hashlib.sha256(line.encode("utf-8")).hexdigest()
+    seen = Path(project) / RETENTION_SEEN
+    try:
+        if seen.read_text(encoding="utf-8").strip() == fingerprint:
+            return False
+    except OSError:
+        pass
+    try:
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass  # a hook never fails the session
+    return True
+===FILE: v7_harness/coord/watch.py===
+"""U57: `coord watch` — block until a new mailbox letter for a tool arrives, at zero model tokens.
+
+Why (2026-09-27/28): an interactive session wakes only on a user prompt. Letters between Claude sessions were held
+by the app for the user's approval (sessions with different permission modes), one expired unseen, and the acting
+conductor had to hand-write a shell loop over the inbox to be woken. The user then had to approve or copy messages.
+This makes that loop a tested harness command: a session runs it in the background, and it exits when a letter for
+its tool lands, so the session wakes without the user.
+
+While a watch runs it keeps `.coord/presence/<tool>.watch.json` fresh. `coord deliver` reads that file: a live
+watcher means an interactive session is listening, so the letter is left in the inbox for it (QUEUED_INTERACTIVE)
+instead of starting a cold headless session that cannot see the conversation.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Callable
+
+from v7_harness.coord.mailbox import Mailbox
+from v7_harness.coord.presence import PRESENCE_DIR, TOOLS
+
+# 30 s between inbox scans: the hand-written loop used 30 s on 2026-09-27 and a letter waited at most that long;
+# one scan lists one directory, so a shorter interval costs only disk reads, never tokens.
+DEFAULT_INTERVAL_S = 30.0
+# 4 h per watch: the longest single wait seen on 2026-09-27 (Codex quota window). The session re-arms it after.
+DEFAULT_TIMEOUT_S = 4 * 3600.0
+# A watcher counts as live for three missed scans, and never less than 90 s, so one slow scan does not make
+# `coord deliver` fall back to a cold session while the watcher is still running.
+LIVE_SCANS = 3
+LIVE_MIN_S = 90.0
+
+
+def watch_file(project: Path, tool: str) -> Path:
+    if tool not in TOOLS:
+        raise ValueError(f"unknown tool: {tool}")
+    return Path(project) / PRESENCE_DIR / f"{tool}.watch.json"
+
+
+def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, moment: float) -> None:
+    live_for = max(LIVE_SCANS * interval_s, LIVE_MIN_S)
+    for tool in tools:
+        target = watch_file(project, tool)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        tmp.write_text(json.dumps({"tool": tool, "token": token, "pid": os.getpid(),
+                                   "expires_at": moment + live_for}), encoding="utf-8")
+        os.replace(tmp, target)
+
+
+def _clear(project: Path, tools: tuple[str, ...], token: str) -> None:
+    """Remove only this watch's files; a newer watch for the same tool keeps its own."""
+    for tool in tools:
+        target = watch_file(project, tool)
+        try:
+            if json.loads(target.read_text(encoding="utf-8")).get("token") == token:
+                target.unlink(missing_ok=True)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
+def watcher_live(project: Path, tool: str, *, now: float | None = None) -> bool:
+    moment = time.time() if now is None else now
+    try:
+        record = json.loads(watch_file(project, tool).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    expires_at = record.get("expires_at") if isinstance(record, dict) else None
+    return isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > moment
+
+
+def _addressed(payload: Any, tools: tuple[str, ...]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return payload.get("requested_target") in tools or payload.get("to") in tools
+
+
+def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_TIMEOUT_S,
+          interval_s: float = DEFAULT_INTERVAL_S, clock: Callable[[], float] | None = None,
+          sleep: Callable[[float], None] | None = None) -> dict[str, Any] | None:
+    """Return the first letter addressed to one of `tools` that was not in the inbox when the watch began.
+
+    Letters already waiting are what `coord inbox` shows at session start; the watch reports only new ones, so a
+    re-armed watch never wakes the session twice for the same letter. None means the timeout passed.
+    """
+    clock = clock or time.time
+    sleep = sleep or time.sleep  # looked up per call so tests and callers can patch time.sleep
+    for tool in tools:
+        watch_file(project, tool)  # validates the name before anything is written
+    # U59: a project whose first letter has not arrived yet has no mailbox folder; waiting on it is still valid.
+    mailbox_dir = Path(project) / ".coord" / "mailbox"
+    mailbox_dir.mkdir(parents=True, exist_ok=True)
+    box = Mailbox(mailbox_dir)
+    seen = set(box.list_inbox())
+    token = uuid.uuid4().hex
+    deadline = clock() + timeout_s
+    try:
+        while True:
+            _beat(project, tools, token, interval_s, clock())
+            for message_id, payload in box.peek():
+                if message_id in seen:
+                    continue
+                seen.add(message_id)
+                if _addressed(payload, tools):
+                    body = payload if isinstance(payload, dict) else {}
+                    return {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),
+                            "requested_target": body.get("requested_target") or body.get("to")}
+            if clock() >= deadline:
+                return None
+            sleep(interval_s)
+    finally:
+        _clear(project, tools, token)
+===FILE: v7_harness/cli.py===
 """
 Command-line interface for v7 harness.
 
@@ -1672,3 +2095,99 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "deliver", "sentinel",
 
 if __name__ == "__main__":
     sys.exit(main())
+===FILE: tests/test_u59_shared_desk.py===
+"""U59 frozen acceptance (written by Claude): a linked worktree's session uses the main checkout's desk.
+
+Seen 2026-09-28: a session in `.claude/worktrees/<name>` wrote presence into the worktree's own `.coord`, `coord watch`
+there crashed on a missing mailbox, and the main checkout, where letters and routing live, kept claude ABSENT.
+"""
+
+import io
+import json
+import os
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
+from unittest import mock
+
+from v7_harness.cli import main
+from v7_harness.coord.hook_context import hook_project, shared_desk
+from v7_harness.coord.presence import read
+from v7_harness.coord.watch import watch
+
+
+def _plan(root: Path) -> None:
+    (root / ".coord").mkdir(parents=True, exist_ok=True)
+    (root / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+
+
+class SharedDeskTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.main = base / "repo"
+        self.tree = self.main / ".claude" / "worktrees" / "w1"
+        _plan(self.main)
+        _plan(self.tree)
+        (self.main / ".git" / "worktrees" / "w1").mkdir(parents=True)
+        (self.tree / ".git").write_text(f"gitdir: {(self.main / '.git' / 'worktrees' / 'w1').as_posix()}\n",
+                                        encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_worktree_maps_to_the_main_checkout(self):
+        self.assertEqual(self.main, shared_desk(self.tree))
+        self.assertEqual(self.main, shared_desk(self.main))
+
+    def test_submodule_and_plain_folder_are_unchanged(self):
+        sub = self.main / "sub"
+        _plan(sub)
+        (self.main / ".git" / "modules" / "sub").mkdir(parents=True)
+        (sub / ".git").write_text(f"gitdir: {(self.main / '.git' / 'modules' / 'sub').as_posix()}\n",
+                                  encoding="utf-8")
+        self.assertEqual(sub, shared_desk(sub))
+        plain = Path(self._tmp.name) / "plain"
+        plain.mkdir()
+        self.assertEqual(plain, shared_desk(plain))
+
+    def test_main_without_a_plan_keeps_the_worktree(self):
+        (self.main / ".coord" / "PLAN.md").unlink()
+        self.assertEqual(self.tree, shared_desk(self.tree))
+
+    def test_hook_from_a_worktree_writes_the_main_desk(self):
+        found = hook_project(json.dumps({"cwd": str(self.tree)}), None, env={})
+        self.assertEqual(self.main.resolve(), found.resolve())
+        payload = json.dumps({"session_id": "s1", "cwd": str(self.tree)})
+        with redirect_stdout(io.StringIO()), \
+                mock.patch("v7_harness.coord.hook_context.read_stdin", return_value=payload), \
+                mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": "", "UAOS_WORKER": ""}):
+            self.assertEqual(0, main(["coord", "presence", "--tool", "claude", "--state", "ACTIVE", "--from-hook",
+                                      "--say", "none"]))
+        self.assertEqual("ACTIVE", read(self.main, "claude")["state"])
+        self.assertFalse((self.tree / ".coord" / "presence").exists())
+
+    def test_desk_commands_given_a_worktree_use_the_main_checkout(self):
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, main(["coord", "presence", "--tool", "claude", "--state", "ACTIVE",
+                                      "--project", str(self.tree)]))
+        self.assertEqual("ACTIVE", read(self.main, "claude")["state"])
+        self.assertEqual("UNKNOWN", read(self.tree, "claude")["state"])
+
+
+class WatchWithoutMailboxTest(unittest.TestCase):
+    def test_watch_on_a_project_with_no_mailbox_times_out_cleanly(self):
+        with tempfile.TemporaryDirectory() as d:
+            _plan(Path(d))
+            self.assertIsNone(watch(Path(d), ("claude",), timeout_s=0, interval_s=1, sleep=lambda _s: None))
+            self.assertTrue((Path(d) / ".coord" / "mailbox").is_dir())
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.

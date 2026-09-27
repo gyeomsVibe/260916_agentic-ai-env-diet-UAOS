@@ -1,3 +1,27 @@
+```contract
+work_id: U60
+worker: apply
+goal: A Windows os.replace refusal (WinError 5 while another process reads the target) neither kills `coord watch` nor leaves a presence heartbeat half-written.
+inputs:
+- v7_harness/coord/presence.py sha256=1041a52becebcc4323e0765cac85634f3c0c36e890c7351c86f6cd4d709d2ab2
+- v7_harness/coord/watch.py sha256=02f2508f389407ed5b44ffbf8b7a4e7dc7e4be072b3fc94ce3f70240c1530aff
+allow:
+- v7_harness/coord/presence.py
+- v7_harness/coord/watch.py
+- tests/test_u60_replace_retry.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u60_replace_retry tests.test_u59_shared_desk tests.test_u58_session_presence tests.test_u57_desk_signals
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: U60. Seen 2026-09-28: the acting conductor's background `coord watch --target claude` on the main checkout exited with PermissionError [WinError 5] from os.replace(.claude.watch.json.*.tmp -> claude.watch.json). Fix: presence.replace_with_retry() tries 20 times 10 ms apart (a read holds the file for milliseconds), removes the temp file and raises on the last refusal; mark() uses it; watch _beat uses it and skips a refused beat (the file stays live for three scans and the inbox scan runs anyway). Stacked on U59. Issued under the user's order of 2026-09-28 ('프로젝트 완성될때까지 논스톱 무승인 진행하라'), judge claude (ACTING); Codex re-reviews. Red on HEAD 3 errors, 39 OK in overlay.
+
+===FILE: v7_harness/coord/presence.py===
 """Who is at the desk: one heartbeat file per tool, written by that tool's own session hooks.
 
 The user used to declare "Codex is absent" by hand in PLAN.md, and that line stayed true until someone edited it.
@@ -320,3 +344,211 @@ def conductor(desk: dict[str, dict[str, Any]]) -> dict[str, Any]:
             # An expired heartbeat is not absence: stop here instead of handing authority to the next tool.
             return {"conductor": "UNKNOWN", "acting": False, "reason": f"{tool} {state}: heartbeat not current"}
     return {"conductor": "none", "acting": False, "reason": "all three tools LIMITED or ABSENT"}
+===FILE: v7_harness/coord/watch.py===
+"""U57: `coord watch` — block until a new mailbox letter for a tool arrives, at zero model tokens.
+
+Why (2026-09-27/28): an interactive session wakes only on a user prompt. Letters between Claude sessions were held
+by the app for the user's approval (sessions with different permission modes), one expired unseen, and the acting
+conductor had to hand-write a shell loop over the inbox to be woken. The user then had to approve or copy messages.
+This makes that loop a tested harness command: a session runs it in the background, and it exits when a letter for
+its tool lands, so the session wakes without the user.
+
+While a watch runs it keeps `.coord/presence/<tool>.watch.json` fresh. `coord deliver` reads that file: a live
+watcher means an interactive session is listening, so the letter is left in the inbox for it (QUEUED_INTERACTIVE)
+instead of starting a cold headless session that cannot see the conversation.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Callable
+
+from v7_harness.coord.mailbox import Mailbox
+from v7_harness.coord.presence import PRESENCE_DIR, TOOLS, replace_with_retry
+
+# 30 s between inbox scans: the hand-written loop used 30 s on 2026-09-27 and a letter waited at most that long;
+# one scan lists one directory, so a shorter interval costs only disk reads, never tokens.
+DEFAULT_INTERVAL_S = 30.0
+# 4 h per watch: the longest single wait seen on 2026-09-27 (Codex quota window). The session re-arms it after.
+DEFAULT_TIMEOUT_S = 4 * 3600.0
+# A watcher counts as live for three missed scans, and never less than 90 s, so one slow scan does not make
+# `coord deliver` fall back to a cold session while the watcher is still running.
+LIVE_SCANS = 3
+LIVE_MIN_S = 90.0
+
+
+def watch_file(project: Path, tool: str) -> Path:
+    if tool not in TOOLS:
+        raise ValueError(f"unknown tool: {tool}")
+    return Path(project) / PRESENCE_DIR / f"{tool}.watch.json"
+
+
+def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, moment: float) -> None:
+    live_for = max(LIVE_SCANS * interval_s, LIVE_MIN_S)
+    for tool in tools:
+        target = watch_file(project, tool)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        tmp.write_text(json.dumps({"tool": tool, "token": token, "pid": os.getpid(),
+                                   "expires_at": moment + live_for}), encoding="utf-8")
+        try:
+            replace_with_retry(tmp, target)
+        except PermissionError:
+            # U60: a missed beat is not a missed letter. The file stays live for three scans, the next beat
+            # rewrites it, and the inbox scan below runs either way.
+            pass
+
+
+def _clear(project: Path, tools: tuple[str, ...], token: str) -> None:
+    """Remove only this watch's files; a newer watch for the same tool keeps its own."""
+    for tool in tools:
+        target = watch_file(project, tool)
+        try:
+            if json.loads(target.read_text(encoding="utf-8")).get("token") == token:
+                target.unlink(missing_ok=True)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
+def watcher_live(project: Path, tool: str, *, now: float | None = None) -> bool:
+    moment = time.time() if now is None else now
+    try:
+        record = json.loads(watch_file(project, tool).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    expires_at = record.get("expires_at") if isinstance(record, dict) else None
+    return isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > moment
+
+
+def _addressed(payload: Any, tools: tuple[str, ...]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return payload.get("requested_target") in tools or payload.get("to") in tools
+
+
+def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_TIMEOUT_S,
+          interval_s: float = DEFAULT_INTERVAL_S, clock: Callable[[], float] | None = None,
+          sleep: Callable[[float], None] | None = None) -> dict[str, Any] | None:
+    """Return the first letter addressed to one of `tools` that was not in the inbox when the watch began.
+
+    Letters already waiting are what `coord inbox` shows at session start; the watch reports only new ones, so a
+    re-armed watch never wakes the session twice for the same letter. None means the timeout passed.
+    """
+    clock = clock or time.time
+    sleep = sleep or time.sleep  # looked up per call so tests and callers can patch time.sleep
+    for tool in tools:
+        watch_file(project, tool)  # validates the name before anything is written
+    # U59: a project whose first letter has not arrived yet has no mailbox folder; waiting on it is still valid.
+    mailbox_dir = Path(project) / ".coord" / "mailbox"
+    mailbox_dir.mkdir(parents=True, exist_ok=True)
+    box = Mailbox(mailbox_dir)
+    seen = set(box.list_inbox())
+    token = uuid.uuid4().hex
+    deadline = clock() + timeout_s
+    try:
+        while True:
+            _beat(project, tools, token, interval_s, clock())
+            for message_id, payload in box.peek():
+                if message_id in seen:
+                    continue
+                seen.add(message_id)
+                if _addressed(payload, tools):
+                    body = payload if isinstance(payload, dict) else {}
+                    return {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),
+                            "requested_target": body.get("requested_target") or body.get("to")}
+            if clock() >= deadline:
+                return None
+            sleep(interval_s)
+    finally:
+        _clear(project, tools, token)
+===FILE: tests/test_u60_replace_retry.py===
+"""U60 frozen acceptance (written by Claude): a Windows replace refusal does not kill a watch or lose a heartbeat.
+
+Seen 2026-09-28: `coord watch` exited with PermissionError [WinError 5] from os.replace on claude.watch.json while
+another process had the file open.
+"""
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from v7_harness.coord import presence
+from v7_harness.coord.mailbox import Mailbox
+from v7_harness.coord.presence import mark, read
+from v7_harness.coord.watch import watch, watch_file
+
+REAL_REPLACE = os.replace
+
+
+def refuse(times):
+    calls = {"n": 0}
+
+    def fake(src, dst):
+        # os.replace is patched module-wide; only desk files are refused so the mailbox still publishes.
+        if Path(dst).parent.name != "presence":
+            return REAL_REPLACE(src, dst)
+        calls["n"] += 1
+        if times is None or calls["n"] <= times:
+            raise PermissionError(5, "Access is denied")
+        return REAL_REPLACE(src, dst)
+
+    return fake, calls
+
+
+class ReplaceRetryTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name)
+        (self.project / ".coord").mkdir()
+        (self.project / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def leftovers(self):
+        return sorted(p.name for p in (self.project / ".coord" / "presence").glob("*.tmp"))
+
+    def test_heartbeat_waits_out_a_short_refusal(self):
+        fake, calls = refuse(3)
+        with mock.patch.object(presence.os, "replace", fake), mock.patch.object(presence, "REPLACE_WAIT_S", 0):
+            mark(self.project, "claude", "ACTIVE", ttl_s=3600)
+        self.assertEqual(4, calls["n"])
+        self.assertEqual("ACTIVE", read(self.project, "claude")["state"])
+        self.assertEqual([], self.leftovers())
+
+    def test_heartbeat_that_never_lands_raises_and_leaves_no_temp_file(self):
+        fake, _ = refuse(None)
+        with mock.patch.object(presence.os, "replace", fake), mock.patch.object(presence, "REPLACE_WAIT_S", 0):
+            with self.assertRaises(PermissionError):
+                mark(self.project, "claude", "ACTIVE", ttl_s=3600)
+        self.assertEqual([], self.leftovers())
+
+    def test_watch_survives_a_refused_beat_and_still_finds_the_letter(self):
+        (self.project / ".coord" / "mailbox").mkdir(parents=True)
+
+        def sleep(_s):
+            Mailbox(self.project / ".coord" / "mailbox").publish(
+                "m1", {"kind": "NOTE", "actor": "codex", "requested_target": "claude", "message": "x"})
+
+        fake, _ = refuse(None)
+        with mock.patch.object(presence.os, "replace", fake), mock.patch.object(presence, "REPLACE_WAIT_S", 0):
+            found = watch(self.project, ("claude",), timeout_s=60, interval_s=1, sleep=sleep)
+        self.assertIsNotNone(found)
+        self.assertEqual("m1", found["id"])
+        self.assertFalse(watch_file(self.project, "claude").exists())
+        self.assertEqual([], self.leftovers())
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.

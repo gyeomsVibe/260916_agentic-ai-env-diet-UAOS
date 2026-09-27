@@ -70,6 +70,45 @@ def payload_candidates(stdin_text: str) -> list[str]:
     return found
 
 
+def hook_session(stdin_text: str) -> str | None:
+    """U58: the session id a Claude Code or Codex hook payload carries, or None (a terminal, or no id)."""
+    try:
+        payload = json.loads(stdin_text) if stdin_text.strip() else {}
+    except json.JSONDecodeError:
+        return None
+    value = payload.get("session_id") if isinstance(payload, dict) else None
+    # 200 characters bounds a key that lands in a small JSON file; real ids are 36-character UUIDs.
+    return value.strip()[:200] if isinstance(value, str) and value.strip() else None
+
+
+def shared_desk(project: str | Path) -> Path:
+    """U59: a linked git worktree shares the main checkout's desk (presence, mailbox, watch files).
+
+    Seen 2026-09-28: the acting conductor ran in `.claude/worktrees/<name>`, a worktree with its own tracked
+    `.coord/PLAN.md`. Its hooks wrote presence there, `coord watch` there crashed on a missing mailbox, and the main
+    checkout, where letters and routing live, kept claude ABSENT. Presence and mail are gitignored runtime state, so
+    one desk per repository is the main checkout. A submodule (`.git/modules/...`) or a plain folder is unchanged.
+    """
+    path = Path(project)
+    marker = path / ".git"
+    try:
+        if not marker.is_file():
+            return path
+        text = marker.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return path
+    if not text.startswith("gitdir:"):
+        return path
+    gitdir = Path(text[len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = path / gitdir
+    # <main>/.git/worktrees/<name> -> <main>
+    if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
+        return path
+    main = gitdir.parent.parent.parent
+    return main if (main / PLAN).is_file() else path
+
+
 def find_project(candidates: Iterable[str | Path], max_depth: int = 25) -> Path | None:
     for candidate in candidates:
         try:
@@ -78,7 +117,7 @@ def find_project(candidates: Iterable[str | Path], max_depth: int = 25) -> Path 
             continue
         for _ in range(max_depth):
             if (current / PLAN).is_file():
-                return current
+                return shared_desk(current)
             if current.parent == current:
                 break
             current = current.parent
