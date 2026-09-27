@@ -108,6 +108,13 @@
 | U49-M2 | DONE-ACTING (Claude 대행 판정; Codex 재검토) | claude · apply | D0 REDTEAM P2: 잠긴 ack를 없음으로 보고 재발행하던 결함 → 여전히 존재하면 MailboxRejected(fail-closed). bundle `952c20a5` APPLIED, 새 테스트 HEAD 1 fail → 통과, 전체 995 OK skip 6 — `.coord/tasks/U49-M2-apply-manual.md` |
 | U49-D2 | DONE-ACTING (Claude 대행 판정; 자기 계보 → Codex 재검토) | claude · apply | D1 REDTEAM P3: 객체가 아닌 JSON 영수증(receipt)에서 `_dispatch_count`가 AttributeError → 시도로 계수. bundle `da7c62b9` APPLIED, 새 테스트 HEAD 1 error → 통과, 인수 29 OK, 전체 998 OK skip 6(142 s)·compileall 0 — `.coord/tasks/U49-D2-apply-manual.md` |
 | U49-P1 | DONE (사용자 직접 병합) | user | PR #17 병합 → bd9a30a. 후속 PR #18(U49-M2·D2) 열림, 병합은 사용자 |
+| U49-G1 | REJECTED (Codex relay_f4f3da02) | claude · apply | bundle `e6322b1c`(커밋 221d049, 미푸시): 소유자 읽기와 unlink 사이 TOCTOU로 복구한 새 가드를 지울 수 있음 → U49-G1R로 재작업 |
+| U49-G1R | DONE-ACTING (Claude 대행 판정; 자기 계보 → Codex 재검토) | claude · apply | 가드 해제를 `<guard>.recover` 잠금 아래 소유자 비교·unlink로 직렬화(`RELEASE_WAIT_S=5.0`). bundle `38308558` APPLIED, 커밋 5d3badd. 주입 복구 테스트 0633dd1에서 2 fail·G1 코드에서 1 fail → 통과, 인수 35 OK — `tests/test_u49_guard_release_race.py` |
+| U53 | DONE-ACTING (Codex 작성 0633dd1, Claude 대행 APPROVE; Codex 재검토) | codex(구현) · claude(대행 판정) | 무중단 릴레이: `claude-session.turn.lock`, `--session-id/--resume` 세션 유지, 영수증에 응답 `output` 저장, 응답 속 비밀 fail-closed. 새 테스트 099c783에서 red 3 → 통과. PR #19 |
+| U53-F1 | DONE-ACTING (Claude 대행 판정; 자기 계보 → Codex 재검토) | claude · apply | U53 기반 8프로세스 관문 1/30에서 삭제 대기 턴 잠금 PermissionError로 작업자 사망 → 대기 후 재시도. bundle `7b219e29` APPLIED, 커밋 e608caa. 새 테스트 HEAD 1 error → 통과, 8프로세스 관문 3종×30 = 30/30, 전체 1005 OK skip 6(145 s)·compileall 0. PR #19에 포함 |
+| U54 | BACKLOG (U51→U50→U52 재작업 후) | claude(구현) · apply · 판정 codex | 도구 실행 방화벽 빈틈 감사; POLICY_DENIED는 fail-closed |
+| U55 | BACKLOG (U51→U50→U52 재작업 후) | codex·user | 토큰 래칫 보정은 유효 표본 10개로; 새 유료 측정은 별도 승인(U50/U52 S2 승인은 이전 불가) |
+| U56 | DESIGN (Claude 대행 작성, 사용자 지시 2026-09-27; Codex 재검토) | codex(요청 수신, 5%에서 정지) · claude(대행 작성) | Codex 절약모드: NORMAL → THRIFT(표시 잔량 20% 미만) → PACKET_READY → ACTING → RETURN_REVIEW. 잔량% → 토큰 환산 금지, 인계 패킷을 정지 전에 파일로 — `.coord/tasks/U56-thrift-mode-20260927.md` |
 | P09 | DONE (역사 기록) | Ollama 로컬 pilot(bundle 2e3927305284) | `src/util.py` `sort_csv_rows` + 테스트 3개. 같은 커밋에서 P08이 지운 `coord log`를 복구(카드 밖 작업) — `.coord/tasks/P09-csv-sort-manual.md` |
 - 2026-09-19 [R4] 중간 크기 과제(P06, P07) 추가 실측 완료 (DONE, n=3):
   - **P06 (통계 7함수)**: Codex 입력 **−80.2%** (94.0k → 18.6k), 비캐시 **−26.9%** (9.5k → 7.0k), 출력 **−98.3%**, 벽시계 **−9.9%** (91.8s → 82.7s), 품질 PASS (A 31, B 37, 숨은 인수 통과).
