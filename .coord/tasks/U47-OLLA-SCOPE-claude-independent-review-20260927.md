@@ -47,6 +47,27 @@ Valid searches:
 3. **Pre-existing (low, unchanged by this card).** A file-read `OSError`, such as a PermissionError, is reported as
    `local model unreachable`, which misleads the user.
 
+## Correction to finding 1 (17:05, measured) and follow-up bundle
+
+- **Correction.** Finding 1 was wrong as stated. On the real main root (probe `.work/u47os/root_probe.py`, mocked
+  embeddings), the current code does **not** error: top-down `os.walk` reaches the 300-candidate budget before the
+  3,000 scan cap.
+- **The real defect is result quality.** 289 of the 300 embedded candidates came from repository copies under
+  `.coord/pilot` and `.claude/worktrees`, and 56 of the 61 directories entered were copies. A copy walked before the
+  real files can still exhaust the scan cap.
+- **Follow-up F1.** Prune the (parent, child) pairs `(.coord, pilot)` and `(.claude, worktrees)` before counting.
+  - After the fix: 4 of 300 candidates come from copies, all from the small `.coord/pilot-r2` experiment, which is
+    kept on purpose; 5 of 43 directories entered are copies.
+  - A new red→green test confirms that an ordinary `src/pilot/` folder is still searched.
+- **Line endings.** Codex's working copies had mixed line endings (CRLF 199 / LF 48 and 97 / 58), which the apply
+  worker refuses (`MIXED_LINE_ENDINGS`). Both files were backed up to `.work/backup_20260927/u47os_f1/` and normalized
+  to LF, matching HEAD. `git diff` sha256 was identical before and after (`b450ecd3…`).
+- **Bundle.** Manual `.coord/tasks/U47-OLLA-SCOPE-F1-apply-manual.md`, bundle
+  `a3261d043c1a65182c7bb931ce4e6ec8e100ecc7424a86ab3cbab624862e600c`, DRY_RUN acceptance exit 0 (10 tests), stage
+  `.work/u47os_run3/stage/U47-OLLA-SCOPE-F1`.
+- **Not applied.** The author is Claude, so the bundle waits for the independent codex judge. Apply command:
+  `python -m v7_harness.cli pilot run --task U47-OLLA-SCOPE-F1 --worker apply --source . --work-dir .work/u47os_run3 --manual .coord/tasks/U47-OLLA-SCOPE-F1-apply-manual.md --approve a3261d043c1a65182c7bb931ce4e6ec8e100ecc7424a86ab3cbab624862e600c --coord-actor codex`
+
 ## Scope and cost
 
 - Reviewer edits: none to source. Wrote only this receipt and `.work/u47_olla_scope_claude_review/*`.
