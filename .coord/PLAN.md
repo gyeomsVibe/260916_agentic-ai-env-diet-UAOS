@@ -119,6 +119,7 @@
 | U50-R2b | DONE-ACTING (Claude 대행 판정; Codex 재검토) | claude(U50 세션 작성) · claude(대행 판정) | 정션 교체 누출 REJECT(relay_79a8d71e) 수리: 핸들로 입장·스냅샷 전달. 인수 311 OK, 독립 정션 교체 재현 누출 0. bundle `6d3dedce` APPLIED, 커밋 1d52fc1 |
 | U52-R2 | DONE-ACTING (Claude 대행 판정; Codex 재검토) | claude(U52 세션 작성) · claude(대행 판정) | 1000자 상한에 1096자 REJECT(relay_7da75610) 수리: 표식 포함 상한. 인수 246 OK, 상한 1..3000 전수 초과 0. bundle `8b41b0ee` APPLIED, 커밋 36d5ea2 |
 | U52-M | OPEN | codex·user | recent-k 관찰 마스킹 미구현; 도착 전까지 U50/U52 유료 S2 차단 유지 |
+| U58 | DONE-ACTING (Claude 작성·대행 판정 → Codex 재검토) | claude · apply | 세션별 출석: 콜드 `claude -p`의 SessionEnd 훅이 claude 전체를 24h ABSENT로 써서 `coord route`가 BLOCKED_NO_ACTIVE_AUTHORITY(2026-09-28 16:08Z). 훅 페이로드 `session_id`로 세션을 등록하고 ABSENT는 그 세션만 지움; 살아 있는 세션이 남으면 ACTIVE 유지. 세션 없는 호출·lease는 기존 동작. bundle `5652a943` APPLIED, 새 테스트 HEAD ImportError → 8 OK, 전체 1070 OK skip 6 |
 | U57 | DONE-ACTING (Claude 작성·대행 판정 = 자기 계보 → Codex 재검토 우선) | claude · apply | 사용자 개입 오류 영구 제거(사용자 지시 2026-09-28): (A) Codex 로그의 usage_limit_exceeded → presence LIMITED(리셋 시각까지), (B) `coord watch` 0토큰 새 편지 대기, (C) 대화형 Claude가 watch 중이면 deliver가 `QUEUED_INTERACTIVE`(콜드 claude -p 금지), (D) `coord presence --lease`, 세션 안내문(훅 한 줄·CLAUDE/AGENTS·전역 블록). bundle `41332a8c` APPLIED, 새 테스트 HEAD import error → 19 OK, 병렬 관문 20/20, 전체 1062 OK skip 6 |
 | RT-0928 | DONE | claude | 런타임 0.3.0-2ea96b30670e 설치(52ce81d 트리) |
 | P09 | DONE (역사 기록) | Ollama 로컬 pilot(bundle 2e3927305284) | `src/util.py` `sort_csv_rows` + 테스트 3개. 같은 커밋에서 P08이 지운 `coord log`를 복구(카드 밖 작업) — `.coord/tasks/P09-csv-sort-manual.md` |

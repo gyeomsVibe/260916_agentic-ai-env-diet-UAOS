@@ -70,6 +70,17 @@ def payload_candidates(stdin_text: str) -> list[str]:
     return found
 
 
+def hook_session(stdin_text: str) -> str | None:
+    """U58: the session id a Claude Code or Codex hook payload carries, or None (a terminal, or no id)."""
+    try:
+        payload = json.loads(stdin_text) if stdin_text.strip() else {}
+    except json.JSONDecodeError:
+        return None
+    value = payload.get("session_id") if isinstance(payload, dict) else None
+    # 200 characters bounds a key that lands in a small JSON file; real ids are 36-character UUIDs.
+    return value.strip()[:200] if isinstance(value, str) and value.strip() else None
+
+
 def find_project(candidates: Iterable[str | Path], max_depth: int = 25) -> Path | None:
     for candidate in candidates:
         try:

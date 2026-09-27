@@ -35,7 +35,7 @@ def _path(project: Path, tool: str) -> Path:
 
 
 def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, now: float | None = None,
-         lease: bool = False) -> Path:
+         lease: bool = False, session: str | None = None) -> Path:
     """Write one heartbeat. `lease=True` records a capability fact (e.g. a provider's quota answer) that a session
     heartbeat of another state cannot overwrite before it expires.
 
@@ -63,6 +63,8 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
     with _tool_lock(target):
         if not lease and _live_lease(target, moment, state):
             return target
+        if session and not lease:
+            record = _merge_session(target, record, session, state, moment, ttl_s)
         tmp = target.with_name(f".{tool}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         os.replace(tmp, target)
@@ -104,6 +106,35 @@ def _tool_lock(target: Path):
         finally:
             os.close(handle)
             lock_path.unlink(missing_ok=True)
+
+
+def _merge_session(target: Path, record: dict[str, Any], session: str, state: str, moment: float,
+                   ttl_s: int) -> dict[str, Any]:
+    """U58: one tool can have several sessions open; the desk reads ACTIVE while any of them is live.
+
+    Seen 2026-09-28: `coord deliver` started a cold `claude -p`, its SessionEnd hook wrote claude ABSENT for 24 h,
+    and `coord route` returned BLOCKED_NO_ACTIVE_AUTHORITY while the acting conductor's session was still open.
+    Each ACTIVE heartbeat now registers its session id; ABSENT removes only that id, and the tool reads ABSENT only
+    when no registered session is still within its TTL. Called under the tool lock.
+    """
+    sessions: dict[str, float] = {}
+    try:
+        previous = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(previous, dict) and isinstance(previous.get("sessions"), dict):
+            sessions = {str(k): float(v) for k, v in previous["sessions"].items()
+                        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > moment}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        pass
+    if state == "ACTIVE":
+        sessions[session] = moment + ttl_s
+    else:
+        sessions.pop(session, None)
+    if state != "ACTIVE" and sessions:
+        # Another session is still at the desk: keep ACTIVE until the last live session's heartbeat expires.
+        return {**record, "state": "ACTIVE", "expires_at": max(sessions.values()), "sessions": sessions}
+    if state == "ACTIVE":
+        return {**record, "expires_at": max(sessions.values()), "sessions": sessions}
+    return {**record, "sessions": {}}
 
 
 def _live_lease(target: Path, moment: float, state: str) -> bool:
