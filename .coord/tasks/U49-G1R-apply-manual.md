@@ -1,3 +1,25 @@
+```contract
+work_id: U49-G1R
+worker: apply
+goal: deliver releases the per-message dispatch guard only while it owns it, comparing the owner token and unlinking under the same <guard>.recover lock that stale-guard recovery holds, so release and recovery cannot interleave.
+inputs:
+- v7_harness/coord/deliver.py sha256=988c6d5b7299e4b3eb99742722501e6d14b869a1f9c983c82233698205f83c4d
+allow:
+- v7_harness/coord/deliver.py
+- tests/test_u49_guard_release_race.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u49_guard_release_race tests.test_u53_nonstop_relay tests.test_u48_deliver tests.test_u48_deliver_d1 tests.test_u49_dispatch_count tests.test_u49_mailbox_locked_ack tests.test_u15_coord_cli
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: U49-G1R, rework of U49-G1 after Codex REJECT (relay_f4f3da02: recovery injected between owner read and unlink deleted the new guard). Red-first: the new race test fails on base 0633dd1 (2) and on the rejected G1 code 221d049 (1, Codex's counterexample, new_guard_survived=false); green on stage. Base is U53 0633dd1 (PR #19). Acting judge Claude as acting Codex (user order 2026-09-27, all authority until Codex returns); self-lineage, Codex re-reviews.
+
+===FILE: v7_harness/coord/deliver.py===
 """coord deliver: 도구 간 직접 전달기 — 사용자 수동 릴레이 영구 제거.
 
 근본 결함(2026-09-27 사용자 지적):
@@ -94,11 +116,6 @@ def _claude_turn(project_dir: Path | None, timeout: int):
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             break
-        except PermissionError:
-            # U53-F1: on Windows the previous holder's unlink leaves the lock delete-pending for a moment and
-            # O_EXCL then raises PermissionError, not FileExistsError (1 of 30 eight-process runs). Wait, do not crash.
-            time.sleep(CLAIM_SLEEP_S)
-            continue
         except FileExistsError:
             try:
                 stale = time.time() - lock.stat().st_mtime > timeout + 30
@@ -529,3 +546,98 @@ def deliver(
                                  thread=thread, runner=runner)
     finally:
         _release_guard(guard, owner)
+===FILE: tests/test_u49_guard_release_race.py===
+"""U49-G1R: guard release and stale-guard recovery cannot interleave (Codex REJECT of U49-G1, 2026-09-27).
+
+Counterexample from the verdict: a recovery that lands after the releasing dispatcher decided to remove the guard but
+before the unlink took the guard over, and the unlink then deleted the new holder's guard. The test injects a real
+recovery (`_acquire_guard` by a second dispatcher, with the guard aged past GUARD_STALE_S) at the moment the releasing
+dispatcher unlinks the guard. It must either be refused or keep its new guard.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from v7_harness.coord import deliver as deliver_module
+from v7_harness.coord.deliver import deliver
+from v7_harness.coord.mailbox import Mailbox
+
+OTHER = {"message_id": "x", "owner": "recoverer"}
+
+
+class _Runner:
+    def __call__(self, argv, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"result": "accepted", "type": "result"}), stderr="")
+
+
+class GuardReleaseRaceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.project = Path(self.tmp.name)
+        (self.project / ".coord" / "mailbox").mkdir(parents=True)
+        self.guards = self.project.resolve() / ".coord" / "mailbox" / "delivery" / "guards"
+
+    def test_recovery_injected_at_unlink_never_loses_the_new_guard(self) -> None:
+        real_unlink = Path.unlink
+        outcome: dict[str, object] = {}
+
+        def unlink(path: Path, missing_ok: bool = False) -> None:
+            if path.suffix == ".lock" and path.parent.name == "guards" and "recovered" not in outcome:
+                old = time.time() - deliver_module.GUARD_STALE_S - 10
+                os.utime(path, (old, old))  # the releasing dispatcher looks crashed to a second dispatcher
+                box = Mailbox(self.project / ".coord" / "mailbox")
+                fd = deliver_module._acquire_guard(path, box, path.stem, "d" * 64)
+                outcome["recovered"] = fd is not None
+                if fd is not None:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(json.dumps(OTHER).encode("utf-8"))
+            real_unlink(path, missing_ok=missing_ok)
+
+        with patch("v7_harness.coord.deliver.shutil.which", return_value="claude"), \
+                patch.object(Path, "unlink", unlink):
+            result = deliver(self.project, message="U49-G1R race", actor="codex", target="claude", runner=_Runner())
+        self.assertEqual("DISPATCHED", result.reason)
+        self.assertIn("recovered", outcome, "the injection point was never reached")
+        guards = list(self.guards.glob("*.lock"))
+        if outcome["recovered"]:
+            self.assertEqual(1, len(guards), "new_guard_survived=false: the recoverer's guard was deleted")
+            self.assertEqual(OTHER, json.loads(guards[0].read_text(encoding="utf-8")))
+        else:
+            self.assertEqual([], guards)
+
+    def test_own_guard_is_removed_and_recover_lock_is_released(self) -> None:
+        with patch("v7_harness.coord.deliver.shutil.which", return_value="claude"):
+            result = deliver(self.project, message="U49-G1R plain", actor="codex", target="claude", runner=_Runner())
+        self.assertEqual("DISPATCHED", result.reason)
+        self.assertEqual([], list(self.guards.glob("*.lock")))
+        self.assertEqual([], list(self.guards.glob("*.recover")))
+
+    def test_replaced_guard_is_left_to_its_new_owner(self) -> None:
+        class _Replace(_Runner):
+            def __call__(inner, argv, **kwargs):
+                (guard,) = self.guards.glob("*.lock")
+                guard.write_text(json.dumps(OTHER), encoding="utf-8")
+                return super().__call__(argv, **kwargs)
+
+        with patch("v7_harness.coord.deliver.shutil.which", return_value="claude"):
+            deliver(self.project, message="U49-G1R replaced", actor="codex", target="claude", runner=_Replace())
+        (guard,) = self.guards.glob("*.lock")
+        self.assertEqual(OTHER, json.loads(guard.read_text(encoding="utf-8")))
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.

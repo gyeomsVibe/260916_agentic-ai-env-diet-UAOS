@@ -1,3 +1,25 @@
+```contract
+work_id: U53-F1
+worker: apply
+goal: _claude_turn waits out a delete-pending turn lock (Windows PermissionError on O_EXCL) instead of crashing the dispatcher.
+inputs:
+- v7_harness/coord/deliver.py sha256=915fd84816131f46211b381b670a78733b3b41316520e94775e8a00520d9de87
+allow:
+- v7_harness/coord/deliver.py
+- tests/test_u53_turn_lock_delete_pending.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u53_turn_lock_delete_pending tests.test_u49_guard_release_race tests.test_u53_nonstop_relay tests.test_u48_deliver tests.test_u48_deliver_d1 tests.test_u49_dispatch_count tests.test_u49_mailbox_locked_ack tests.test_u15_coord_cli
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: U53-F1, defect found by Claude (acting Codex) in U53 0633dd1: test_u48_deliver_d1 eight-process gate failed 1/30 on the U53 base with PermissionError in _claude_turn os.open. New deterministic test red on HEAD (1 error), green on stage. Acting judge Claude (user order 2026-09-27); Codex re-reviews.
+
+===FILE: v7_harness/coord/deliver.py===
 """coord deliver: 도구 간 직접 전달기 — 사용자 수동 릴레이 영구 제거.
 
 근본 결함(2026-09-27 사용자 지적):
@@ -529,3 +551,56 @@ def deliver(
                                  thread=thread, runner=runner)
     finally:
         _release_guard(guard, owner)
+===FILE: tests/test_u53_turn_lock_delete_pending.py===
+"""U53-F1: a delete-pending Claude turn lock (Windows PermissionError on O_EXCL) is waited out, not raised.
+
+Seen 1 of 30 real eight-process runs of test_u48_deliver_d1 on 0633dd1: `_claude_turn` caught only FileExistsError, so
+the worker process died with PermissionError and its letter was never dispatched.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from v7_harness.coord.deliver import deliver
+
+
+class _Runner:
+    def __call__(self, argv, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"type": "result", "result": "ok"}), stderr="")
+
+
+class TurnLockDeletePendingTests(unittest.TestCase):
+    def test_permission_error_on_turn_lock_is_retried(self) -> None:
+        real_open = os.open
+        raised: list[str] = []
+
+        def flaky_open(path, flags, *args):
+            if str(path).endswith("claude-session.turn.lock") and not raised:
+                raised.append(str(path))
+                raise PermissionError(13, "delete pending", str(path))
+            return real_open(path, flags, *args)
+
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            (project / ".coord" / "mailbox").mkdir(parents=True)
+            with patch("v7_harness.coord.deliver.shutil.which", return_value="claude"), \
+                    patch("v7_harness.coord.deliver.os.open", flaky_open):
+                result = deliver(project, message="u53 f1", actor="codex", target="claude", runner=_Runner())
+        self.assertEqual(1, len(raised), "the injection point was never reached")
+        self.assertEqual("DISPATCHED", result.reason)
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
