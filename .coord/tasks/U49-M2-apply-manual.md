@@ -1,3 +1,25 @@
+```contract
+work_id: U49-M2
+worker: apply
+goal: Mailbox.publish fails closed when an existing ack or claimed copy stays locked after PUBLISH_TRIES reads, instead of treating it as absent and publishing an acked id again.
+inputs:
+- v7_harness/coord/mailbox.py sha256=39537b8be1578c6d2de32663ac87c5b211e83a8f1dfe6576e28b317d9f8f9dab
+allow:
+- v7_harness/coord/mailbox.py
+- tests/test_u49_mailbox_locked_ack.py
+acceptance: C:/Python314/python.exe -m unittest tests.test_u49_mailbox_locked_ack tests.test_u32_mailbox_lossless tests.test_u23_mailbox tests.test_u48_deliver tests.test_u48_deliver_d1
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card: PLAN U49-M2, REDTEAM P2 from .coord/tasks/U49-acting-codex-review-20260927.md (D0 _read_settled). New test red on HEAD (1 failure: locked ack republished), 2 guard tests green. Acting judge Claude (user order 2026-09-27); Codex re-reviews.
+
+===FILE: v7_harness/coord/mailbox.py===
 from __future__ import annotations
 from dataclasses import dataclass
 import json
@@ -322,3 +344,66 @@ class Mailbox:
             if self._return_to_inbox(path, msg_id):
                 recovered.append(msg_id)
         return recovered
+===FILE: tests/test_u49_mailbox_locked_ack.py===
+"""U49-M2: an ack file that stays locked must not be read as "absent" (that would publish an acked id again)."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from v7_harness.coord import mailbox as mailbox_module
+from v7_harness.coord.mailbox import Mailbox, MailboxRejected
+
+PAYLOAD = {"kind": "HANDOFF", "message": "hello"}
+
+
+class LockedAckTests(unittest.TestCase):
+    def _acked_box(self, directory: str) -> tuple[Mailbox, Path]:
+        box = Mailbox(Path(directory))
+        box.publish("m1", PAYLOAD)
+        claim = box.claim("m1", "reader")
+        box.ack(claim)
+        ack = box.ack_dir / "m1.json"
+        self.assertTrue(ack.is_file())
+        return box, ack
+
+    def test_locked_ack_fails_closed_instead_of_republishing(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            box, ack = self._acked_box(d)
+            real = Path.read_bytes
+
+            def locked(path: Path) -> bytes:
+                if path == ack:
+                    raise PermissionError(13, "locked", str(path))
+                return real(path)
+
+            with mock.patch.object(Path, "read_bytes", locked), mock.patch.object(mailbox_module.time, "sleep"):
+                with self.assertRaises(MailboxRejected):
+                    box.publish("m1", PAYLOAD)
+            self.assertFalse((box.inbox_dir / "m1.json").exists())
+
+    def test_readable_ack_still_dedupes(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            box, ack = self._acked_box(d)
+            self.assertEqual(ack, box.publish("m1", PAYLOAD))
+            self.assertFalse((box.inbox_dir / "m1.json").exists())
+
+    def test_vanished_file_is_still_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            box = Mailbox(Path(d))
+            path = box.inbox_dir / "m2.json"
+            self.assertIsNone(mailbox_module._read_settled(path))
+            box.publish("m2", PAYLOAD)
+            self.assertTrue(path.is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
