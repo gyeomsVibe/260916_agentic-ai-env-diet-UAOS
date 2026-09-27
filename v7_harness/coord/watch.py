@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from v7_harness.coord.mailbox import Mailbox
-from v7_harness.coord.presence import PRESENCE_DIR, TOOLS
+from v7_harness.coord.presence import PRESENCE_DIR, TOOLS, replace_with_retry
 
 # 30 s between inbox scans: the hand-written loop used 30 s on 2026-09-27 and a letter waited at most that long;
 # one scan lists one directory, so a shorter interval costs only disk reads, never tokens.
@@ -48,7 +48,12 @@ def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, 
         tmp = target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(json.dumps({"tool": tool, "token": token, "pid": os.getpid(),
                                    "expires_at": moment + live_for}), encoding="utf-8")
-        os.replace(tmp, target)
+        try:
+            replace_with_retry(tmp, target)
+        except PermissionError:
+            # U60: a missed beat is not a missed letter. The file stays live for three scans, the next beat
+            # rewrites it, and the inbox scan below runs either way.
+            pass
 
 
 def _clear(project: Path, tools: tuple[str, ...], token: str) -> None:
