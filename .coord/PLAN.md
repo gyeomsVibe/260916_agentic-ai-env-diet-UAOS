@@ -101,6 +101,8 @@
 | U48-D1 | PREPARED (Claude 17:25: attempt 번호 기록+8편지 병렬 유실 0 테스트, 20/20; D0 적용 후 번들화 — `.coord/tasks/U48-D1-prep-20260927.md`) | codex(판정) · apply(0토큰) | `coord deliver` 고정: 편지 전달→수신 도구 ACK 영수증→미ACK·실패 편지 보존(삭제 금지)·재시도 횟수 기록. 관문: 병렬 8프로세스 전달에서 유실 0, ACK 없는 편지는 inbox에 남음, 실패 사유 보존. |
 | U47-X1 | READY | codex (re-review) | b4c0fba used `Calculator-Exempt` against docs/47 §3; decide whether to keep or re-commit through the gate |
 | U47-C2 | READY | codex·user | `pilot review --reviewer claude` works but one review costs ~95k counted tokens (62k cache reads) > 80k budget → UNUSABLE (18:29, $0.176); decide default budget or cache-read accounting — docs/47 §1-1 |
+| U49 | ACTIVE (Claude 권한대행, 사용자 선언 Codex 부재 2026-09-27 19:04) | claude(지휘 대행·설계) · 판정 codex 복귀 시 | 권한대행 절차 S0~S4 — `.coord/tasks/U49-acting-process-20260927.md`. S0: 전체 958 OK skip 6. S1: W2 재번들 `b5728f35…` PASS → agy 판정 QUOTA(97h59m, 약 10-01 21:15) UNUSABLE·미적용; route=claude. 독립 판정자 0이므로 모든 번들 REVIEW 유지. |
+| U49-R1 | READY | claude(작성) · codex(판정) | `budget_route.route_authority`가 결과에 무관한 도구의 UNKNOWN에도 BLOCKED_UNKNOWN(19:04 실측: codex ABSENT·claude ACTIVE·agy UNKNOWN → 차단). red 테스트→apply 번들 DRY_RUN까지만. |
 | P09 | DONE (역사 기록) | Ollama 로컬 pilot(bundle 2e3927305284) | `src/util.py` `sort_csv_rows` + 테스트 3개. 같은 커밋에서 P08이 지운 `coord log`를 복구(카드 밖 작업) — `.coord/tasks/P09-csv-sort-manual.md` |
 - 2026-09-19 [R4] 중간 크기 과제(P06, P07) 추가 실측 완료 (DONE, n=3):
   - **P06 (통계 7함수)**: Codex 입력 **−80.2%** (94.0k → 18.6k), 비캐시 **−26.9%** (9.5k → 7.0k), 출력 **−98.3%**, 벽시계 **−9.9%** (91.8s → 82.7s), 품질 PASS (A 31, B 37, 숨은 인수 통과).
