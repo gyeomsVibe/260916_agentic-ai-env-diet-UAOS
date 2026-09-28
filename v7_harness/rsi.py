@@ -88,6 +88,9 @@ REMEDIES: dict[str, tuple[str, str]] = {
     "SOURCE_DIVERGED": ("environment", "Keep a single writer during pilot runs (QUIET_LOCK); retry after the other writer finishes"),
 }
 
+# Classes that say only "the worker failed"; the detail may name the real cause (U81).
+GENERIC_CLASSES = ("PROVIDER_ERROR", "EXECUTION_ERROR")
+
 
 class RsiRefused(Exception):
     """An adoption or rollback that the rules do not allow. Carries the read-only gate evidence when there is some."""
@@ -184,9 +187,15 @@ def _cause(row: dict[str, Any]) -> str | None:
     if row.get("outcome") == "PASS":
         return None
     error_class = row.get("error_class")
-    if error_class and error_class != "NONE":
-        return str(error_class)
     detail = str(row.get("error_detail") or "")
+    if error_class and error_class != "NONE":
+        # U81: a generic worker failure whose detail names a specific cause is that cause (the U80 apply refusal was
+        # UNREQUESTED_DELETION, not an Ollama outage). A specific class is never overridden by its detail.
+        if error_class in GENERIC_CLASSES:
+            for known in REMEDIES:
+                if known not in GENERIC_CLASSES and known in detail:
+                    return known
+        return str(error_class)
     for known in REMEDIES:
         if known in detail:
             return known
