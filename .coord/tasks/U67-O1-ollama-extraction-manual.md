@@ -1,3 +1,39 @@
+```contract
+work_id: U67-O1
+worker: local
+goal: Mechanically extract implemented token-saving and nonstop mechanisms from the pinned sources into bounded JSON.
+inputs:
+- .coord/PROJECT_MANUAL.md sha256=1d08eed081334383bf6c5680683868c191ff483e557083a695ae56b850bac791
+- docs/52_u63-token-budget-thrift-mode.md sha256=855efe711321d55886af1b6707aca87818013ba00922898b44d8832f37f608a7
+- docs/53_u66-atomic-dispatch-intent.md sha256=db801bcffa7b1136dc3786bc16ff66a31c4e5e9508096c9b189972510011d0ce
+- v7_harness/budget_route.py sha256=1ed3c34ab7c2efd4695099c87c5f0fb6300fb808e6949fbff73c297d00b2198d
+- v7_harness/coord/thrift.py sha256=e832fbaad81aa173cd6ded8f6ae8ab62c50af00ca64ed0688a90b2a64a3e7dba
+- v7_harness/coord/deliver.py sha256=aada355dca62ecdd5fcca0f6b07a6d3d7da953d235f517934a63e7ced2a2c82a
+- v7_harness/coord/watch.py sha256=7eb50c9488483ac83ad8177502b24c5f0266cd396db049c58fd03b97b71d8c6e
+- v7_harness/olla.py sha256=1afa413c72fd32514e3fbdc3bf19460ffe36ecd51da5754049f478434fd15b07
+allow:
+- .coord/PROJECT_MANUAL.md
+- docs/52_u63-token-budget-thrift-mode.md
+- docs/53_u66-atomic-dispatch-intent.md
+- v7_harness/budget_route.py
+- v7_harness/coord/thrift.py
+- v7_harness/coord/deliver.py
+- v7_harness/coord/watch.py
+- v7_harness/olla.py
+acceptance: C:/Python314/python.exe -m unittest -v tests.test_u63_thrift_mode tests.test_u64f_no_double_wake tests.test_u57_desk_signals tests.test_u17_olla
+forbidden: design changes; edits outside allow; editing or deleting tests; network; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: codex
+timeout_s: 300
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Perform one mechanical extraction only. From the pinned files, list each implemented token-saving or nonstop mechanism as JSON objects with keys: mechanism, source_file, exact_symbol_or_heading, deterministic_or_model, evidence_status. Quote no more than one short source phrase per object. Do not recommend, design, approve, judge, or edit files. Output valid JSON only and at most 20 objects.
+
+## Project manual transmitted in full
+
 # UAOS 프로젝트 완성 매뉴얼
 
 - work_id: U67
@@ -14,3 +50,6 @@
 - 중단: 입력 해시 불일치, 중복 소유권, 같은 원인 2회 실패(Ollama) 또는 3회 실패(일반 실행), 고정 인수 변경, 예산 초과, 범위 밖 쓰기, 승인 경계 도달.
 
 
+## Output
+
+- Reply with ===FILE / ===EDIT blocks only. No explanations. Do not claim success; the acceptance command decides.

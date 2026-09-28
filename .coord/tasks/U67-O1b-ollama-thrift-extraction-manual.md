@@ -1,3 +1,26 @@
+```contract
+work_id: U67-O1b
+worker: local
+goal: Mechanically extract the token-budget state machine implemented in v7_harness/coord/thrift.py as bounded JSON.
+inputs:
+- .coord/PROJECT_MANUAL.md sha256=1d08eed081334383bf6c5680683868c191ff483e557083a695ae56b850bac791
+- v7_harness/coord/thrift.py sha256=e832fbaad81aa173cd6ded8f6ae8ab62c50af00ca64ed0688a90b2a64a3e7dba
+allow:
+- v7_harness/coord/thrift.py
+acceptance: C:/Python314/python.exe -m unittest -v tests.test_u63_thrift_mode
+forbidden: design changes; edits outside allow; editing or deleting tests; network; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: codex
+timeout_s: 180
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Perform one mechanical extraction only. From the pinned files, list each implemented token-saving or nonstop mechanism as JSON objects with keys: mechanism, source_file, exact_symbol_or_heading, deterministic_or_model, evidence_status. Quote no more than one short source phrase per object. Do not recommend, design, approve, judge, or edit files. Output valid JSON only and at most 20 objects.
+
+## Project manual transmitted in full
+
 # UAOS 프로젝트 완성 매뉴얼
 
 - work_id: U67
@@ -14,3 +37,6 @@
 - 중단: 입력 해시 불일치, 중복 소유권, 같은 원인 2회 실패(Ollama) 또는 3회 실패(일반 실행), 고정 인수 변경, 예산 초과, 범위 밖 쓰기, 승인 경계 도달.
 
 
+## Output
+
+- Reply with ===FILE / ===EDIT blocks only. No explanations. Do not claim success; the acceptance command decides.

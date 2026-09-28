@@ -113,6 +113,42 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual(["codex rules"], report["drift"])
 
+    def test_canon_generated_rule_files_have_one_writer(self) -> None:
+        _run(self.home, "--apply", "--no-rules")
+        marker = "<!-- GENERATED from English canonical rules v5.26.0. Edit the source files, not this deployment. -->\n"
+        paths = (self.home / ".claude" / "CLAUDE.md", self.home / ".codex" / "AGENTS.md",
+                 self.home / ".gemini" / "GEMINI.md")
+        for index, path in enumerate(paths):
+            prefix = "\ufeff" if index == 0 else ""
+            path.write_text(prefix + marker + f"# canonical {path.name}\n", encoding="utf-8")
+        before = {path: path.read_text(encoding="utf-8") for path in paths}
+
+        code, report = _run(self.home, "--check")
+        self.assertEqual(0, code)
+        self.assertEqual([], report["drift"])
+        actions = {change["target"]: change for change in report["changes"]}
+        for tool, path in zip(("claude", "codex", "antigravity"), paths):
+            self.assertEqual("UNCHANGED", actions[f"{tool} rules"]["action"])
+            self.assertIn("canon owns", actions[f"{tool} rules"]["detail"])
+            self.assertEqual(before[path], path.read_text(encoding="utf-8"))
+
+        _run(self.home, "--apply", "--uninstall")
+        self.assertEqual(before, {path: path.read_text(encoding="utf-8") for path in paths})
+
+    def test_quoted_canon_marker_does_not_transfer_ownership(self) -> None:
+        path = self.home / ".codex" / "AGENTS.md"
+        original = ("# Personal rules\n"
+                    "- documentation quote: <!-- GENERATED from English canonical rules v5.26.0. -->\n")
+        path.write_text(original, encoding="utf-8")
+
+        _run(self.home, "--apply")
+        installed = path.read_text(encoding="utf-8")
+        self.assertTrue(installed.startswith(original.rstrip("\n")))
+        self.assertIn(gi.BLOCK_BEGIN, installed)
+
+        _run(self.home, "--apply", "--uninstall")
+        self.assertEqual(original, path.read_text(encoding="utf-8"))
+
     def test_uninstall_restores_the_original_files(self) -> None:
         before = _snapshot(self.home)
         _run(self.home, "--apply")
