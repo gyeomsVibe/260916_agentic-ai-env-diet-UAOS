@@ -1,0 +1,9 @@
+{"ok": true, "created": [".coord/PLAN.md", ".coord/PROJECT_MANUAL.md", ".coord/tasks/", ".coord/mailbox/", ".work/", ".coord/tasks/contract_template.md"], "gitignore_added": [".work/", ".coord/pilot/", ".coord/stream/", ".coord/codex_brief.md", ".coord/mailbox/", ".coord/presence/", ".coord/usage/runs.jsonl"], "contract_manuals": ".coord/tasks/<work_id>-manual.md", "next": ["coord presence --tool <codex|claude|antigravity> --state ACTIVE", "fill .coord/PROJECT_MANUAL.md (big picture) before the first delegation", "pilot manual new ... then pilot manual lint ... then pilot run --manual ..."]}
+{"ok": true, "created": [], "gitignore_added": [], "contract_manuals": ".coord/tasks/<work_id>-manual.md", "next": ["coord presence --tool <codex|claude|antigravity> --state ACTIVE", "fill .coord/PROJECT_MANUAL.md (big picture) before the first delegation", "pilot manual new ... then pilot manual lint ... then pilot run --manual ..."]}
+
+--- STDERR ---
+............................................
+----------------------------------------------------------------------
+Ran 44 tests in 2.060s
+
+OK

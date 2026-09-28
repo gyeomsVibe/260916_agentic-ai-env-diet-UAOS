@@ -126,6 +126,19 @@ def _read(path: Path) -> str | None:
         return None
 
 
+def _is_canon_generated(text: str) -> bool:
+    """Accept the legacy marker or the generator's exact title/blank/marker header."""
+    lines = text.lstrip("\ufeff").splitlines()
+    if lines and lines[0].startswith(CANON_GENERATED_MARKER):
+        return True
+    return (
+        len(lines) >= 3
+        and lines[0] in {"# Antigravity Global Rules", "# Codex Global Rules", "# Claude Global Rules"}
+        and lines[1] == ""
+        and lines[2].startswith(CANON_GENERATED_MARKER)
+    )
+
+
 def _with_block(text: str | None, block: str | None) -> str:
     text = text or ""
     stripped = BLOCK_RE.sub("\n", text).rstrip("\n")
@@ -232,7 +245,7 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
         if rules:
             path = rule_paths[tool]
             current_rules = _read(path)
-            if current_rules is not None and current_rules.lstrip("\ufeff").startswith(CANON_GENERATED_MARKER):
+            if current_rules is not None and _is_canon_generated(current_rules):
                 # The canon generator owns the complete file. A second block writer made generator Check and this
                 # installer's --check mutually exclusive (U65-G); hooks and runtime remain this installer's scope.
                 changes.append(Change(f"{tool} rules", path, "UNCHANGED",
