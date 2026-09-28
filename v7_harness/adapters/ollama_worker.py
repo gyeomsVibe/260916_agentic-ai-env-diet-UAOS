@@ -299,9 +299,10 @@ def main(argv: list[str] | None = None) -> int:
     timeout_s = int(str(args.print_timeout).rstrip("s") or 600)
 
     def envelope(status: str, response: str, usage: dict[str, int], error: str = "") -> int:
+        # U68-L: ASCII escapes; a cp949 pilot pipe raised UnicodeEncodeError on U+2014 and lost the envelope (U67-C1).
         print(json.dumps(
             {"status": status, "response": response, "usage": usage, "conversation_id": "ollama-local", "error": error},
-            ensure_ascii=False,
+            ensure_ascii=True,
         ))
         return 0 if status == "SUCCESS" else 1
 

@@ -30,10 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     args.prompt = resolve_prompt(args.prompt)
 
     def envelope(status: str, response: str, error: str = "") -> int:
+        # U68-L: ASCII escapes; a cp949 pilot pipe raised UnicodeEncodeError on U+2014 and lost the envelope (U67-C1).
         print(json.dumps(
             {"status": status, "response": response, "usage": NO_USAGE, "conversation_id": "apply-deterministic",
              "error": error},
-            ensure_ascii=False,
+            ensure_ascii=True,
         ))
         return 0 if status == "SUCCESS" else 1
 
