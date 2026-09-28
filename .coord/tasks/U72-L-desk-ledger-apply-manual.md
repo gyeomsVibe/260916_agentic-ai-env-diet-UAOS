@@ -1,3 +1,977 @@
+```contract
+work_id: U72-L
+worker: apply
+goal: Route every usage-ledger write and read in a linked worktree to the main checkout's desk ledger, and add coord usage-collect to recover rows stranded in worktree copies, append-only and idempotent under parallel runs
+inputs:
+- v7_harness/coord/usage_ledger.py sha256=29be48a9b8d4693ccc89ca7f71bae5dc4645bd88cc6f5586563871794ee6902d
+- v7_harness/admission.py sha256=65c958d74d04e7d71c8c74d05fc79e5405e60d985105387cf35837cce022cdd3
+- v7_harness/rsi.py sha256=74b212f234a70b315c23a6e8fa8a6e0e1c8b9f0c494b2383c6dc989622588a8b
+- v7_harness/cli.py sha256=5839c6352f624cf26eaac9832987ef3a8bdefe34e234296cd92baff820d38a6e
+allow:
+- v7_harness/coord/usage_ledger.py
+- v7_harness/admission.py
+- v7_harness/rsi.py
+- v7_harness/cli.py
+- tests/test_u72l_desk_ledger.py
+- docs/59_u72l-desk-ledger.md
+acceptance: python -m unittest tests.test_u72l_desk_ledger tests.test_u54_firewall_audit tests.test_u54_s2_caller_review tests.test_u69_admission_gate
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+U72 gate 'no ledger omission' fails: the desk ledger stops at U44-FIX6B because worktree pilots wrote into uncommitted worktree copies (142 orphan rows in 35 worktrees, dry run). On 58ba50b record_usage from a linked worktree writes to the worktree. Judge claude (ACTING while Codex is LIMITED); Codex re-reviews. Write the six files below exactly.
+
+===FILE: v7_harness/coord/usage_ledger.py===
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+SECRET_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+    re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{20,}"),
+]
+
+REQUIRED_KEYS = (
+    "schema",
+    "work_id",
+    "actor",
+    "model",
+    "kind",
+    "collection_mode",
+    "input_tokens",
+    "output_tokens",
+    "wall_time_s",
+    "outcome",
+    "receipt",
+    "independent_verifier",
+    "rsi_eligible",
+    "exclusion_reason",
+)
+
+NULLABLE_KEYS = {
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "wall_time_s",
+    "independent_verifier",
+    "exclusion_reason",
+}
+
+NON_NULLABLE_KEYS = set(REQUIRED_KEYS) - NULLABLE_KEYS
+
+NON_EMPTY_STRING_KEYS = (
+    "schema",
+    "work_id",
+    "actor",
+    "kind",
+    "collection_mode",
+    "outcome",
+    "receipt",
+)
+
+NULLABLE_STRING_KEYS = (
+    "model",
+    "independent_verifier",
+    "exclusion_reason",
+)
+
+
+class UsageRejected(Exception):
+    """Raised when a usage record fails validation or secret check."""
+    pass
+
+
+def _check_secrets(obj: Any) -> None:
+    if isinstance(obj, str):
+        for pat in SECRET_PATTERNS:
+            if pat.search(obj):
+                raise UsageRejected("secret detected in usage record")
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            _check_secrets(k)
+            _check_secrets(v)
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            _check_secrets(item)
+
+
+def record_usage(
+    project_root: Path,
+    entry: dict[str, Any],
+    lock_timeout_s: float = 10.0,
+) -> Path:
+    if not isinstance(entry, dict):
+        raise UsageRejected("entry must be a dict")
+
+    for k in REQUIRED_KEYS:
+        if k not in entry:
+            raise UsageRejected(f"missing required key: {k}")
+        if k in NON_NULLABLE_KEYS and entry[k] is None:
+            raise UsageRejected(f"key cannot be null: {k}")
+
+    # schema validation
+    if entry["schema"] != "uaos-usage-v2":
+        raise UsageRejected("schema must equal 'uaos-usage-v2'")
+
+    # non-empty string validation
+    for k in NON_EMPTY_STRING_KEYS:
+        val = entry[k]
+        if not isinstance(val, str) or len(val.strip()) == 0:
+            raise UsageRejected(f"{k} must be a non-empty string")
+
+    # nullable string validation
+    for k in NULLABLE_STRING_KEYS:
+        val = entry[k]
+        if val is not None and not isinstance(val, str):
+            raise UsageRejected(f"{k} must be a string or null")
+
+    # rsi_eligible validation
+    if not isinstance(entry["rsi_eligible"], bool):
+        raise UsageRejected("rsi_eligible must be bool")
+
+    # token counts validation
+    for token_key in ("input_tokens", "output_tokens"):
+        val = entry[token_key]
+        if val is not None:
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                raise UsageRejected(f"{token_key} must be a non-negative integer or null")
+
+    # wall_time_s validation
+    wall_time = entry["wall_time_s"]
+    if wall_time is not None:
+        if isinstance(wall_time, bool) or not isinstance(wall_time, (int, float)) or wall_time < 0:
+            raise UsageRejected("wall_time_s must be a non-negative number or null")
+
+    # Secret check on all values/strings
+    _check_secrets(entry)
+
+    # Immutability & ts handling
+    record = dict(entry)
+    if "ts" not in record or record["ts"] is None:
+        record["ts"] = time.time()
+    elif isinstance(record["ts"], bool) or not isinstance(record["ts"], (int, float)) or record["ts"] < 0:
+        raise UsageRejected("ts must be a non-negative number")
+
+    try:
+        line = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+    except (TypeError, ValueError) as err:
+        raise UsageRejected(f"failed to serialize usage record: {err}") from err
+
+    for pat in SECRET_PATTERNS:
+        if pat.search(line):
+            raise UsageRejected("secret detected in usage record")
+
+    with _ledger_lock(Path(project_root), lock_timeout_s) as target_file:
+        with open(target_file, "ab") as f:
+            f.write(line.encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+        return target_file
+
+
+def ledger_file(project_root: Path) -> Path:
+    """U72-L: the one ledger of a repository. A linked worktree's rows belong to the main checkout's desk (U59).
+
+    Seen 2026-09-28: every pilot run from `.work/<id>` worktrees appended to that worktree's copy of the tracked
+    `runs.jsonl`, which is never committed, so U68-U71 left no row in the desk ledger that admission and RSI read.
+    """
+    from .hook_context import shared_desk
+
+    return shared_desk(Path(project_root)) / ".coord" / "usage" / "runs.jsonl"
+
+
+class _ledger_lock:
+    """The ledger's exclusive lock file; yields the ledger path. Fails closed with UsageRejected on timeout."""
+
+    def __init__(self, project_root: Path, lock_timeout_s: float) -> None:
+        self.target_file = ledger_file(project_root)
+        self.lock_timeout_s = lock_timeout_s
+
+    def __enter__(self) -> Path:
+        self.target_file.parent.mkdir(parents=True, exist_ok=True)
+        self.fd = _acquire(self.target_file.with_name("runs.jsonl.lock"), self.lock_timeout_s)
+        return self.target_file
+
+    def __exit__(self, *exc: Any) -> None:
+        _release(self.fd, self.target_file.with_name("runs.jsonl.lock"))
+
+
+def _acquire(lock_file: Path, lock_timeout_s: float) -> int:
+    t_end = time.time() + lock_timeout_s
+    fd: int | None = None
+    while True:
+        try:
+            fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            break
+        except (FileExistsError, PermissionError):
+            if time.time() >= t_end:
+                break
+            time.sleep(0.005)
+
+    if fd is None:
+        raise UsageRejected("usage ledger lock timeout")
+    return fd
+
+
+def _release(fd: int, lock_file: Path) -> None:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    unlink_end = time.time() + 1.0
+    while time.time() < unlink_end:
+        try:
+            os.unlink(str(lock_file))
+            break
+        except FileNotFoundError:
+            break
+        except OSError:
+            time.sleep(0.002)
+
+
+def _row_key(line: str) -> str | None:
+    """A row's identity: its parsed JSON in canonical form, so CRLF checkouts and key order do not split one row."""
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(row, dict):
+        return None
+    return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _rows(path: Path) -> list[str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def linked_worktrees(desk: Path) -> list[Path]:
+    """Every linked checkout of this repository, read from `<desk>/.git/worktrees/<name>/gitdir`.
+
+    Git records each linked worktree there as the path of its `.git` file. Reading those files needs no subprocess,
+    so this adds no command-execution site to the U54 firewall audit.
+    """
+    trees = []
+    for record in sorted((Path(desk) / ".git" / "worktrees").glob("*/gitdir")):
+        try:
+            marker = Path(record.read_text(encoding="utf-8").strip())
+        except (OSError, UnicodeDecodeError):
+            continue
+        if marker.name == ".git" and marker.parent.is_dir():
+            trees.append(marker.parent)
+    return trees
+
+
+def collect(project_root: Path, *, trees: list[Path] | None = None, apply: bool = False,
+            lock_timeout_s: float = 10.0) -> dict[str, Any]:
+    """U72-L: find rows that exist only in a worktree's ledger copy and, with apply, append them to the desk ledger.
+
+    A row counts once however many worktrees hold it. The rows are appended byte for byte as their worktree wrote
+    them (never re-validated or re-stamped: the ledger is append-only history). The whole read-compare-append runs
+    under the ledger lock, so two collectors at once still append each row once.
+    """
+    desk = ledger_file(Path(project_root)).parent.parent.parent
+    trees = linked_worktrees(desk) if trees is None else trees
+    with _ledger_lock(desk, lock_timeout_s) as target_file:
+        known = {key for key in map(_row_key, _rows(target_file)) if key}
+        orphans: list[str] = []
+        by_tree: dict[str, int] = {}
+        for tree in trees:
+            for line in _rows(Path(tree) / ".coord" / "usage" / "runs.jsonl"):
+                key = _row_key(line)
+                if key is None or key in known:
+                    continue
+                _check_secrets(json.loads(line))
+                known.add(key)
+                orphans.append(line)
+                by_tree[str(tree)] = by_tree.get(str(tree), 0) + 1
+        if apply and orphans:
+            data = target_file.read_bytes() if target_file.is_file() else b""
+            prefix = b"\n" if data and not data.endswith(b"\n") else b""
+            with open(target_file, "ab") as f:
+                f.write(prefix + "".join(line + "\n" for line in orphans).encode("utf-8"))
+                f.flush()
+                os.fsync(f.fileno())
+    return {"ledger": str(target_file), "trees": len(trees), "orphans": len(orphans), "by_tree": by_tree,
+            "appended": len(orphans) if apply else 0, "mode": "APPLY" if apply else "DRY_RUN"}
+===FILE: v7_harness/admission.py===
+"""U69: refuse a paid call before it starts when its contract cannot pay for even the cheapest call seen so far.
+
+The cost gate (B85) judges a paid run after it has spent. U67-C1 showed the gap: a Claude review under a 12,000-token
+contract spent 485,172 tokens and $0.43 before the gate threw the result away. Every Claude call re-reads a fixed
+context (system prompt, tools, the staged files it opens) as cache reads, so a call has a floor no contract can go under.
+
+The floor is measured, not guessed: the smallest complete spend the project's own usage ledger holds for that worker
+and call kind. The minimum is a lower bound, so the gate only refuses a budget that no recorded call has ever fit; it
+never refuses a call that might fit. Without a sample the call is admitted as UNMEASURED, because refusing then would
+make the first measurement impossible.
+
+Decisions:
+- ADMIT: every dimension that has a floor fits its budget.
+- ADMIT_UNMEASURED: no complete sample yet for this worker and kind.
+- REFUSE: a budget is below its floor; the reason names the dimension, e.g. BUDGET_BELOW_FLOOR:tokens:12000<124769.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from .pilot import COST_TOKEN_KEYS
+
+LEDGER = Path(".coord") / "usage" / "runs.jsonl"
+
+
+def _whole(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def ledger_rows(project: Path) -> list[dict[str, Any]]:
+    """Every readable row of the project's usage ledger. Unreadable lines are skipped: they carry no spend to learn."""
+    from .coord.usage_ledger import ledger_file
+
+    # U72-L: a worktree reads the desk ledger it writes to, so its floor is the repository's floor.
+    path = ledger_file(Path(project))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def observed_floor(rows: list[dict[str, Any]], worker: str, kind: str) -> dict[str, int] | None:
+    """The cheapest complete spend for *worker* and *kind*: tokens always, micro-dollars and seconds when reported.
+
+    A row counts only when all four token kinds are whole numbers. A row that omitted cache reads would look cheaper
+    than the call really was and pull the floor down to a value no real call reaches.
+    """
+    tokens: list[int] = []
+    microusd: list[int] = []
+    seconds: list[int] = []
+    for row in rows:
+        if row.get("worker") != worker or row.get("kind") != kind:
+            continue
+        counts = [_whole(row.get(key)) for key in COST_TOKEN_KEYS]
+        if any(count is None for count in counts):
+            continue
+        tokens.append(sum(counts))  # type: ignore[arg-type]
+        if _whole(row.get("cost_microusd")) is not None:
+            microusd.append(row["cost_microusd"])
+        wall = row.get("wall_time_s")
+        if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0:
+            seconds.append(int(wall))
+    if not tokens:
+        return None
+    floor = {"tokens": min(tokens), "samples": len(tokens)}
+    if microusd:
+        floor["microusd"] = min(microusd)
+    if seconds:
+        floor["seconds"] = min(seconds)
+    return floor
+
+
+def admit(project: Path, *, worker: str, kind: str, budget_tokens: int, budget_usd: float = 0.0,
+          timeout_s: int = 0) -> dict[str, Any]:
+    """Compare the contract's token, dollar and time budgets with the observed floor, before any spend."""
+    floor = observed_floor(ledger_rows(project), worker, kind)
+    if floor is None:
+        return {"decision": "ADMIT_UNMEASURED", "worker": worker, "kind": kind, "floor": None}
+    reasons = []
+    if budget_tokens < floor["tokens"]:
+        reasons.append(f"BUDGET_BELOW_FLOOR:tokens:{budget_tokens}<{floor['tokens']}")
+    cap_microusd = int(round(budget_usd * 1_000_000))
+    if cap_microusd > 0 and "microusd" in floor and cap_microusd < floor["microusd"]:
+        reasons.append(f"BUDGET_BELOW_FLOOR:usd:{budget_usd:g}<{floor['microusd'] / 1_000_000:g}")
+    if timeout_s > 0 and "seconds" in floor and timeout_s < floor["seconds"]:
+        reasons.append(f"BUDGET_BELOW_FLOOR:seconds:{timeout_s}<{floor['seconds']}")
+    return {"decision": "REFUSE" if reasons else "ADMIT", "worker": worker, "kind": kind, "floor": floor,
+            "reasons": reasons}
+===FILE: v7_harness/rsi.py===
+"""Evidence-gated self-improvement (RSI) for UAOS: observe → propose → try → gate → judge → (rollback).
+
+The loop proposes; it never adopts itself. Why it stops short of self-adoption (docs/38):
+- Self-improving agents game their evaluators: the Darwin Gödel Machine removed its own hallucination-detection markers,
+  METR saw o3 patch a scorer and a timer, STOP disabled its sandbox flag "for efficiency".
+- Without external feedback, self-correction does not reliably help (Huang et al., ICLR 2024), and LLM judges prefer
+  their own outputs (self-preference bias).
+- A poisoned evaluation set keeps contaminating later generations of a self-modifying agent (Roesner & Kohno 2026).
+So every candidate is judged on executed evidence read from this project's own ledger (never on numbers the author
+types in), by a verifier other than its author, without touching the evaluators or the evidence, and a judge who is
+neither the author nor the verifier makes the final call. Adopted policy changes keep the previous value for rollback.
+
+What may evolve: the knobs in `.coord/rsi/policy.json` (only toward stricter values), manual templates, task cards and
+docs. Code and evaluators change only through the normal reviewed path (PLAN card → pilot → judge), never through here.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import json
+import statistics
+import time
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+POLICY_PATH = Path(".coord") / "rsi" / "policy.json"
+DECISIONS_PATH = Path(".coord") / "rsi" / "decisions.jsonl"
+LEDGER_PATH = Path(".coord") / "usage" / "runs.jsonl"
+
+DEFAULT_POLICY: dict[str, Any] = {
+    # docs/24·docs/30: a local model gets a manual that scores at least 80 for concreteness.
+    "local_min_specificity": 80,
+    "remote_min_specificity": 60,
+    # docs/27·docs/31: analyze after 10 comparable samples; below 3 nothing is concluded.
+    "window": 10,
+    "min_samples": 3,
+    # docs/27 §4: a run that costs more than 3x the previous comparable run fails the cost gate.
+    "max_cost_ratio": 3.0,
+}
+# The documented values are floors (or a ceiling for the cost ratio). A policy may only get stricter: a loop that could
+# lower min_samples to 1 or raise the cost ratio to 100 would be grading its own homework.
+POLICY_BOUNDS: dict[str, tuple[float, float]] = {
+    "local_min_specificity": (80, 100),
+    "remote_min_specificity": (60, 100),
+    "window": (10, 100),
+    "min_samples": (3, 50),
+    "max_cost_ratio": (1.0, 3.0),
+}
+
+# Things the gate never lets the loop change: the evaluators, the evidence and the loop itself.
+EVALUATOR_PATTERNS = (
+    "tests/*",
+    ".githooks/*",
+    ".coord/runs/run_regression.py",
+    ".coord/usage/*",
+    str(DECISIONS_PATH.as_posix()),
+    "v7_harness/rsi.py",
+    "v7_harness/manual.py",
+    "v7_harness/calculator_gate.py",
+    "v7_harness/olla_evidence.py",
+    "v7_harness/accept_triage.py",
+    "v7_harness/adapters/ollama_worker.py",
+    "v7_harness/isolation/*",
+)
+# Things the loop may change (through the gate and the judge). fnmatch's `*` also crosses `/`.
+RSI_TARGET_PATTERNS = (POLICY_PATH.as_posix(), ".coord/tasks/*", "docs/*")
+
+# docs/31 §3: Antigravity may verify someone else's change; the final call is Codex's (Claude while Codex is absent).
+VERIFIERS = ("codex", "claude", "antigravity")
+JUDGES = ("codex", "claude", "user")
+
+# Deterministic remedies per failure cause. Adding a remedy is a reviewed code change, not something the loop does.
+REMEDIES: dict[str, tuple[str, str]] = {
+    "UNREQUESTED_DELETION": ("manual_template", "Ask for ===EDIT blocks, quote the SEARCH text, add the tests that import the file to acceptance; if the code is already known use worker: apply"),
+    "SYNTAX_ERROR": ("manual_template", "Split the task per file and quote the exact SEARCH text; for dictated code use worker: apply"),
+    "SCOPE_VIOLATION": ("manual_template", "Name the exact file in the goal and keep allow to that file"),
+    "EDIT_SEARCH_NOT_FOUND": ("manual_template", "Copy the SEARCH lines verbatim from the pinned input into the manual"),
+    "EDIT_SEARCH_AMBIGUOUS": ("manual_template", "Extend the SEARCH text until it is unique"),
+    "PROMPT_TOO_LARGE": ("manual_template", "Split the input or summarise it first (olla read map); keep one file per manual"),
+    "NO_CHANGES": ("manual_template", "State one concrete verb and the exact file; read-only tasks need --allow-no-changes"),
+    "PROVIDER_ERROR": ("environment", "Check that the Ollama service and model are up; do not escalate to a paid worker automatically"),
+    "EXECUTION_ERROR": ("environment", "Check the worker command and the Ollama service before retrying"),
+    "TIMEOUT": ("manual_template", "Split the task or raise timeout_s in the contract; reconcile the run first"),
+    "ACCEPT_INFRA": ("environment", "Fix the environment (interpreter, PYTHONPATH, missing tool) before retrying; the worker is not at fault"),
+    "ACCEPT_NOT_RUN": ("environment", "Make the acceptance command runnable in the staging directory"),
+    "SOURCE_DIVERGED": ("environment", "Keep a single writer during pilot runs (QUIET_LOCK); retry after the other writer finishes"),
+}
+
+
+class RsiRefused(Exception):
+    """An adoption or rollback that the rules do not allow. Carries the read-only gate evidence when there is some."""
+
+    def __init__(self, message: str, *, evidence: dict[str, Any] | None = None, proposed_policy: str | None = None):
+        super().__init__(message)
+        self.evidence = evidence
+        self.proposed_policy = proposed_policy
+
+
+# B83 (Codex red team, 2026-09-25): author, verifier and judge are strings any tool on this OS account can write, and
+# so are git authors and stream actors. No in-process check can make them an authentication boundary, so the loop
+# never writes the policy or the decision log. The boundary is a reviewed commit (a human GitHub review and merge).
+UNAUTHENTICATED_ACTOR = ("UNAUTHENTICATED_ACTOR: author, verifier and judge are unauthenticated names on this OS "
+                         "account (B83), so nothing is written. Put the gate evidence and the proposed file in a PLAN "
+                         "card; the change lands as a reviewed commit.")
+
+
+# ---------------------------------------------------------------- policy
+
+
+def policy_violations(values: dict[str, Any]) -> list[str]:
+    """Keys that are unknown, not numbers, or outside the bounds (weaker than the documented floors)."""
+    problems: list[str] = []
+    for key, value in values.items():
+        if key not in POLICY_BOUNDS:
+            problems.append(f"POLICY_UNKNOWN_KEY:{key}")
+            continue
+        low, high = POLICY_BOUNDS[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            problems.append(f"POLICY_NOT_A_NUMBER:{key}")
+        elif not low <= value <= high:
+            problems.append(f"POLICY_OUT_OF_BOUNDS:{key}={value} (allowed {low}..{high}; the floors are the documented values)")
+    if isinstance(values.get("min_samples"), (int, float)) and isinstance(values.get("window"), (int, float)):
+        if values["min_samples"] > values["window"]:
+            problems.append("POLICY_INCONSISTENT:min_samples>window")
+    return problems
+
+
+def load_policy(project: Path) -> dict[str, Any]:
+    """The documented defaults, overridden by `.coord/rsi/policy.json` only where the stored value is within bounds."""
+    policy = dict(DEFAULT_POLICY)
+    path = Path(project) / POLICY_PATH
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return policy
+    if not isinstance(stored, dict):
+        return policy
+    for key in DEFAULT_POLICY:
+        if key in stored and not policy_violations({key: stored[key]}):
+            policy[key] = stored[key]
+    if policy["min_samples"] > policy["window"]:
+        policy["min_samples"], policy["window"] = DEFAULT_POLICY["min_samples"], DEFAULT_POLICY["window"]
+    return policy
+
+
+# ---------------------------------------------------------------- observe
+
+
+def load_rows(project: Path) -> list[dict[str, Any]]:
+    """Pilot rows of the project's usage ledger, oldest first. Unreadable lines are counted, never silently dropped."""
+    from .coord.usage_ledger import ledger_file
+
+    # U72-L: the desk ledger, also when RSI runs inside a linked worktree.
+    path = ledger_file(Path(project))
+    rows: list[dict[str, Any]] = []
+    if not path.is_file():
+        return rows
+    text = path.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    # A last line without its newline is still being appended by a pilot (the sentinel reads without the ledger
+    # lock); it is read on the next cycle instead of being counted as unreadable.
+    for line in lines[:-1] if not text.endswith("\n") else lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            rows.append({"kind": "pilot", "outcome": "UNREADABLE", "worker": "unknown"})
+            continue
+        if isinstance(row, dict) and row.get("kind") == "pilot":
+            rows.append(row)
+    rows.sort(key=_ts)
+    return rows
+
+
+def _ts(row: dict[str, Any]) -> float:
+    ts = row.get("ts")
+    return float(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else 0.0
+
+
+def _cause(row: dict[str, Any]) -> str | None:
+    if row.get("outcome") == "PASS":
+        return None
+    error_class = row.get("error_class")
+    if error_class and error_class != "NONE":
+        return str(error_class)
+    detail = str(row.get("error_detail") or "")
+    for known in REMEDIES:
+        if known in detail:
+            return known
+    return str(row.get("rework_class") or row.get("outcome") or "UNKNOWN")
+
+
+def metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(rows)
+    outcomes = Counter(str(row.get("outcome")) for row in rows)
+    tokens = [
+        row["input_tokens"] for row in rows
+        if isinstance(row.get("input_tokens"), int) and not isinstance(row.get("input_tokens"), bool)
+    ]
+    return {
+        "n": n,
+        "pass_rate": round(outcomes["PASS"] / n, 3) if n else None,
+        "rework_rate": round(outcomes["REWORK"] / n, 3) if n else None,
+        "blocked_rate": round(outcomes["BLOCKED"] / n, 3) if n else None,
+        "median_input_tokens": statistics.median(tokens) if tokens else None,
+    }
+
+
+def analyze(rows: list[dict[str, Any]], policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    policy = policy or DEFAULT_POLICY
+    window = int(policy["window"])
+    by_worker: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_worker.setdefault(str(row.get("worker") or "unknown"), []).append(row)
+    workers: dict[str, Any] = {}
+    for worker, worker_rows in sorted(by_worker.items()):
+        recent = worker_rows[-window:]
+        causes = Counter(cause for cause in (_cause(row) for row in recent) if cause)
+        info = metrics(recent)
+        if info["n"] < int(policy["min_samples"]):
+            status = "INSUFFICIENT_SAMPLES"
+        elif info["n"] < window:
+            status = "PARTIAL_WINDOW"
+        else:
+            status = "WINDOW_READY"
+        workers[worker] = {
+            **info,
+            "total": len(worker_rows),
+            "status": status,
+            "causes": causes.most_common(),
+            # docs rule: the same cause twice means change the route, not retry longer.
+            "recurring": sorted(cause for cause, count in causes.items() if count >= 2),
+            "recent_work_ids": [row.get("work_id") for row in recent][-5:],
+        }
+    total = len(rows)
+    return {
+        "samples": total,
+        "window": window,
+        "dictation_share": round(len(by_worker.get("apply", [])) / total, 3) if total else None,
+        "workers": workers,
+        "note": "Account savings stay UNMEASURED without before/after usage snapshots (docs/27).",
+    }
+
+
+def local_usage(usage_log: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """U47-D1: the local model's `pilot_local` rows, without the fake ones, joined to the pilot ledger by work_id.
+
+    A row with exactly 1 input and 1 output token is a test leftover (docs/48 §2: 64 of 193). It stays in the file and
+    is counted as `fake_rows`, never summed. Unreadable lines are counted, not silently dropped.
+    """
+    path = Path(usage_log)
+    ledger_ids = {str(row["work_id"]) for row in rows if row.get("work_id")}
+    real: dict[str, Any] = {"runs": 0, "input_tokens": 0, "output_tokens": 0, "wall_s": 0.0,
+                            "by_status": Counter(), "by_model": Counter()}
+    out: dict[str, Any] = {"source": str(path), "present": path.is_file(), "rows": 0, "unreadable": 0,
+                           "fake_rows": 0, "joined": 0, "unjoined": 0, "no_work_id": 0}
+    lines = path.read_text(encoding="utf-8").splitlines() if out["present"] else []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            out["unreadable"] += 1
+            continue
+        if not isinstance(rec, dict) or rec.get("event") != "pilot_local":
+            continue
+        out["rows"] += 1
+        tokens_in, tokens_out = rec.get("input_tokens"), rec.get("output_tokens")
+        if tokens_in == 1 and tokens_out == 1:
+            out["fake_rows"] += 1
+            continue
+        real["runs"] += 1
+        real["input_tokens"] += tokens_in if isinstance(tokens_in, int) and not isinstance(tokens_in, bool) else 0
+        real["output_tokens"] += tokens_out if isinstance(tokens_out, int) and not isinstance(tokens_out, bool) else 0
+        elapsed = rec.get("elapsed_s")
+        real["wall_s"] += float(elapsed) if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) else 0.0
+        real["by_status"][str(rec.get("status") or "unknown")] += 1
+        real["by_model"][str(rec.get("model") or "unknown")] += 1
+        work_id = rec.get("work_id")
+        if not work_id:
+            out["no_work_id"] += 1
+        elif str(work_id) in ledger_ids:
+            out["joined"] += 1
+        else:
+            out["unjoined"] += 1
+    real["wall_s"] = round(real["wall_s"], 1)
+    real["by_status"] = dict(real["by_status"])
+    real["by_model"] = dict(real["by_model"])
+    out["real"] = real
+    out["note"] = ("Local tokens use no paid API tokens but are not zero total cost (local inference, wall time, "
+                   "electricity); account savings stay UNMEASURED.")
+    return out
+
+
+# ---------------------------------------------------------------- propose
+
+
+def propose(analysis: dict[str, Any], policy: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Deterministic proposals from the analysis. A proposal is a hypothesis for the judge, not a change."""
+    policy = policy or DEFAULT_POLICY
+    proposals: list[dict[str, Any]] = []
+    for worker, info in analysis["workers"].items():
+        if info["status"] == "INSUFFICIENT_SAMPLES":
+            continue
+        for cause, count in info["causes"]:
+            target, action = REMEDIES.get(cause, ("review", f"No remedy on file for {cause}; the judge reviews the receipts"))
+            proposals.append({
+                "worker": worker,
+                "cause": cause,
+                "count": count,
+                "recurring": cause in info["recurring"],
+                "target": target,
+                "action": action,
+                "evidence": info["recent_work_ids"],
+            })
+        if (
+            worker in ("local", "ollama")
+            and info["status"] == "WINDOW_READY"
+            and info["rework_rate"] is not None
+            and info["rework_rate"] > 0.5
+        ):
+            current = int(policy["local_min_specificity"])
+            raised = min(current + 5, int(POLICY_BOUNDS["local_min_specificity"][1]))
+            proposals.append({
+                "worker": worker,
+                "cause": "HIGH_REWORK_RATE",
+                "count": info["n"],
+                "recurring": True,
+                "target": "policy",
+                "action": (f"Raise local_min_specificity from {current} to {raised} in {POLICY_PATH.as_posix()}, "
+                           "or route this task family to worker: apply / agy"),
+                "policy": {"local_min_specificity": raised},
+                "evidence": info["recent_work_ids"],
+            })
+    for proposal in proposals:
+        key = f"{proposal['worker']}|{proposal['cause']}|{proposal['target']}"
+        proposal["id"] = "rsi_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    proposals.sort(key=lambda p: (not p["recurring"], -p["count"], p["id"]))
+    return proposals
+
+
+def candidate_template(proposal: dict[str, Any], author: str) -> dict[str, Any]:
+    """A candidate file to fill after the trial runs. The metrics are computed from the ledger, never typed in."""
+    return {
+        "id": proposal["id"],
+        "author": author,
+        "verifier": "<codex|claude|antigravity, not the author>",
+        "hypothesis": f"{proposal['action']} (cause {proposal['cause']} on worker {proposal['worker']})",
+        "changed_paths": [POLICY_PATH.as_posix()] if proposal.get("policy") else ["<.coord/tasks/... or docs/...>"],
+        "policy": proposal.get("policy", {}),
+        "before_work_ids": list(proposal.get("evidence") or []),
+        "after_work_ids": ["<work_ids of the trial runs, at least min_samples>"],
+    }
+
+
+# ---------------------------------------------------------------- gate
+
+
+def _matches(path: str, patterns: tuple[str, ...]) -> bool:
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return any(fnmatch.fnmatch(normalized, pattern) for pattern in patterns)
+
+
+def gate(candidate: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Decide from metrics whether a tried change may go to the judge. Use gate_from_ledger for real candidates.
+
+    candidate = {"id", "author", "verifier", "changed_paths": [...], "policy": {optional new knob values},
+                 "before": {n, pass_rate, rework_rate, blocked_rate, median_input_tokens}, "after": {same keys}}
+    """
+    policy = policy or DEFAULT_POLICY
+    reasons: list[str] = []
+    paths = [str(path) for path in candidate.get("changed_paths") or []]
+    if not paths:
+        reasons.append("NO_CHANGE_LISTED")
+    touched = [path for path in paths if _matches(path, EVALUATOR_PATTERNS)]
+    if touched:
+        reasons.append("EVALUATOR_TOUCHED:" + ",".join(touched[:5]))
+    outside = [path for path in paths if path not in touched and not _matches(path, RSI_TARGET_PATTERNS)]
+    if outside:
+        reasons.append("OUT_OF_RSI_SCOPE:" + ",".join(outside[:5]) + " (use the reviewed PLAN/pilot path)")
+    proposed = candidate.get("policy") or {}
+    if not isinstance(proposed, dict):
+        reasons.append("POLICY_NOT_AN_OBJECT")
+    else:
+        reasons.extend(policy_violations({**policy, **proposed}))
+        if proposed and POLICY_PATH.as_posix() not in [p.replace("\\", "/").removeprefix("./") for p in paths]:
+            reasons.append(f"POLICY_CHANGE_NOT_LISTED:{POLICY_PATH.as_posix()}")
+
+    author = str(candidate.get("author") or "").lower()
+    verifier = str(candidate.get("verifier") or "").lower()
+    if verifier not in VERIFIERS or verifier == author:
+        reasons.append(f"SELF_OR_INVALID_VERIFIER:{verifier or 'none'} (author {author or 'unknown'})")
+
+    before = candidate.get("before") or {}
+    after = candidate.get("after") or {}
+    minimum = int(policy["min_samples"])
+    if (before.get("n") or 0) < minimum or (after.get("n") or 0) < minimum:
+        reasons.append(f"INSUFFICIENT_SAMPLES:before={before.get('n', 0)},after={after.get('n', 0)},min={minimum}")
+    else:
+        # Several metrics at once: optimizing one number while another gets worse is how gaming shows up (Goodhart).
+        if (after.get("pass_rate") or 0) < (before.get("pass_rate") or 0):
+            reasons.append(f"REGRESSION:pass_rate {before.get('pass_rate')}→{after.get('pass_rate')}")
+        for rate in ("rework_rate", "blocked_rate"):
+            if (after.get(rate) or 0) > (before.get(rate) or 0):
+                reasons.append(f"REGRESSION:{rate} {before.get(rate)}→{after.get(rate)}")
+        before_tokens, after_tokens = before.get("median_input_tokens"), after.get("median_input_tokens")
+        if before_tokens and after_tokens and after_tokens > float(policy["max_cost_ratio"]) * before_tokens:
+            reasons.append(f"COST_REGRESSION:{before_tokens}→{after_tokens}")
+        improved = (
+            (after.get("pass_rate") or 0) > (before.get("pass_rate") or 0)
+            or (after.get("rework_rate") or 0) < (before.get("rework_rate") or 0)
+            or (before_tokens and after_tokens and after_tokens < before_tokens)
+        )
+        if not improved and not any(reason.startswith("REGRESSION") for reason in reasons):
+            reasons.append("NO_GAIN")
+    return {
+        "id": candidate.get("id"),
+        "decision": "REJECT" if reasons else "ADOPT_CANDIDATE",
+        "reasons": reasons,
+        "before": before,
+        "after": after,
+        "next": ("advisory evidence only: put it in a PLAN card; the change lands as a reviewed commit (B83)"
+                 if not reasons else "keep the current policy"),
+    }
+
+
+def gate_from_ledger(project: Path, candidate: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The gate on executed evidence: before/after metrics are recomputed from the ledger rows named by work_id."""
+    policy = policy or load_policy(project)
+    reasons: list[str] = []
+    if "before" in candidate or "after" in candidate:
+        reasons.append("SELF_REPORTED_METRICS: name before_work_ids/after_work_ids; the gate reads the ledger itself")
+    before_ids = [str(i) for i in candidate.get("before_work_ids") or []]
+    after_ids = [str(i) for i in candidate.get("after_work_ids") or []]
+    repeated = sorted({i for i in before_ids if before_ids.count(i) > 1} | {i for i in after_ids if after_ids.count(i) > 1})
+    if repeated:
+        reasons.append("DUPLICATE_WORK_IDS:" + ",".join(repeated[:5]))
+    overlap = sorted(set(before_ids) & set(after_ids))
+    if overlap:
+        reasons.append("OVERLAPPING_SAMPLES:" + ",".join(overlap[:5]))
+    rows = load_rows(project)
+    known = {str(row.get("work_id")) for row in rows}
+    missing = [work_id for work_id in before_ids + after_ids if work_id not in known]
+    if missing:
+        reasons.append("EVIDENCE_NOT_IN_LEDGER:" + ",".join(missing[:5]))
+    # One sample per task: a retried work_id leaves several ledger rows, and counting them all let a single task
+    # meet min_samples on its own. The latest row (rows are sorted by ts) is that task's outcome.
+    latest = {str(row.get("work_id")): row for row in rows}
+    before_rows = [latest[i] for i in dict.fromkeys(before_ids) if i in latest]
+    after_rows = [latest[i] for i in dict.fromkeys(after_ids) if i in latest]
+    before_workers = {str(row.get("worker")) for row in before_rows}
+    after_workers = {str(row.get("worker")) for row in after_rows}
+    if before_rows and after_rows and before_workers != after_workers:
+        reasons.append(f"NOT_COMPARABLE:workers {sorted(before_workers)} vs {sorted(after_workers)}")
+    measured = {key: value for key, value in candidate.items() if key not in ("before", "after")}
+    result = gate({**measured, "before": metrics(before_rows), "after": metrics(after_rows)}, policy)
+    result["reasons"] = reasons + result["reasons"]
+    result["workers"] = sorted(after_workers or before_workers)
+    result["decision"] = "REJECT" if result["reasons"] else "ADOPT_CANDIDATE"
+    if result["reasons"]:
+        result["next"] = "keep the current policy"
+    return result
+
+
+# ---------------------------------------------------------------- judge, record, rollback
+
+
+def read_decisions(project: Path) -> list[dict[str, Any]]:
+    path = Path(project) / DECISIONS_PATH
+    if not path.is_file():
+        return []
+    decisions = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            decisions.append(item)
+    return decisions
+
+
+def record_decision(project: Path, decision: dict[str, Any]) -> Path:
+    path = Path(project) / DECISIONS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **decision}
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+    return path
+
+
+def adopt(project: Path, candidate: dict[str, Any], judge: str) -> dict[str, Any]:
+    """Fail closed (B83). Computes the read-only ledger gate as evidence, then refuses before writing anything.
+
+    The refusal carries the gate verdict and, for a policy candidate, the exact proposed policy.json text, so the
+    change can go through the normal PLAN card → reviewed commit path.
+    """
+    verdict = gate_from_ledger(project, candidate)
+    proposed = None
+    if isinstance(candidate.get("policy"), dict) and candidate["policy"]:
+        proposed = json.dumps({**load_policy(project), **candidate["policy"]}, ensure_ascii=False, indent=2,
+                              sort_keys=True) + "\n"
+    raise RsiRefused(UNAUTHENTICATED_ACTOR, evidence=verdict, proposed_policy=proposed)
+
+
+def open_trials(project: Path, rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Adoptions not rolled back yet: whether their re-check window is complete, and the window measured since."""
+    rows = load_rows(project) if rows is None else rows
+    decisions = read_decisions(project)
+    rolled = {item.get("id") for item in decisions if item.get("action") == "ROLLED_BACK"}
+    trials = []
+    for item in decisions:
+        if item.get("action") == "ADOPTED" and item.get("id") not in rolled:
+            workers = [str(w) for w in item.get("workers") or []]
+            recheck = int(item.get("recheck_at_rows") or 0)
+            start = int(item.get("rows_at_adoption", max(0, recheck - int(DEFAULT_POLICY["window"]))))
+            relevant = [row for row in rows if not workers or str(row.get("worker")) in workers]
+            due = len(relevant) >= recheck
+            trials.append({"id": item.get("id"), "workers": workers, "recheck_at_rows": recheck,
+                           "rows_now": len(relevant), "due": due, "before": item.get("before"),
+                           # Runs since the adoption; compare with "before" and `rsi rollback` if it is worse.
+                           "since": metrics(relevant[start:]) if due else None})
+    return trials
+
+
+def rollback(project: Path, judge: str, reason: str) -> dict[str, Any]:
+    """Fail closed (B83): a rollback writes the policy too. It proposes the previous policy and writes nothing."""
+    previous = None
+    for item in reversed(read_decisions(project)):
+        if item.get("action") == "ADOPTED" and item.get("previous_policy"):
+            previous = json.dumps(item["previous_policy"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            break
+    raise RsiRefused(UNAUTHENTICATED_ACTOR, proposed_policy=previous)
+
+
+# ---------------------------------------------------------------- sentinel hook
+
+
+def rsi_review_messages(
+    project: Path, analysis: dict[str, Any], policy: dict[str, Any] | None = None
+) -> list[tuple[str, dict[str, Any]]]:
+    """Mailbox messages (not P1), one per worker that completed a new analysis window. The id names the window,
+    so the sentinel publishes each window once and never repeats it after it is read."""
+    policy = policy or load_policy(project)
+    messages = []
+    for worker, info in analysis["workers"].items():
+        window_count = info["total"] // int(policy["window"])
+        if info["status"] != "WINDOW_READY" or window_count == 0:
+            continue
+        message_id = f"rsi_review_{worker}_{int(policy['window'])}x{window_count}"
+        summary = (f"RSI window {window_count} for {worker}: pass {info['pass_rate']}, rework {info['rework_rate']}, "
+                   f"recurring {','.join(info['recurring']) or 'none'} — run `rsi propose`")
+        messages.append((message_id, {"kind": "RSI_REVIEW", "step": "RSI", "summary": summary[:200], "actor": "sentinel"}))
+    return messages
+===FILE: v7_harness/cli.py===
 """
 Command-line interface for v7 harness.
 
@@ -1767,3 +2741,185 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "
 
 if __name__ == "__main__":
     sys.exit(main())
+===FILE: tests/test_u72l_desk_ledger.py===
+"""U72-L: a run inside a linked worktree lands in the desk ledger, and rows stranded in worktree copies come back.
+
+Seen 2026-09-28: U68-U71 ran their pilots in `.work/<id>` worktrees. Each appended to that worktree's copy of the
+tracked `runs.jsonl`, which is never committed, so the desk ledger that admission (U69) and RSI read stopped at
+U44-FIX6B. The U72 gate "no ledger omission" could not pass.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from v7_harness.admission import ledger_rows
+from v7_harness.coord.usage_ledger import collect, linked_worktrees, record_usage
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def _entry(work_id: str) -> dict:
+    return {"schema": "uaos-usage-v2", "work_id": work_id, "actor": "coordinator", "model": "deterministic",
+            "kind": "pilot", "collection_mode": "automatic", "input_tokens": 0, "output_tokens": 0,
+            "wall_time_s": 1.5, "outcome": "PASS", "receipt": "r.json", "independent_verifier": None,
+            "rsi_eligible": False, "exclusion_reason": "PENDING_INDEPENDENT_VERIFICATION", "ts": 1.0}
+
+
+def _line(work_id: str) -> str:
+    return json.dumps(_entry(work_id), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _ledger(root: Path) -> Path:
+    return root / ".coord" / "usage" / "runs.jsonl"
+
+
+def _write(root: Path, *work_ids: str, crlf: bool = False) -> None:
+    path = _ledger(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    end = "\r\n" if crlf else "\n"
+    path.write_bytes("".join(_line(w) + end for w in work_ids).encode("utf-8"))
+
+
+def _ids(root: Path) -> list[str]:
+    return [json.loads(line)["work_id"] for line in _ledger(root).read_text(encoding="utf-8").splitlines() if line]
+
+
+class DeskFixture(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.desk = base / "main"
+        (self.desk / ".coord").mkdir(parents=True)
+        (self.desk / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+        self.trees = []
+        for name in ("w1", "w2"):
+            (self.desk / ".git" / "worktrees" / name).mkdir(parents=True)
+            tree = base / name
+            (tree / ".coord").mkdir(parents=True)
+            (tree / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+            (tree / ".git").write_text(f"gitdir: {(self.desk / '.git' / 'worktrees' / name).as_posix()}\n",
+                                       encoding="utf-8")
+            # Git's own back-pointer: the linked worktree's `.git` file path.
+            (self.desk / ".git" / "worktrees" / name / "gitdir").write_text(f"{(tree / '.git').as_posix()}\n",
+                                                                           encoding="utf-8")
+            self.trees.append(tree)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+
+class DeskRoutingTests(DeskFixture):
+    def test_a_worktree_run_is_recorded_and_read_on_the_desk(self) -> None:
+        written = record_usage(self.trees[0], _entry("U72L-A"))
+        self.assertEqual(_ledger(self.desk).resolve(), written.resolve())
+        self.assertFalse(_ledger(self.trees[0]).exists())
+        # Admission inside the worktree sees the desk floor it just added to.
+        self.assertEqual(["U72L-A"], [r["work_id"] for r in ledger_rows(self.trees[1])])
+
+    def test_a_plain_folder_keeps_its_own_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_ledger(Path(d)).resolve(), record_usage(Path(d), _entry("U72L-P")).resolve())
+
+
+class CollectTests(DeskFixture):
+    def test_stranded_rows_come_back_once_and_only_with_apply(self) -> None:
+        _write(self.desk, "BASE1", "BASE2", crlf=True)  # a CRLF checkout of the same rows is not a new row
+        _write(self.trees[0], "BASE1", "BASE2", "U68", "U70")
+        _write(self.trees[1], "BASE1", "U70", "U71")
+        dry = collect(self.desk, trees=self.trees)
+        self.assertEqual((3, 0, "DRY_RUN"), (dry["orphans"], dry["appended"], dry["mode"]))
+        self.assertEqual(["BASE1", "BASE2"], _ids(self.desk))
+        done = collect(self.desk, trees=self.trees, apply=True)
+        self.assertEqual(3, done["appended"])
+        self.assertEqual(["BASE1", "BASE2", "U68", "U70", "U71"], _ids(self.desk))
+        # The appended bytes are the worktree's own line, not a re-stamped record.
+        self.assertIn(_line("U68"), _ledger(self.desk).read_text(encoding="utf-8").splitlines())
+        self.assertEqual(0, collect(self.desk, trees=self.trees, apply=True)["appended"])
+
+    def test_worktrees_are_found_from_git_records_without_a_subprocess(self) -> None:
+        (self.desk / ".git" / "worktrees" / "gone").mkdir()
+        (self.desk / ".git" / "worktrees" / "gone" / "gitdir").write_text("/nowhere/.git\n", encoding="utf-8")
+        self.assertEqual([t.resolve() for t in self.trees], [t.resolve() for t in linked_worktrees(self.desk)])
+        _write(self.desk, "BASE1")
+        _write(self.trees[1], "BASE1", "U71")
+        self.assertEqual(1, collect(self.trees[0], apply=True)["appended"])  # from inside a worktree, too
+        self.assertEqual(["BASE1", "U71"], _ids(self.desk))
+
+    def test_parallel_collectors_append_each_row_once(self) -> None:
+        _write(self.desk, "BASE1")
+        for i, tree in enumerate(self.trees):
+            _write(tree, "BASE1", *[f"T{i}-{n}" for n in range(20)])
+        code = ("import sys; from pathlib import Path; from v7_harness.coord.usage_ledger import collect; "
+                "collect(Path(sys.argv[1]), trees=[Path(p) for p in sys.argv[2:]], apply=True)")
+        argv = [sys.executable, "-c", code, str(self.desk), *map(str, self.trees)]
+        env = {**os.environ, "PYTHONPATH": str(REPO)}
+        procs = [subprocess.Popen(argv, cwd=REPO, env=env, stderr=subprocess.PIPE, text=True) for _ in range(6)]
+        for proc in procs:
+            _, err = proc.communicate(timeout=120)
+            self.assertEqual(0, proc.returncode, err)
+        ids = _ids(self.desk)
+        self.assertEqual(41, len(ids))
+        self.assertEqual(len(ids), len(set(ids)))
+
+
+if __name__ == "__main__":
+    unittest.main()
+===FILE: docs/59_u72l-desk-ledger.md===
+# U72-L 저장소 하나에 장부 하나
+
+## 왜 필요한가
+
+U72의 완료 관문에는 "사용량 장부 누락 0"이 있다. 그런데 2026-09-28에 데스크 장부(`.coord/usage/runs.jsonl`)를 확인해 보니 마지막 행이 U44-FIX6B였다. U68~U71의 pilot 실행 기록이 하나도 없었다.
+
+원인은 다음과 같다.
+
+- 작업은 `.work/<id>` 같은 연결 작업트리(linked worktree)에서 돈다.
+- pilot, 리뷰, 판정은 실행한 폴더(`source`)의 `.coord/usage/runs.jsonl`에 행을 추가했다.
+- 그 파일은 git이 추적하는 파일의 작업트리 사본이다. 커밋하지 않는 것이 규칙이라 기록이 그 사본 안에 갇혔다.
+- 입장 관문(U69)과 RSI는 데스크 장부만 읽는다. 그래서 새 기록을 보지 못했다.
+
+presence, 우편함, 감시 파일은 이미 U59에서 "작업트리도 본 체크아웃의 데스크를 쓴다"로 고쳤다. 장부만 빠져 있었다.
+
+## 무엇을 바꿨나
+
+1. **쓰기** — `record_usage`는 `ledger_file(project)`에 쓴다. `ledger_file`은 U59의 `shared_desk`로 본 체크아웃을 찾는다.
+   - 연결 작업트리의 기록은 본 체크아웃 장부로 간다.
+   - 일반 폴더나 임시 폴더는 전처럼 자기 장부를 쓴다.
+   - 이 경로 하나로 pilot, judge, review 세 곳의 기록 경로가 함께 바뀐다.
+2. **읽기** — 입장 관문 `admission.ledger_rows`와 RSI `load_rows`도 같은 `ledger_file`을 읽는다. 작업트리 안에서 판정해도 저장소 전체 바닥(floor)을 본다.
+3. **회수** — `coord usage-collect [--apply]`는 작업트리 사본에만 남은 행을 찾아 데스크 장부 끝에 덧붙인다.
+   - 작업트리 목록은 git이 남긴 `<desk>/.git/worktrees/<이름>/gitdir` 파일에서 읽는다. 하위 프로세스를 띄우지 않으므로 U54 방화벽 감사(firewall audit)에 새 실행 지점이 생기지 않는다.
+   - 행의 동일성은 JSON을 정규형(키 정렬)으로 바꿔 비교한다. 줄바꿈(CRLF)이나 키 순서가 달라도 같은 행은 한 번만 센다.
+   - 덧붙이는 내용은 작업트리가 쓴 줄 그대로다. 재검증하거나 시각을 다시 찍지 않는다. 장부는 추가 전용(append-only) 기록이기 때문이다.
+   - 읽기, 비교, 추가가 모두 장부 잠금 안에서 일어난다. 그래서 수집기 여러 개가 동시에 돌아도 행마다 한 번만 추가된다. 프로세스 6개로 확인했다.
+   - 기본은 드라이런(dry-run)이다. 삭제는 하지 않는다.
+
+## 실측(2026-09-28, 드라이런)
+
+- 연결 작업트리 35개에서 데스크에 없는 행 142개를 찾았다.
+- 예: Codex `relay-nonstop` 55행, `.work/u45_claude` 30행, 이 Claude 세션 작업트리 14행, U68~U71 작업트리 각 1~3행.
+- 일부는 데스크 체크아웃보다 새 커밋에 이미 있는 행일 수 있다. 어느 쪽이든 실제로 일어난 실행 기록이므로 덧붙이는 것이 맞다.
+- 이 PR이 병합되면 `--apply`로 회수한 뒤 U72 표본을 센다.
+
+## 고정 인수
+
+`tests/test_u72l_desk_ledger.py`가 확인하는 것:
+
+- 작업트리에서 쓴 기록이 데스크로 간다. 수정 전(58ba50b)에는 작업트리 쪽에 써서 이 시험이 실패한다(red).
+- 일반 폴더는 바뀌지 않는다.
+- 회수는 드라이런과 적용이 구분되고, 같은 행은 한 번만 추가된다. 두 번째 실행은 0행을 추가한다.
+- CRLF로 저장된 같은 행은 새 행으로 보지 않는다.
+- 작업트리 목록을 git 기록에서 찾는다. 사라진 작업트리는 건너뛴다.
+- 수집기 6개를 동시에 돌려도 41행이 모두 한 번씩만 들어간다.
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.

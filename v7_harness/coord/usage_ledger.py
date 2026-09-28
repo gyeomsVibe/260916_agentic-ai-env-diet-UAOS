@@ -144,14 +144,42 @@ def record_usage(
         if pat.search(line):
             raise UsageRejected("secret detected in usage record")
 
-    encoded = line.encode("utf-8")
+    with _ledger_lock(Path(project_root), lock_timeout_s) as target_file:
+        with open(target_file, "ab") as f:
+            f.write(line.encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+        return target_file
 
-    project_root = Path(project_root)
-    usage_dir = project_root / ".coord" / "usage"
-    usage_dir.mkdir(parents=True, exist_ok=True)
-    target_file = usage_dir / "runs.jsonl"
-    lock_file = usage_dir / "runs.jsonl.lock"
 
+def ledger_file(project_root: Path) -> Path:
+    """U72-L: the one ledger of a repository. A linked worktree's rows belong to the main checkout's desk (U59).
+
+    Seen 2026-09-28: every pilot run from `.work/<id>` worktrees appended to that worktree's copy of the tracked
+    `runs.jsonl`, which is never committed, so U68-U71 left no row in the desk ledger that admission and RSI read.
+    """
+    from .hook_context import shared_desk
+
+    return shared_desk(Path(project_root)) / ".coord" / "usage" / "runs.jsonl"
+
+
+class _ledger_lock:
+    """The ledger's exclusive lock file; yields the ledger path. Fails closed with UsageRejected on timeout."""
+
+    def __init__(self, project_root: Path, lock_timeout_s: float) -> None:
+        self.target_file = ledger_file(project_root)
+        self.lock_timeout_s = lock_timeout_s
+
+    def __enter__(self) -> Path:
+        self.target_file.parent.mkdir(parents=True, exist_ok=True)
+        self.fd = _acquire(self.target_file.with_name("runs.jsonl.lock"), self.lock_timeout_s)
+        return self.target_file
+
+    def __exit__(self, *exc: Any) -> None:
+        _release(self.fd, self.target_file.with_name("runs.jsonl.lock"))
+
+
+def _acquire(lock_file: Path, lock_timeout_s: float) -> int:
     t_end = time.time() + lock_timeout_s
     fd: int | None = None
     while True:
@@ -165,24 +193,90 @@ def record_usage(
 
     if fd is None:
         raise UsageRejected("usage ledger lock timeout")
+    return fd
 
+
+def _release(fd: int, lock_file: Path) -> None:
     try:
-        with open(target_file, "ab") as f:
-            f.write(encoded)
-            f.flush()
-            os.fsync(f.fileno())
-        return target_file
-    finally:
+        os.close(fd)
+    except OSError:
+        pass
+    unlink_end = time.time() + 1.0
+    while time.time() < unlink_end:
         try:
-            os.close(fd)
+            os.unlink(str(lock_file))
+            break
+        except FileNotFoundError:
+            break
         except OSError:
-            pass
-        unlink_end = time.time() + 1.0
-        while time.time() < unlink_end:
-            try:
-                os.unlink(str(lock_file))
-                break
-            except FileNotFoundError:
-                break
-            except OSError:
-                time.sleep(0.002)
+            time.sleep(0.002)
+
+
+def _row_key(line: str) -> str | None:
+    """A row's identity: its parsed JSON in canonical form, so CRLF checkouts and key order do not split one row."""
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(row, dict):
+        return None
+    return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _rows(path: Path) -> list[str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def linked_worktrees(desk: Path) -> list[Path]:
+    """Every linked checkout of this repository, read from `<desk>/.git/worktrees/<name>/gitdir`.
+
+    Git records each linked worktree there as the path of its `.git` file. Reading those files needs no subprocess,
+    so this adds no command-execution site to the U54 firewall audit.
+    """
+    trees = []
+    for record in sorted((Path(desk) / ".git" / "worktrees").glob("*/gitdir")):
+        try:
+            marker = Path(record.read_text(encoding="utf-8").strip())
+        except (OSError, UnicodeDecodeError):
+            continue
+        if marker.name == ".git" and marker.parent.is_dir():
+            trees.append(marker.parent)
+    return trees
+
+
+def collect(project_root: Path, *, trees: list[Path] | None = None, apply: bool = False,
+            lock_timeout_s: float = 10.0) -> dict[str, Any]:
+    """U72-L: find rows that exist only in a worktree's ledger copy and, with apply, append them to the desk ledger.
+
+    A row counts once however many worktrees hold it. The rows are appended byte for byte as their worktree wrote
+    them (never re-validated or re-stamped: the ledger is append-only history). The whole read-compare-append runs
+    under the ledger lock, so two collectors at once still append each row once.
+    """
+    desk = ledger_file(Path(project_root)).parent.parent.parent
+    trees = linked_worktrees(desk) if trees is None else trees
+    with _ledger_lock(desk, lock_timeout_s) as target_file:
+        known = {key for key in map(_row_key, _rows(target_file)) if key}
+        orphans: list[str] = []
+        by_tree: dict[str, int] = {}
+        for tree in trees:
+            for line in _rows(Path(tree) / ".coord" / "usage" / "runs.jsonl"):
+                key = _row_key(line)
+                if key is None or key in known:
+                    continue
+                _check_secrets(json.loads(line))
+                known.add(key)
+                orphans.append(line)
+                by_tree[str(tree)] = by_tree.get(str(tree), 0) + 1
+        if apply and orphans:
+            data = target_file.read_bytes() if target_file.is_file() else b""
+            prefix = b"\n" if data and not data.endswith(b"\n") else b""
+            with open(target_file, "ab") as f:
+                f.write(prefix + "".join(line + "\n" for line in orphans).encode("utf-8"))
+                f.flush()
+                os.fsync(f.fileno())
+    return {"ledger": str(target_file), "trees": len(trees), "orphans": len(orphans), "by_tree": by_tree,
+            "appended": len(orphans) if apply else 0, "mode": "APPLY" if apply else "DRY_RUN"}

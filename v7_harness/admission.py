@@ -32,7 +32,10 @@ def _whole(value: Any) -> int | None:
 
 def ledger_rows(project: Path) -> list[dict[str, Any]]:
     """Every readable row of the project's usage ledger. Unreadable lines are skipped: they carry no spend to learn."""
-    path = Path(project) / LEDGER
+    from .coord.usage_ledger import ledger_file
+
+    # U72-L: a worktree reads the desk ledger it writes to, so its floor is the repository's floor.
+    path = ledger_file(Path(project))
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:

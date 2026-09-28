@@ -150,7 +150,10 @@ def load_policy(project: Path) -> dict[str, Any]:
 
 def load_rows(project: Path) -> list[dict[str, Any]]:
     """Pilot rows of the project's usage ledger, oldest first. Unreadable lines are counted, never silently dropped."""
-    path = Path(project) / LEDGER_PATH
+    from .coord.usage_ledger import ledger_file
+
+    # U72-L: the desk ledger, also when RSI runs inside a linked worktree.
+    path = ledger_file(Path(project))
     rows: list[dict[str, Any]] = []
     if not path.is_file():
         return rows
