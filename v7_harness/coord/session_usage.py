@@ -25,16 +25,59 @@ TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "c
 SYNTHETIC_MODEL = "<synthetic>"
 
 
+def _codex_call(entry: dict[str, Any], state: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    """U74-B: one Codex rollout `token_count` event whose cumulative total grew, as the delta since the last one.
+
+    Codex writes cumulative `total_token_usage` and repeats the event without a new call; only a larger total is a
+    call. Its `input_tokens` include the cached part, so the uncached input is input minus cached.
+    """
+    payload = entry.get("payload")
+    info = payload.get("info") if isinstance(payload, dict) else None
+    total = info.get("total_token_usage") if isinstance(info, dict) else None
+    stamp = entry.get("timestamp")
+    if not isinstance(total, dict) or not isinstance(stamp, str):
+        return None
+    counts = {key: total.get(key) for key in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
+                                                "output_tokens", "total_tokens")}
+    if any(not isinstance(value, int) or isinstance(value, bool) for value in counts.values()):
+        return None
+    previous = state.get("total") or dict.fromkeys(counts, 0)
+    if counts["total_tokens"] <= previous["total_tokens"]:
+        return None
+    state["total"] = counts
+    delta = {key: counts[key] - previous[key] for key in counts}
+    return f"codex-{counts['total_tokens']}", {
+        "ts": stamp, "model": state.get("model"),
+        "input_tokens": delta["input_tokens"] - delta["cached_input_tokens"],
+        "output_tokens": delta["output_tokens"],
+        "cache_creation_input_tokens": delta["cache_write_input_tokens"],
+        "cache_read_input_tokens": delta["cached_input_tokens"],
+    }
+
+
 def _session_calls(transcript: Path) -> dict[str, dict[str, Any]]:
-    """One entry per API message id. Claude Code repeats a message once per content block, all with its usage."""
+    """One entry per API call: a Claude Code message id (repeated once per content block, all with its usage) or a
+    Codex rollout token_count event that grew the cumulative total."""
     calls: dict[str, dict[str, Any]] = {}
+    codex: dict[str, Any] = {}
     with open(transcript, encoding="utf-8") as handle:
         for line in handle:
             try:
                 entry = json.loads(line)
             except ValueError:
                 continue
-            if not isinstance(entry, dict) or entry.get("type") != "assistant":
+            if not isinstance(entry, dict):
+                continue
+            payload = entry.get("payload")
+            if entry.get("type") == "turn_context" and isinstance(payload, dict) and payload.get("model"):
+                codex["model"] = str(payload["model"])
+                continue
+            if entry.get("type") == "event_msg" and isinstance(payload, dict) and payload.get("type") == "token_count":
+                call = _codex_call(entry, codex)
+                if call:
+                    calls[call[0]] = call[1]
+                continue
+            if entry.get("type") != "assistant":
                 continue
             message = entry.get("message")
             if not isinstance(message, dict) or message.get("model") == SYNTHETIC_MODEL:
@@ -73,7 +116,7 @@ def _seconds(start: str, end: str) -> float:
     return round((parse(end) - parse(start)).total_seconds(), 3)
 
 
-def record_session(project_root: Path, transcript: Path, *, work_id: str, actor: str = "claude",
+def record_session(project_root: Path, transcript: Path, *, work_id: str, actor: str | None = None,
                    apply: bool = False, lock_timeout_s: float = 10.0) -> dict[str, Any]:
     """Sum the session's calls after its last recorded window; with apply, append them as one ledger row.
 
@@ -87,13 +130,15 @@ def record_session(project_root: Path, transcript: Path, *, work_id: str, actor:
         raise UsageRejected(f"transcript not found: {transcript}")
     session_id = transcript.stem
     calls = _session_calls(transcript)
+    # The transcript's own format names the tool: Codex rollouts yield codex-* calls.
+    actor = actor or ("codex" if any(key.startswith("codex-") for key in calls) else "claude")
     with _ledger_lock(Path(project_root), lock_timeout_s) as ledger:
         since = _recorded_until(ledger, session_id)
         window = sorted((call for call in calls.values() if call["ts"] > since), key=lambda call: call["ts"])
         if not window:
             return {"ledger": str(ledger), "session_id": session_id, "since": since or None, "api_calls": 0,
                     "mode": "NOTHING_NEW", "appended": 0}
-        models = sorted({str(call["model"]) for call in window})
+        models = sorted({str(call["model"]) for call in window if call["model"]}) or ["unknown"]
         row: dict[str, Any] = {
             "schema": "uaos-usage-v2", "work_id": work_id, "actor": actor, "worker": actor,
             "model": ",".join(models), "kind": "session", "collection_mode": "transcript",

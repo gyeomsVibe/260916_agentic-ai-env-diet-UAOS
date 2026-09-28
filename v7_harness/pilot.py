@@ -361,6 +361,9 @@ def reconcile_pilot(*, work_dir: Path, task_id: str) -> dict[str, Any]:
 
 
 def run_pilot(config: PilotConfig) -> dict[str, Any]:
+    # U74-A: the ledger row's wall time. Seen 2026-09-28 (U72): every pilot row had wall_time_s null, so the cost
+    # evidence fell back to the full-suite times written by hand in PLAN.
+    started_monotonic = time.monotonic()
     # 1. work_dir creation, db = work_dir / "coord.sqlite3", BrokerCore(db).start()
     work_dir = Path(config.work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -935,7 +938,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                     "collection_mode": "automatic",
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
-                    "wall_time_s": None,
+                    "wall_time_s": round(time.monotonic() - started_monotonic, 3),
                     "outcome": verdict_hint,
                     "receipt": str(summary_path),
                     "independent_verifier": None,

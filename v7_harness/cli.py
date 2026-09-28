@@ -817,9 +817,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_collect.add_argument("--apply", action="store_true", help="Append the orphan rows (default: dry run)")
     p_coord_collect.set_defaults(func=cmd_coord_usage_collect)
     p_coord_session = p_coord_subs.add_parser(
-        "usage-session", help="Record a Claude Code session's tokens since its last recorded window (U73)")
+        "usage-session", help="Record a Claude Code transcript's or Codex rollout's tokens since its last recorded window (U73, U74)")
     p_coord_session.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_session.add_argument("--transcript", required=True, help="The session's transcript .jsonl")
+    p_coord_session.add_argument("--transcript", required=True, help="The Claude Code transcript .jsonl or Codex rollout-*.jsonl; the actor is read from its format")
     p_coord_session.add_argument("--work-id", required=True, help="Card the recorded window is attributed to")
     p_coord_session.add_argument("--apply", action="store_true", help="Append the row (default: dry run)")
     p_coord_session.set_defaults(func=cmd_coord_usage_session)
@@ -1175,7 +1175,8 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
                      target=args.target, thread=args.thread)
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
-    ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE")
+    # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
+    ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY")
     print(json.dumps({"ok": ok, "target": result.target, "reason": result.reason,
                       "message_id": result.message_id, "digest": result.digest,
                       "receipt": result.receipt, "output": result.output[:500]}, ensure_ascii=False))
