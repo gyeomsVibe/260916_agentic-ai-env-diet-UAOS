@@ -1,3 +1,247 @@
+```contract
+work_id: U75
+worker: apply
+goal: Give the calculator gate a merge-parent route (U46-G1) and record the U47-X1 keep decision
+inputs:
+- v7_harness/calculator_gate.py sha256=418d33e1bf96b06c3286189f6b8b1041e5f205f770b194f2852f103f3d0e3bba
+- .coord/PLAN.md sha256=50e037aeb328b71e60bfff9633702c310c419df3ac6b05d4bf2d344fa14083f4
+allow:
+- v7_harness/calculator_gate.py
+- tests/test_u75_merge_gate.py
+- .coord/PLAN.md
+acceptance: python -m unittest tests.test_u75_merge_gate tests.test_u21_calculator
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 600
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Merges 6e02901/1e5b316 needed Calculator-Exempt only because merged files had no APPLIED digest. Claude acts with Codex's authority at the user's instruction (2026-09-28). Write the three files below exactly.
+
+===FILE: v7_harness/calculator_gate.py===
+"""계산기 원칙 관문. Claude·Codex(지휘자)는 코드를 손으로 쓰지 않고
+Antigravity·Ollama(계산기)에 pilot 으로 맡긴다. 커밋에 올라간 `v7_harness/` 아래 .py 파일은 APPLIED 된 pilot 결과물과
+내용이 같아야 한다. 예외는 커밋 메시지의 `Calculator-Exempt: <이유>` 줄로만 허용하고 이유가 커밋에 남는다.
+"""
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+GATED_PREFIX = "v7_harness/"
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def applied_digests(pilot_dir: Path) -> dict[str, set[str]]:
+    pilot_dir = Path(pilot_dir)
+    result: dict[str, set[str]] = {}
+    runs_dir = pilot_dir / "runs"
+    if not runs_dir.is_dir():
+        return result
+    for task_dir in runs_dir.iterdir():
+        if not task_dir.is_dir():
+            continue
+        summary_path = task_dir / "summary.json"
+        if not summary_path.is_file():
+            continue
+        try:
+            with summary_path.open("r", encoding="utf-8") as f:
+                summary = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(summary, dict) or summary.get("promotion") != "APPLIED":
+            continue
+        changed = summary.get("changed_files")
+        if not isinstance(changed, list):
+            continue
+        for path in changed:
+            if not isinstance(path, str):
+                continue
+            stage_file = pilot_dir / "stage" / task_dir.name / path
+            if stage_file.is_file():
+                try:
+                    result.setdefault(path, set()).add(_digest(stage_file.read_bytes()))
+                except Exception:
+                    continue
+    return result
+
+
+def parent_digests(paths: list[str]) -> dict[str, set[str]]:
+    """U75 (docs/47 §2-2): during a merge, a file equal to HEAD's or MERGE_HEAD's version adds nothing new, because
+    each parent already passed this gate. Outside a merge this returns {} so ordinary commits are unchanged."""
+    merge = subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, text=True)
+    if merge.returncode != 0:
+        return {}
+    result: dict[str, set[str]] = {}
+    for parent in ("HEAD", "MERGE_HEAD"):
+        for path in paths:
+            shown = subprocess.run(["git", "show", f"{parent}:{path}"], capture_output=True)
+            if shown.returncode == 0:  # a path new in this merge has no parent version and stays gated
+                result.setdefault(path, set()).add(_digest(shown.stdout))
+    return result
+
+
+def check(staged: dict[str, bytes], message: str, pilot_dir: Path | list[Path],
+          parents: dict[str, set[str]] | None = None) -> list[str]:
+    exempt_pattern = re.compile(r"^Calculator-Exempt:\s*\S")
+    for line in message.splitlines():
+        if exempt_pattern.match(line):
+            return []
+
+    digests: dict[str, set[str]] = {path: set(found) for path, found in (parents or {}).items()}
+    for directory in pilot_dir if isinstance(pilot_dir, list) else [pilot_dir]:
+        for path, found in applied_digests(directory).items():
+            digests.setdefault(path, set()).update(found)
+    violations: list[str] = []
+    for path, content in staged.items():
+        if path.startswith(GATED_PREFIX) and path.endswith(".py"):
+            if _digest(content) not in digests.get(path, set()):
+                violations.append(f"{path}: not produced by an APPLIED pilot bundle or equal to a merge parent")
+    return violations
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Calculator gate check")
+    parser.add_argument("--commit-msg", type=Path)
+    parser.add_argument("--install", action="store_true", help="set git core.hooksPath to .githooks")
+    # Default: every pilot work dir (.coord/pilot, .coord, .work/*). P08/P09 ran in .work/pilot_P08 and had to
+    # use Calculator-Exempt although they were APPLIED pilot output.
+    parser.add_argument("--pilot-dir", type=Path, default=None)
+    args = parser.parse_args(argv)
+
+    if args.install:
+        # 새 클론은 훅이 꺼진 채 시작한다. 한 번 실행하면 이 저장소의 커밋이 관문을 거친다.
+        subprocess.run(["git", "config", "core.hooksPath", ".githooks"], check=True)
+        print("core.hooksPath = .githooks")
+        return 0
+    if args.commit_msg is None:
+        parser.error("--commit-msg or --install is required")
+
+    diff_out = subprocess.check_output(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        text=True,
+    )
+    staged_paths = [p for p in diff_out.splitlines() if p.strip()]
+
+    staged: dict[str, bytes] = {}
+    for path in staged_paths:
+        if path.startswith(GATED_PREFIX) and path.endswith(".py"):
+            staged[path] = subprocess.check_output(["git", "show", f":{path}"])
+
+    message = args.commit_msg.read_text(encoding="utf-8")
+    if args.pilot_dir is not None:
+        pilot_dirs: list[Path] = [args.pilot_dir]
+    else:
+        from v7_harness.pilot_dirs import discover
+
+        pilot_dirs = discover(Path("."))
+    violations = check(staged, message, pilot_dirs, parent_digests(list(staged)))
+
+    for v in violations:
+        print(v, file=sys.stderr)
+
+    if violations:
+        print(
+            'delegate via: python -m v7_harness.cli pilot run --worker auto --task <ID> --source . --prompt-file <md> --accept-cmd "<test>" --work-dir .coord/pilot',
+            file=sys.stderr,
+        )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+===FILE: tests/test_u75_merge_gate.py===
+"""U75 (U46-G1, docs/47 §2-2): a merge commit passes the calculator gate when every gated file equals one parent.
+
+Seen 2026-09-26: merges 6e02901 and 1e5b316 needed `Calculator-Exempt` only because the gate saw a merged file that
+no APPLIED bundle had produced, although each side had already passed the gate on its own branch.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from v7_harness.calculator_gate import check, parent_digests
+
+GATED = "v7_harness/m.py"
+
+
+def _git(root: Path, *args: str) -> str:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t"}
+    return subprocess.run(["git", *args], cwd=root, env=env, check=True, capture_output=True, text=True).stdout
+
+
+class MergeParentRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.pilot = self.root / "no_pilot"  # no APPLIED bundle anywhere: only a parent can explain a file
+        _git(self.root, "init", "-q", "-b", "main")
+        _git(self.root, "config", "core.hooksPath", "no-hooks")  # the unit under test is check(), not the hook
+        (self.root / "v7_harness").mkdir()
+        self._write(GATED, "a = 1\n")
+        (self.root / "other.txt").write_text("base\n", encoding="utf-8")
+        _git(self.root, "add", ".")
+        _git(self.root, "commit", "-q", "-m", "base")
+        _git(self.root, "checkout", "-q", "-b", "side")
+        self._write(GATED, "a = 2\n")
+        _git(self.root, "commit", "-q", "-am", "side")
+        _git(self.root, "checkout", "-q", "main")
+        (self.root / "other.txt").write_text("main\n", encoding="utf-8")
+        _git(self.root, "commit", "-q", "-am", "main")
+        _git(self.root, "merge", "-q", "--no-commit", "--no-ff", "side")
+        self._cwd = os.getcwd()
+        os.chdir(self.root)
+
+    def tearDown(self) -> None:
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _write(self, rel: str, text: str) -> None:
+        (self.root / rel).write_bytes(text.encode("utf-8"))
+
+    def _staged(self) -> dict[str, bytes]:
+        return {GATED: subprocess.check_output(["git", "show", f":{GATED}"], cwd=self.root)}
+
+    def test_a_file_equal_to_a_merge_parent_passes_without_an_exempt_line(self) -> None:
+        staged = self._staged()
+        self.assertEqual([], check(staged, "merge side", self.pilot, parent_digests(list(staged))))
+
+    def test_new_content_written_during_the_merge_is_still_refused(self) -> None:
+        self._write(GATED, "a = 3  # hand-written conflict resolution\n")
+        _git(self.root, "add", GATED)
+        staged = self._staged()
+        violations = check(staged, "merge side", self.pilot, parent_digests(list(staged)))
+        self.assertEqual(1, len(violations))
+        self.assertIn(GATED, violations[0])
+
+    def test_outside_a_merge_the_parent_route_is_closed(self) -> None:
+        _git(self.root, "merge", "--abort")
+        self._write(GATED, "a = 1\n")  # equals HEAD, but an ordinary commit gets no parent credit
+        self.assertEqual({}, parent_digests([GATED]))
+        self.assertEqual(1, len(check({GATED: b"a = 1\n"}, "plain", self.pilot, parent_digests([GATED]))))
+
+
+if __name__ == "__main__":
+    unittest.main()
+===FILE: .coord/PLAN.md===
 # 통합 실행 계획
 
 상태 기준: `READY → ACTIVE → REVIEW → DONE`; 한 번에 활성 단계 하나, 단계별 단일 소유자 한 명.
@@ -283,3 +527,8 @@ Claude 대행 중 반영된 것. 만든 이가 유일한 검증자가 되지 않
 - 2026-09-26 [U42-R1] 계약 호출 상한대로 Claude 구현·Ollama 기계 분류·Antigravity 레드팀을 각 1회만 실행했다. Claude는 외부쓰기·예산 초과로 bundle 없이 BLOCKED, Antigravity는 P1 5종 FAIL을 확인했으나 자체 예산 초과로 보고서 승인을 거부했다. Ollama 분류 1개만 원문 대조 후 APPLIED했다. 신규 고정 인수는 retention import 오류로 exit 1이므로 U42를 `REVIEW (BLOCKED 증거 반환)`로 두고 PR #6 push·전역 배포·스케줄 등록을 중단한다.
 - 2026-09-26 [U42-R2] 재개 지시에 따라 Claude 원장 `NOTHING_TO_RECONCILE`, local 구현 재시도는 `rv.bak` 외부쓰기 감지로 ABANDONED 처리했다. Claude 격리 후보를 직접 테스트해 Windows path 정규화 2건을 보정하고, 정확한 6파일을 0토큰 apply bundle로 재구성했다. wrapper materialization·status 디코딩 반례까지 추가해 focused 56/56, 전체 783 OK, compileall 0, 고정 SHA 불변을 확인했다. 전역 설치기 apply/check drift 0, 프로젝트 고유 Windows 작업 Ready, manual-now dry-run 0으로 U42를 REVIEW에 반환한다.
 - 2026-09-26 [U45] Codex 한도 도달(5시간 97% 리셋 18:50 대기)에 따른 사용자 지시("전수파악 후 무승인 마무리지어라")에 따라 Antigravity가 완결 대행 수행: U42(5f49b85)+U44(40caf37) 기준선 머지 완결, SemVer 0.2.0 범프, `coord init` 프로젝트 매뉴얼/계약 템플릿 생성 구현, `docs/46` 범용 UAOS 핵심 설계서 발행, `tests/test_u45_general_uaos.py` 통과, 777 회귀 통과 확인 후 DONE으로 마감. Codex 복귀 재검토 대상 기록.
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.

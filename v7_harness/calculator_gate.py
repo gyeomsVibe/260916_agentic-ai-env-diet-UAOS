@@ -52,13 +52,29 @@ def applied_digests(pilot_dir: Path) -> dict[str, set[str]]:
     return result
 
 
-def check(staged: dict[str, bytes], message: str, pilot_dir: Path | list[Path]) -> list[str]:
+def parent_digests(paths: list[str]) -> dict[str, set[str]]:
+    """U75 (docs/47 §2-2): during a merge, a file equal to HEAD's or MERGE_HEAD's version adds nothing new, because
+    each parent already passed this gate. Outside a merge this returns {} so ordinary commits are unchanged."""
+    merge = subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, text=True)
+    if merge.returncode != 0:
+        return {}
+    result: dict[str, set[str]] = {}
+    for parent in ("HEAD", "MERGE_HEAD"):
+        for path in paths:
+            shown = subprocess.run(["git", "show", f"{parent}:{path}"], capture_output=True)
+            if shown.returncode == 0:  # a path new in this merge has no parent version and stays gated
+                result.setdefault(path, set()).add(_digest(shown.stdout))
+    return result
+
+
+def check(staged: dict[str, bytes], message: str, pilot_dir: Path | list[Path],
+          parents: dict[str, set[str]] | None = None) -> list[str]:
     exempt_pattern = re.compile(r"^Calculator-Exempt:\s*\S")
     for line in message.splitlines():
         if exempt_pattern.match(line):
             return []
 
-    digests: dict[str, set[str]] = {}
+    digests: dict[str, set[str]] = {path: set(found) for path, found in (parents or {}).items()}
     for directory in pilot_dir if isinstance(pilot_dir, list) else [pilot_dir]:
         for path, found in applied_digests(directory).items():
             digests.setdefault(path, set()).update(found)
@@ -66,7 +82,7 @@ def check(staged: dict[str, bytes], message: str, pilot_dir: Path | list[Path]) 
     for path, content in staged.items():
         if path.startswith(GATED_PREFIX) and path.endswith(".py"):
             if _digest(content) not in digests.get(path, set()):
-                violations.append(f"{path}: not produced by an APPLIED pilot bundle")
+                violations.append(f"{path}: not produced by an APPLIED pilot bundle or equal to a merge parent")
     return violations
 
 
@@ -105,7 +121,7 @@ def main(argv=None) -> int:
         from v7_harness.pilot_dirs import discover
 
         pilot_dirs = discover(Path("."))
-    violations = check(staged, message, pilot_dirs)
+    violations = check(staged, message, pilot_dirs, parent_digests(list(staged)))
 
     for v in violations:
         print(v, file=sys.stderr)
