@@ -1,3 +1,338 @@
+```contract
+work_id: U78
+worker: apply
+goal: Model price table, API-equivalent ledger cost, staleness check (docs/64)
+inputs:
+- .coord/PLAN.md sha256=2772981e171f7676d9d36a5d0b91f0f2c7b99465d6d630716ad4cf7351b02fe9
+- v7_harness/coord/usage_ledger.py sha256=ab252db1c359af7752cacbbc4810f0226eba1222fd833abf857c33e121c12812
+allow:
+- v7_harness/coord/price_table.py
+- tests/test_u78_price_table.py
+- docs/64_u78-model-price-table.md
+- .coord/PLAN.md
+acceptance: python -m unittest tests.test_u78_price_table tests.test_u27_usage_ledger
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 600
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+User order 2026-09-28. Write the four files exactly as given.
+
+===FILE: v7_harness/coord/price_table.py===
+"""U78: list prices per model, so token-thrift decisions weigh tokens by what they cost (docs/64).
+
+Prices are USD per 1M tokens at each vendor's standard, short-context API rate, read from the vendor's own pricing
+page on RETRIEVED. They are an API-equivalent yardstick, NOT the user's bill: all three tools run on subscriptions
+whose quotas are not dollars, and a quota percentage is never converted into tokens or dollars (docs/27, U56).
+
+Rows are priced only when the ledger names an exact model in the table. A missing, ambiguous ("sonnet"), mixed
+("gpt-5.6-sol,gpt-6-sol"), or default ("agy-default") model is reported as unpriced tokens, never guessed.
+Read-only: the ledger is never rewritten.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+RETRIEVED = "2026-09-28"
+# Prices move: Sonnet 5's scheduled rise was cancelled on 2026-09-01 and Gemini 3.8 Flash's promo ends 2026-12-31.
+# 30 days keeps the table within one vendor announcement cycle; after that the report says STALE and `--check`
+# exits 1, so the refresh is an ACTIONABLE_DELTA for the conductor instead of a silent wrong number.
+MAX_AGE_DAYS = 30
+SOURCES = {
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "openai": "https://developers.openai.com/api/docs/pricing",
+    "google": "https://ai.google.dev/gemini-api/docs/pricing",
+}
+
+# (input, cache_write, cache_read, output) USD per 1M tokens, standard tier, short context.
+# cache_write: Anthropic 5-minute write (1.25x input); OpenAI and Google bill no separate write, so it equals input.
+PRICES: dict[str, dict[str, Any]] = {
+    "claude-opus-5-5": {"vendor": "anthropic", "input": 4.00, "cache_write": 5.00, "cache_read": 0.20, "output": 20.00},
+    "claude-sonnet-5": {"vendor": "anthropic", "input": 2.00, "cache_write": 2.50, "cache_read": 0.20, "output": 10.00},
+    "claude-sonnet-4-6": {"vendor": "anthropic", "input": 3.00, "cache_write": 3.75, "cache_read": 0.30,
+                          "output": 15.00},
+    "claude-haiku-4-5": {"vendor": "anthropic", "input": 1.00, "cache_write": 1.25, "cache_read": 0.10, "output": 5.00},
+    "gpt-5.6-sol": {"vendor": "openai", "input": 4.00, "cache_write": 4.00, "cache_read": 0.40, "output": 20.00},
+    "gpt-6-sol": {"vendor": "openai", "input": 2.00, "cache_write": 2.00, "cache_read": 0.20, "output": 10.00},
+    "gemini-3.1-pro": {"vendor": "google", "input": 2.00, "cache_write": 2.00, "cache_read": 0.20, "output": 12.00},
+    # Gemini 3.8 Flash: promotional rate through 2026-12-31, then 1.50 / 0.15 / 7.50 (vendor page).
+    "gemini-3.8-flash": {"vendor": "google", "input": 0.75, "cache_write": 0.75, "cache_read": 0.075,
+                         "output": 3.75, "valid_until": "2026-12-31"},
+}
+# Local and deterministic workers spend no paid tokens; their cost (inference, wall time, power) stays UNMEASURED.
+ZERO_PAID = {"deterministic"}
+ZERO_PAID_PREFIXES = ("qwen", "llama", "gemma", "mistral", "phi", "deepseek")  # Ollama tags run on this PC
+TOKEN_FIELDS = (("input_tokens", "input"), ("cache_creation_input_tokens", "cache_write"),
+                ("cache_read_input_tokens", "cache_read"), ("output_tokens", "output"))
+
+
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def price_of(model: Any) -> dict[str, Any] | None:
+    return PRICES.get(model) if isinstance(model, str) else None
+
+
+def is_zero_paid(model: Any) -> bool:
+    return isinstance(model, str) and (model in ZERO_PAID or model.lower().startswith(ZERO_PAID_PREFIXES))
+
+
+def usd_equivalent(row: dict[str, Any]) -> dict[str, Any] | None:
+    """API-equivalent USD of one ledger row by component, or None when its model is not an exact table entry."""
+    price = price_of(row.get("model"))
+    if price is None:
+        return None
+    parts = {rate: round(_count(row.get(field)) * price[rate] / 1_000_000, 6) for field, rate in TOKEN_FIELDS}
+    return {**parts, "total": round(sum(parts.values()), 6)}
+
+
+def freshness(today: date | None = None) -> dict[str, Any]:
+    """FRESH within MAX_AGE_DAYS of RETRIEVED; STALE after, or once any entry passes its valid_until date."""
+    today = today or date.today()
+    age = (today - date.fromisoformat(RETRIEVED)).days
+    expired = sorted(model for model, price in PRICES.items()
+                     if price.get("valid_until") and today > date.fromisoformat(price["valid_until"]))
+    stale = age > MAX_AGE_DAYS or bool(expired)
+    return {"status": "STALE" if stale else "FRESH", "retrieved": RETRIEVED, "age_days": age,
+            "max_age_days": MAX_AGE_DAYS, "expired_entries": expired,
+            "refresh": ("re-read the three vendor pages in `sources`, update PRICES and RETRIEVED, rerun "
+                        "tests/test_u78_price_table.py") if stale else None}
+
+
+def report(project: Path, today: date | None = None) -> dict[str, Any]:
+    from .usage_ledger import ledger_file
+
+    path = ledger_file(Path(project))
+    priced: dict[str, dict[str, Any]] = {}
+    unpriced: dict[str, dict[str, int]] = {}
+    zero_paid_rows = malformed = 0
+    lines = path.read_bytes().decode("utf-8", errors="replace").splitlines() if path.is_file() else []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            malformed += 1
+            continue
+        if not isinstance(row, dict):
+            malformed += 1
+            continue
+        model = row.get("model")
+        if is_zero_paid(model):
+            zero_paid_rows += 1
+            continue
+        usd = usd_equivalent(row)
+        tokens = {field: _count(row.get(field)) for field, _ in TOKEN_FIELDS}
+        if usd is None:
+            if not any(tokens.values()):
+                continue  # a row with no tokens costs nothing whatever its model
+            slot = unpriced.setdefault(str(model), {"rows": 0, **dict.fromkeys(tokens, 0)})
+            slot["rows"] += 1
+            for field, count in tokens.items():
+                slot[field] += count
+            continue
+        slot = priced.setdefault(model, {"rows": 0, **dict.fromkeys(tokens, 0),
+                                         **{rate: 0.0 for _, rate in TOKEN_FIELDS}, "total": 0.0})
+        slot["rows"] += 1
+        for field, count in tokens.items():
+            slot[field] += count
+        for key in (*(rate for _, rate in TOKEN_FIELDS), "total"):
+            slot[key] = round(slot[key] + usd[key], 6)
+    for slot in priced.values():
+        # Which component drives cost tells the thrift rule what to cut first (long sessions: cache reads).
+        slot["largest_component"] = max((rate for _, rate in TOKEN_FIELDS), key=lambda rate: slot[rate])
+    return {
+        "source": str(path),
+        "freshness": freshness(today),
+        "sources": SOURCES,
+        "priced_usd_equivalent": priced,
+        "priced_total_usd_equivalent": round(sum(slot["total"] for slot in priced.values()), 2),
+        "unpriced_tokens": unpriced,
+        "zero_paid_rows": zero_paid_rows,
+        "malformed": malformed,
+        "note": ("API list-price equivalent at standard short-context rates, not the subscription bill. Requests "
+                 "above 200k-272k context cost up to 2x, so totals are a lower bound. Unpriced models are not "
+                 "guessed. Local rows spend no paid tokens but are not zero cost."),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="API-equivalent cost of the usage ledger by model (read only)")
+    parser.add_argument("--project", default=".")
+    parser.add_argument("--check", action="store_true", help="Only check freshness; exit 1 when STALE")
+    args = parser.parse_args(argv)
+    result = freshness() if args.check else report(Path(args.project))
+    json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 1 if args.check and result["status"] == "STALE" else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+===FILE: tests/test_u78_price_table.py===
+"""U78: API-equivalent prices weigh ledger tokens; unknown models are never guessed; the ledger is read-only."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import tempfile
+import unittest
+from datetime import date
+from pathlib import Path
+from unittest.mock import patch
+
+from v7_harness.coord.price_table import PRICES, freshness, is_zero_paid, main, report, usd_equivalent
+
+
+def _row(model, *, inp=0, out=0, cache_read=0, cache_write=0) -> dict:
+    return {"model": model, "input_tokens": inp, "output_tokens": out, "cache_read_input_tokens": cache_read,
+            "cache_creation_input_tokens": cache_write}
+
+
+class PriceTableTests(unittest.TestCase):
+    def test_table_goes_stale_after_thirty_days_or_when_a_promo_price_expires(self) -> None:
+        self.assertEqual("FRESH", freshness(date(2026, 10, 28))["status"])  # day 30
+        late = freshness(date(2026, 10, 29))  # day 31
+        self.assertEqual("STALE", late["status"])
+        self.assertIsNotNone(late["refresh"])
+        promo = dict(PRICES["gemini-3.8-flash"])
+        self.assertEqual("2026-12-31", promo["valid_until"])
+        with patch("v7_harness.coord.price_table.RETRIEVED", "2026-12-20"):
+            self.assertEqual("FRESH", freshness(date(2026, 12, 31))["status"])
+            expired = freshness(date(2027, 1, 1))
+        self.assertEqual(["gemini-3.8-flash"], expired["expired_entries"])
+        self.assertEqual("STALE", expired["status"])
+
+    def test_check_flag_exits_one_only_when_stale(self) -> None:
+        with patch("v7_harness.coord.price_table.date") as fake, patch("sys.stdout", new_callable=io.StringIO):
+            fake.fromisoformat = date.fromisoformat
+            fake.today.return_value = date(2026, 10, 1)
+            self.assertEqual(0, main(["--check"]))
+            fake.today.return_value = date(2026, 11, 30)
+            self.assertEqual(1, main(["--check"]))
+
+    def test_list_prices_match_the_vendor_pages_read_on_2026_09_28(self) -> None:
+        self.assertEqual((4.00, 5.00, 0.20, 20.00), tuple(PRICES["claude-opus-5-5"][k] for k in
+                                                          ("input", "cache_write", "cache_read", "output")))
+        self.assertEqual((4.00, 0.40, 20.00), tuple(PRICES["gpt-5.6-sol"][k] for k in ("input", "cache_read", "output")))
+        self.assertEqual((2.00, 0.20, 10.00), tuple(PRICES["gpt-6-sol"][k] for k in ("input", "cache_read", "output")))
+        self.assertEqual((3.00, 0.30, 15.00),
+                         tuple(PRICES["claude-sonnet-4-6"][k] for k in ("input", "cache_read", "output")))
+
+    def test_every_vendor_charges_output_at_least_five_times_input_and_cache_reads_at_most_a_tenth(self) -> None:
+        for model, price in PRICES.items():
+            self.assertGreaterEqual(price["output"] / price["input"], 5.0, model)
+            self.assertLessEqual(price["cache_read"] / price["input"], 0.1 + 1e-9, model)
+
+    def test_one_row_is_priced_by_component(self) -> None:
+        usd = usd_equivalent(_row("claude-opus-5-5", inp=1_000_000, out=100_000, cache_read=10_000_000,
+                                  cache_write=200_000))
+        self.assertEqual({"input": 4.0, "cache_write": 1.0, "cache_read": 2.0, "output": 2.0, "total": 9.0}, usd)
+
+    def test_ambiguous_mixed_default_or_missing_models_are_not_guessed(self) -> None:
+        for model in ("sonnet", "gpt-5.6-sol,gpt-6-sol", "agy-default", "codex-default", None, 7):
+            self.assertIsNone(usd_equivalent(_row(model, inp=10)), model)
+
+    def test_local_and_deterministic_workers_spend_no_paid_tokens(self) -> None:
+        self.assertTrue(is_zero_paid("qwen2.5-coder:7b"))
+        self.assertTrue(is_zero_paid("deterministic"))
+        self.assertFalse(is_zero_paid("gpt-5.6-sol"))
+
+    def test_report_totals_unpriced_and_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / ".coord" / "usage" / "runs.jsonl"
+            ledger.parent.mkdir(parents=True)
+            rows = [_row("gpt-5.6-sol", inp=1_000_000, out=1_000_000, cache_read=100_000_000),
+                    _row("sonnet", inp=500), _row("qwen2.5-coder:7b", inp=900), _row("agy-default")]
+            ledger.write_bytes(("\n".join(json.dumps(r) for r in rows) + "\n{bad\n").encode("utf-8"))
+            before = hashlib.sha256(ledger.read_bytes()).hexdigest()
+            result = report(Path(tmp))
+            self.assertEqual(before, hashlib.sha256(ledger.read_bytes()).hexdigest())
+        codex = result["priced_usd_equivalent"]["gpt-5.6-sol"]
+        self.assertEqual(64.0, codex["total"])  # 4 input + 20 output + 40 cache read
+        self.assertEqual("cache_read", codex["largest_component"])
+        self.assertEqual(64.0, result["priced_total_usd_equivalent"])
+        self.assertEqual({"rows": 1, "input_tokens": 500, "cache_creation_input_tokens": 0,
+                          "cache_read_input_tokens": 0, "output_tokens": 0}, result["unpriced_tokens"]["sonnet"])
+        self.assertNotIn("agy-default", result["unpriced_tokens"])  # no tokens, no cost
+        self.assertEqual(1, result["zero_paid_rows"])
+        self.assertEqual(1, result["malformed"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+===FILE: docs/64_u78-model-price-table.md===
+# U78 모델별 토큰 가격표 — 절약 모드의 기준 자료
+
+상태: 유지 문서. 작성: Claude(부관), 2026-09-28, 사용자 지시("3대 도구의 입력·출력 가격을 조사해서 UAOS 로직에 적용해 토큰예산 절약 모드의 기반 기준 자료로 삼아라", "가격은 변동이 있으니 주기적인 업데이트가 필요").
+표기: **사실**(공급사 공식 가격 페이지, 2026-09-28 확인), **추론**, **미측정**.
+
+## 1. 왜 가격이 필요한가 (초보자용)
+
+지금까지 장부는 토큰 **개수**만 셌습니다. 하지만 토큰은 종류마다 값이 다릅니다.
+
+- 출력 토큰은 입력 토큰보다 **5~6배** 비쌉니다.
+- 캐시 읽기(cache read, 앞 대화를 다시 읽는 것)는 입력의 **5~10%** 값입니다.
+
+그래서 "토큰 100만 개 절약"이라는 말은 어떤 토큰이냐에 따라 값어치가 20배 넘게 차이 납니다. 가격표로 토큰에 무게를 달아야 무엇을 먼저 줄일지 정할 수 있습니다.
+
+## 2. 가격표 (USD / 100만 토큰, 표준·짧은 문맥, 사실)
+
+| 도구 | 모델(장부 이름) | 입력 | 캐시 쓰기 | 캐시 읽기 | 출력 |
+|---|---|---|---|---|---|
+| Claude Code | claude-opus-5-5 | 4.00 | 5.00 | 0.20 | 20.00 |
+| Claude Code | claude-sonnet-5 | 2.00 | 2.50 | 0.20 | 10.00 |
+| Antigravity 설정 모델 | claude-sonnet-4-6 | 3.00 | 3.75 | 0.30 | 15.00 |
+| Claude | claude-haiku-4-5 | 1.00 | 1.25 | 0.10 | 5.00 |
+| Codex | gpt-5.6-sol | 4.00 | (입력과 같음) | 0.40 | 20.00 |
+| Codex | gpt-6-sol | 2.00 | (입력과 같음) | 0.20 | 10.00 |
+| Antigravity | gemini-3.1-pro | 2.00 | (입력과 같음) | 0.20 | 12.00 |
+| Antigravity | gemini-3.8-flash | 0.75 | (입력과 같음) | 0.075 | 3.75 (2026-12-31까지 할인가) |
+
+출처: [Anthropic](https://platform.claude.com/docs/en/about-claude/pricing), [OpenAI](https://developers.openai.com/api/docs/pricing), [Google](https://ai.google.dev/gemini-api/docs/pricing).
+주의(사실): 요청 하나의 문맥이 20만~27.2만 토큰을 넘으면 OpenAI·Google은 최대 2배를 받습니다. 표는 짧은 문맥 기준이므로 합계는 **하한**입니다.
+주의(사실): 한 검색 요약은 gpt-5.6-sol을 5/30달러로 적었지만 OpenAI 공식 페이지는 4/20달러입니다. 공식 페이지를 따릅니다.
+
+## 3. 이 값은 청구서가 아니다
+
+세 도구는 모두 **구독**(사용량 한도)으로 씁니다. 가격표는 "API로 샀다면 얼마였을까"를 재는 **자(yardstick)** 입니다. 사용자의 실제 비용이 아니며, 한도 잔량 %를 토큰이나 달러로 바꾸지 않는다는 규칙(docs/27, U56)도 그대로입니다.
+
+## 4. 장부에 적용한 결과 (사실, 2026-09-28 장부)
+
+`python -m v7_harness.coord.price_table --project .`가 모델별로 입력·캐시 쓰기·캐시 읽기·출력 달러를 나눠 보여 주고, 가장 큰 항목(`largest_component`)을 알려 줍니다.
+
+- 모델 이름이 정확히 표에 있을 때만 값을 매깁니다. `sonnet`, `agy-default`, `gpt-5.6-sol,gpt-6-sol`처럼 모호하거나 섞인 이름은 **값을 추측하지 않고** `unpriced_tokens`로 따로 셉니다.
+- Ollama(qwen 등)와 결정적 받아쓰기(apply)는 유료 토큰 0으로 따로 셉니다. 전기·시간 비용은 미측정입니다.
+
+## 5. 절약 모드에 주는 규칙 (추론)
+
+1. **긴 대화가 가장 비싸다.** Codex 장부는 캐시 읽기가 가장 큰 비용 항목으로 나옵니다. 카드마다 새 호출·짧은 증거 묶음으로 끊는 것이 첫 번째 절약입니다(U76 B).
+2. **출력은 짧게.** 출력 1토큰이 입력 5토큰 값입니다. 보고·초안처럼 긴 출력은 로컬 모델(`local_draft`)로 먼저 보냅니다.
+3. **같은 일이면 싼 모델.** 같은 공급사에서도 모델 사이 가격이 2~4배 차이 납니다(gpt-5.6-sol 4달러 대 gpt-6-sol 2달러). 판정 품질이 같다는 통제 대조가 없으면 바꾸지 않습니다(U76-A 규칙).
+4. 절약액 주장은 여전히 U76-A의 통제 대조 10쌍이 있어야 합니다. 가격표는 무게를 달 뿐, 절약을 증명하지 않습니다.
+
+## 6. 주기적 갱신
+
+가격은 바뀝니다. 사실: Sonnet 5의 인상 예정이 2026-09-01에 취소됐고, Gemini 3.8 Flash 할인가는 2026-12-31에 끝납니다.
+
+- 표는 확인일(`RETRIEVED`)에서 **30일**이 지나거나, 기한(`valid_until`)이 지난 항목이 하나라도 있으면 `STALE`이 됩니다. 30일인 이유: 공급사 가격 공지가 대략 한 달 주기로 나오기 때문입니다.
+- `python -m v7_harness.coord.price_table --check`는 FRESH면 0, STALE이면 1로 끝납니다. 결정적이고 0토큰이라 로컬 예약 실행(`rsi schedule`)이나 커밋 전 점검에 넣을 수 있습니다.
+- STALE이 되면 그것이 `ACTIONABLE_DELTA`입니다. 지휘 도구가 세 공식 페이지를 다시 읽고 `PRICES`와 `RETRIEVED`를 고친 뒤 `tests/test_u78_price_table.py`를 돌려 PR로 올립니다. 유료 모델로 가격을 매일 확인하는 폴링은 하지 않습니다.
+===FILE: .coord/PLAN.md===
 # 통합 실행 계획
 
 상태 기준: `READY → ACTIVE → REVIEW → DONE`; 한 번에 활성 단계 하나, 단계별 단일 소유자 한 명.
@@ -133,9 +468,6 @@
 | U73 | DONE-DELEGATED (2026-09-28 사용자 위임으로 Claude가 Codex 권한 재검토 — 독립 아님, U74 전체 회귀로 인수 재실행; 이전: DONE-ACTING (Claude 대행 설계·판정; Codex 복귀 재검토)) | claude(대행 설계·판정) · apply(0토큰) · codex(복귀 재검토) | U72 비용 관문 UNKNOWN 해소 1단계: `coord usage-session --transcript --work-id [--apply]`가 Claude Code 세션 기록에서 고유 메시지 id별 4종 토큰을 합산해 마지막 기록 뒤 구간만 `kind: session` 행으로 추가(모델·하위 프로세스 0, 잠금 안 증분, `<synthetic>` 제외, 기본 드라이런). RSI(`pilot`만)·입장 관문(같은 종류만) 바닥에 들어가지 않음. 신규 6시험(수정 전 모듈 부재로 red), 6프로세스 동시 기록 1행. 실측(드라이런): 대행 세션 315호출, 출력 225,300·캐시 읽기 43,148,200·캐시 생성 998,695·입력 628. 다음: 카드마다 기록해 3카드 이상 쌓이면 U72 비용 관문 재판정; Codex 세션·qualify 기록은 후속 — `docs/61_u73-session-usage-ledger.md` |
 | U74 | DONE-DELEGATED (Claude가 사용자 위임으로 Codex 권한 행사, 자기 산출물 판정 — 독립 아님; Codex 복귀 시 재검토 가능) | claude(대행 설계·판정) · apply(0토큰) | 장부 공백 마감: (A) 파일럿 행 `wall_time_s`를 단조 시계로 기록(전 행 null이던 결함) (B) `qualify`가 프로젝트 `.coord/qualification`이면 `kind: qualification` 행 1개 기록, `usage-session`이 Codex rollout의 누적 `token_count`를 호출별 증가분·캐시 분리로 읽고 actor를 형식에서 판별 (C) 판정 마감: 리뷰 바닥 94,953<120,000으로 U69 상한 충돌 데이터로 해소, RSI 제안 6건 과거 기록 종결, 중복 편지 ack, U63~U73 DONE-DELEGATED (D) 검증 중 발견: 감시자가 편지를 받고 파일을 지운 뒤 늦은 발송자가 ACK_ONLY를 `claude -p` 유료 발송(병렬 부하 4회 중 3회 재현) → 명시적 ACK_ONLY는 `QUEUED_ACK_ONLY`로 발송 0, U71 단언의 경쟁 보정. 신규 7시험(수정 전 6 red), 인수 14개 스위트, 전체 1156/1156 OK(6 skip, 176.7s; U73 184.8s 대비 -4%), U71 병렬 부하 8/8. 데스크 소급: Codex 세션 17행(3,022호출, 누적합 Codex 자체 합계와 일치), 자격 1행(5호출, 5,271토큰; 이전 측정은 덮어써져 UNKNOWN). **U72 비용 관문**: 기준 U67-U73-ACTING 카드당 총 5,134,080·출력 26,120, U74 세션(PR 꼬리 `U74-TAIL` 포함) 총 16,123,467(**3.14배 → FAIL**)·출력 69,482(2.66배); 원인은 부분 작업 4개를 한 카드로 묶고 D 경쟁 재현에 호출이 늘어난 것 — 다음 카드부터 부분 작업마다 세션 행 기록. 한계: 같은 대행 계열 비교, Codex 토큰과는 모델이 달라 비교 불가 — `docs/62_u74-ledger-closure-and-review.md` |
 | U75 | DONE-DELEGATED (Claude가 사용자 위임으로 Codex 권한 행사 — 독립 아님; Codex 복귀 시 재검토) | claude(대행 설계·판정) · apply | 계산기 관문(calculator gate) 병합 경로: 병합 중(MERGE_HEAD) 파일이 HEAD 또는 MERGE_HEAD 내용과 같으면 통과, 병합 중 새로 쓴 내용·일반 커밋은 그대로 거부. `tests/test_u75_merge_gate.py` 3건(실제 git 병합), 면제 줄 불필요 — docs/47 §2-2 |
-| U76 | ACTIVE (U76-A 완료; 다음 B1 판정 패킷) | codex(설계·판정) · claude(단일 작성자) · apply(0토큰) | U72 비용 관문 `3.14배 > 3배` FAIL을 숨기지 않고, 동일 입력·인수·작업유형·모델의 baseline/thrift 통제 대조만 센다. 최신 유효 10쌍 전에는 `UNMEASURED`; 임의 14일 반감기·행 삭제·자기검증 금지. U48-M1 Antigravity 실세션은 LIMITED 해제 뒤 1회만 확인. 설계·계약: `docs/63_u76-token-thrift-closeout-design.md`, `.coord/tasks/U76-claude-token-thrift-closeout-manual.md`. |
-| U76-A | DONE (Codex 반례 거부 → Claude 수정안 → apply 0토큰 → Codex 판정) | claude(초안·수정 설계) · apply(구현) · codex(반례·판정) | 최초 bundle `9d6ed1c0`은 합계가 개별 회귀를 숨기고 봉투 모델이 실제 모델과 달라도 MEASURED가 되는 반례로 REJECT. R1 bundle `064d3cf0`은 쌍별 회귀 ID와 실제 모델 대조를 추가해 APPLIED. 집중 72/72, 전체 1176/1176 OK(6 skip, 173.447s), 실장부 `valid_pairs=0`, `UNMEASURED`, 절감 주장 false. |
-| U77 | DONE-DELEGATED (Codex LIMITED 중 Claude 권한대행 판정 2026-09-28 — Codex 복귀 시 재검토) | codex(설계·구현) · claude(독립 비판·대행 판정) · apply(0토큰) | 변화된 요구·설계·증거를 기존 READY가 흡수하지 못하는 결함을 수정한다. 계획→설계→해시 고정 계약→구현→CRITIC/SELFREFINE/REDTEAM→검증→재계획 루프와 종료 관문을 3도구 전역 규칙 v5.29.0에 고정·배포한다. 계약: `.coord/tasks/U77-adaptive-nonstop-global-rules-manual.md`; 정본 설계: platform-optimization `shared/global-rules/docs/adaptive-nonstop-control-loop.md`. 완료 후 U76-B1로 자동 복귀한다. 결과: A(휴대형 블록)·B2(생성본 소유 판별 `_is_canon_generated`)·C2(REDTEAM 불변식, bundle `c652247a`) 적용, U77+U37+U41+U45 44/44 OK, 설치기 `--check` 8/8 UNCHANGED·drift 0. |
 | U78 | REVIEW (Claude 부관 구현 2026-09-28, 사용자 지시; 판정 codex) | claude · apply(0토큰) | 3대 도구 모델 가격표(Anthropic·OpenAI·Google 공식 페이지 2026-09-28), 장부 API 환산 달러(구독 청구서 아님), 모호한 모델은 추측 없이 unpriced, 30일·할인 기한 경과 시 STALE과 `--check` 종료 1 — docs/64 |
 | U51-R2 | DONE-ACTING (Claude 대행 판정; Codex 재검토) | claude(U51 세션 작성) · claude(대행 판정) | 신원 위조 가능 REJECT(relay_d8ff049c) 수리: score는 기록 안 함, qualify가 공급자를 직접 호출·전후 digest·호출별 영수증. 인수 16/16, 위조 score·가짜 --expect-digest 0파일. bundle `13b121b9` APPLIED, 커밋 8526bc5 |
 | U50-R2b | DONE-ACTING (Claude 대행 판정; Codex 재검토) | claude(U50 세션 작성) · claude(대행 판정) | 정션 교체 누출 REJECT(relay_79a8d71e) 수리: 핸들로 입장·스냅샷 전달. 인수 311 OK, 독립 정션 교체 재현 누출 0. bundle `6d3dedce` APPLIED, 커밋 1d52fc1 |
@@ -287,3 +619,8 @@ Claude 대행 중 반영된 것. 만든 이가 유일한 검증자가 되지 않
 - 2026-09-26 [U42-R1] 계약 호출 상한대로 Claude 구현·Ollama 기계 분류·Antigravity 레드팀을 각 1회만 실행했다. Claude는 외부쓰기·예산 초과로 bundle 없이 BLOCKED, Antigravity는 P1 5종 FAIL을 확인했으나 자체 예산 초과로 보고서 승인을 거부했다. Ollama 분류 1개만 원문 대조 후 APPLIED했다. 신규 고정 인수는 retention import 오류로 exit 1이므로 U42를 `REVIEW (BLOCKED 증거 반환)`로 두고 PR #6 push·전역 배포·스케줄 등록을 중단한다.
 - 2026-09-26 [U42-R2] 재개 지시에 따라 Claude 원장 `NOTHING_TO_RECONCILE`, local 구현 재시도는 `rv.bak` 외부쓰기 감지로 ABANDONED 처리했다. Claude 격리 후보를 직접 테스트해 Windows path 정규화 2건을 보정하고, 정확한 6파일을 0토큰 apply bundle로 재구성했다. wrapper materialization·status 디코딩 반례까지 추가해 focused 56/56, 전체 783 OK, compileall 0, 고정 SHA 불변을 확인했다. 전역 설치기 apply/check drift 0, 프로젝트 고유 Windows 작업 Ready, manual-now dry-run 0으로 U42를 REVIEW에 반환한다.
 - 2026-09-26 [U45] Codex 한도 도달(5시간 97% 리셋 18:50 대기)에 따른 사용자 지시("전수파악 후 무승인 마무리지어라")에 따라 Antigravity가 완결 대행 수행: U42(5f49b85)+U44(40caf37) 기준선 머지 완결, SemVer 0.2.0 범프, `coord init` 프로젝트 매뉴얼/계약 템플릿 생성 구현, `docs/46` 범용 UAOS 핵심 설계서 발행, `tests/test_u45_general_uaos.py` 통과, 777 회귀 통과 확인 후 DONE으로 마감. Codex 복귀 재검토 대상 기록.
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
