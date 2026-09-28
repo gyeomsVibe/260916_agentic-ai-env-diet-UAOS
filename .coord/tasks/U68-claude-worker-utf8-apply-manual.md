@@ -1,3 +1,25 @@
+```contract
+work_id: U68
+worker: apply
+goal: The Claude worker prints its JSON envelope with ASCII escapes so a cp949 stdout never loses the envelope after a paid call
+inputs:
+- v7_harness/adapters/claude_worker.py sha256=1f5fa8ce418e6a2ee01aa74c029dbd3b17499e885d979faf7345cedfd6feee49
+allow:
+- v7_harness/adapters/claude_worker.py
+- tests/test_u68_claude_worker_utf8.py
+acceptance: python -m unittest tests.test_u68_claude_worker_utf8 tests.test_u38_cost_gate_and_claude_worker tests.test_u44_claude_contract
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 600
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+U67-C1 failed with UNKNOWN_EFFECT_NEEDS_RECONCILIATION: the worker printed an answer holding U+2014 with ensure_ascii=False to a cp949 pipe. Write the two files below exactly.
+
+===FILE: v7_harness/adapters/claude_worker.py===
 """Claude Code as a UAOS pilot worker (U38): `claude -p` on the paid account, inside the staged copy.
 
 This is lane_worker's benchmarked call pointed back at Anthropic instead of the local model. Same contract as the other
@@ -195,3 +217,74 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+===FILE: tests/test_u68_claude_worker_utf8.py===
+"""U68: the Claude worker must report its envelope even when its own stdout is a cp949 pipe.
+
+U67-C1 (2026-09-28) failed on Windows: the reviewer's answer held U+2014 (em dash), the worker printed its envelope
+with `ensure_ascii=False`, and the cp949 stdout raised UnicodeEncodeError. The pilot then saw no envelope and recorded
+UNKNOWN_EFFECT_NEEDS_RECONCILIATION although the paid call had already happened. The worker is started by path in a
+child process, so the test runs it the same way with PYTHONIOENCODING=cp949 instead of calling main() in-process.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+
+WORKER = Path(__file__).resolve().parents[1] / "v7_harness" / "adapters" / "claude_worker.py"
+# Characters seen in real answers: em dash (the U67-C1 case), a Korean word, and an emoji outside the BMP.
+ANSWER = "done — 한글 \U0001F600"
+
+
+class Cp949StdoutTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        fake = self.root / "fake_claude.py"
+        fake.write_text(textwrap.dedent(f"""
+            import json, sys
+            out = {{"result": {ANSWER!r}, "num_turns": 1, "total_cost_usd": 0.01,
+                    "usage": {{"input_tokens": 3, "output_tokens": 2}}}}
+            sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
+        """), encoding="utf-8")
+        self.env = {**os.environ, "CLAUDE_WORKER_CMD": json.dumps([sys.executable, str(fake)]),
+                    "PYTHONIOENCODING": "cp949", "PYTHONUTF8": "0"}
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def _run(self) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(WORKER), "-p", "review", "--add-dir", str(self.root),
+                               "--max-budget-usd", "0.10", "--print-timeout", "60s"],
+                              env=self.env, capture_output=True, timeout=120)
+
+    def test_non_cp949_answer_still_yields_one_envelope(self) -> None:
+        done = self._run()
+        self.assertEqual(0, done.returncode, done.stderr.decode("utf-8", errors="replace")[-400:])
+        envelope = json.loads(done.stdout.decode("ascii"))
+        self.assertEqual("SUCCESS", envelope["status"])
+        self.assertEqual(ANSWER, envelope["response"])
+        self.assertEqual(10_000, envelope["usage"]["cost_microusd"])
+
+    def test_error_envelope_survives_cp949_too(self) -> None:
+        self.env["CLAUDE_WORKER_CMD"] = json.dumps([sys.executable, "-c",
+                                                    "import sys; sys.stderr.buffer.write('\\u2014 boom'.encode('utf-8')); sys.exit(3)"])
+        done = self._run()
+        envelope = json.loads(done.stdout.decode("ascii"))
+        self.assertEqual("ERROR", envelope["status"])
+        self.assertIn("— boom", envelope["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
