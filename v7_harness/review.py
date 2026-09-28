@@ -110,6 +110,14 @@ def run_review(*, task_id: str, work_dir: Path, source: Path, manual_text: str, 
     changed = [str(x) for x in summary.get("changed_files") or []]
     if not changed or not staging.is_dir():
         raise ReviewRefused("NOTHING_TO_REVIEW: no changed files or no staged copy")
+    # U69: U67-C1 was a 12,000-token review that spent 485,172 before the gate discarded it. Refuse before the call
+    # when the budget is below the cheapest review this reviewer has recorded in the project's ledger.
+    from .admission import admit
+
+    admission = admit(Path(source), worker=reviewer, kind="review", budget_tokens=budget, budget_usd=budget_usd,
+                      timeout_s=timeout_s)
+    if admission["decision"] == "REFUSE":
+        raise ReviewRefused("ADMISSION_REFUSED:" + ";".join(admission["reasons"]))
 
     # The spill goes in the run folder, never in staging: a file written there would become part of the bundle.
     prompt = review_prompt(task_id, manual_text, bundle_diff(Path(source), staging, changed), runs / "review.diff")
