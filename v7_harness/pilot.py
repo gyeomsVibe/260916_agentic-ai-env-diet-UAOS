@@ -150,6 +150,16 @@ def _derive_isolation_mode(workspace: StagingWorkspace) -> str:
     raise TypeError("workspace must be an instance of StagingWorkspace")
 
 
+def _worker_error(path: Path) -> str | None:
+    """The `error` of a worker's JSON envelope (U81), or None when it is missing or unreadable."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    error = data.get("error") if isinstance(data, dict) else None
+    return error if isinstance(error, str) and error else None
+
+
 def _write_summary(path: Path, summary: dict[str, Any]) -> None:
     """Persist a summary with an atomic same-directory replace."""
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -891,6 +901,11 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         # B30: error_detail for non-worker errors
         if execute_error is not None and state == "FAILED":
             detail = f"{type(execute_error).__name__}: {execute_error}"
+            # U81: the engine reports a worker refusal as UNKNOWN_EFFECT_NEEDS_RECONCILIATION; keep the worker's own
+            # reason (e.g. UNREQUESTED_DELETION) so rsi does not blame the Ollama service for a deterministic refusal.
+            worker_error = _worker_error(raw_stdout)
+            if worker_error and worker_error not in detail:
+                detail = f"{detail}; worker: {worker_error}"
             summary["error_detail"] = detail[:300]
         if _scope_detail is not None:
             summary["error_detail"] = _scope_detail
