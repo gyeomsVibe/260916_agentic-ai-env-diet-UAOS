@@ -576,13 +576,18 @@ class DurableExecutionTest(unittest.TestCase):
             f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid)); "
             "time.sleep(30)"
         )
-        decision = MockSubprocessLauncher(default_timeout_sec=0.3).launch(
+        # U82: the kill must land after the child exists. Measured 2026-09-29 on 12 busy cores, the parent needs up to
+        # 0.44 s (median 0.34) to start, spawn the child and write its pid; the old 0.3 s killed it first in 2 of 15
+        # loaded runs (FileNotFoundError on child.pid). 3.0 s is about 7x that worst case; the parent then sleeps 30 s,
+        # so the timeout still fires.
+        decision = MockSubprocessLauncher(default_timeout_sec=3.0).launch(
             attempt_id="tree-timeout",
             acceptance_hash=H,
             custom_script=parent_script,
             worker_capability="read_only",
         )
         self.assertEqual(decision.error_class, "TIMEOUT")
+        self.assertTrue(pid_file.is_file(), "the parent was killed before it spawned the child: premise not met")
         child_pid = int(pid_file.read_text())
         probe = subprocess.run(
             ["tasklist", "/FI", f"PID eq {child_pid}", "/FO", "CSV", "/NH"],
