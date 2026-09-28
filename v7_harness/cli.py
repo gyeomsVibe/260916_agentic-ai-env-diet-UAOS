@@ -816,6 +816,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_collect.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_collect.add_argument("--apply", action="store_true", help="Append the orphan rows (default: dry run)")
     p_coord_collect.set_defaults(func=cmd_coord_usage_collect)
+    p_coord_session = p_coord_subs.add_parser(
+        "usage-session", help="Record a Claude Code session's tokens since its last recorded window (U73)")
+    p_coord_session.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_session.add_argument("--transcript", required=True, help="The session's transcript .jsonl")
+    p_coord_session.add_argument("--work-id", required=True, help="Card the recorded window is attributed to")
+    p_coord_session.add_argument("--apply", action="store_true", help="Append the row (default: dry run)")
+    p_coord_session.set_defaults(func=cmd_coord_usage_session)
 
     p_coord_thrift = p_coord_subs.add_parser("thrift", help="Prepare a deterministic local budget handoff packet")
     p_coord_thrift.add_argument("--project", default=".")
@@ -1352,6 +1359,20 @@ def cmd_coord_usage_collect(args: argparse.Namespace) -> int:
     try:
         result = collect(Path(args.project), apply=args.apply)
     except UsageRejected as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_coord_usage_session(args: argparse.Namespace) -> int:
+    """U73: one ledger row for the session tokens spent since the last recording. Transcript-only, no model call."""
+    from .coord.session_usage import record_session
+    from .coord.usage_ledger import UsageRejected
+
+    try:
+        result = record_session(Path(args.project), Path(args.transcript), work_id=args.work_id, apply=args.apply)
+    except (UsageRejected, OSError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         return 2
     print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
