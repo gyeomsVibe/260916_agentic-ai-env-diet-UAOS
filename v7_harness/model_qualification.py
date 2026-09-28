@@ -84,9 +84,21 @@ def score_extraction(candidates: list[dict[str, Any]], source_text: str) -> dict
     flat = _norm(source_text)
     names = [candidate_key(str(c.get("name") or "")) for c in candidates]
     quotes = [_norm(str(c.get("quote") or "")) for c in candidates]
+
+    def passed(items: list[str], haystack: str) -> int:
+        # U70: a repeated item is a failed item. U67-O1b answered with duplicates, and each copy of a true item used
+        # to count as another pass, so repeating one easy line could lift a model over QUALIFY_MIN.
+        seen: set[str] = set()
+        count = 0
+        for item in items:
+            if item and item not in seen and item in haystack:
+                count += 1
+            seen.add(item)
+        return count
+
     return {
-        "list_extract": (sum(bool(n) and n in source_text for n in names), len(names)),
-        "verbatim_quote": (sum(bool(q) and q in flat for q in quotes), len(quotes)),
+        "list_extract": (passed(names, source_text), len(names)),
+        "verbatim_quote": (passed(quotes, flat), len(quotes)),
     }
 
 
@@ -275,6 +287,27 @@ def lookup(store: Path, *, provider: str, model: str, digest: str, task_type: st
 
 
 PROVIDERS = {"ollama": OllamaProvider}
+# U70: where `qualify --record` keeps a project's verdicts, so the pilot's routing gate finds them.
+QUALIFICATION_STORE = Path(".coord") / "qualification"
+
+
+def local_admission(project: Path, *, model: str, task_type: str, provider: Provider | None = None) -> str:
+    """U70: may this local model take a task of *task_type* now? Only QUALIFIED admits.
+
+    The digest is read from the provider at call time, so a re-pulled model under the same name starts UNQUALIFIED.
+    A provider that cannot be asked counts as MODEL_NOT_INSTALLED: the gate fails closed, it never guesses.
+    """
+    if task_type not in TASK_TYPES:
+        return "UNKNOWN_TASK_TYPE"
+    provider = provider or OllamaProvider()
+    try:
+        digest = provider.digest(model)
+    except (OSError, ValueError):
+        digest = None
+    if not digest:
+        return "MODEL_NOT_INSTALLED"
+    return lookup(Path(project) / QUALIFICATION_STORE, provider=provider.name, model=model, digest=digest,
+                  task_type=task_type)
 
 
 def main(argv: list[str] | None = None) -> int:

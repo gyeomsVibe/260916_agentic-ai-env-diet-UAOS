@@ -160,6 +160,14 @@ def lint(text: str, project: Path) -> ManualReport:
     if len(goal) > 400:
         report.errors.append("GOAL_TOO_LONG: one goal, one sentence")
 
+    # U70: a task type names what the local model is asked to do, so the pilot can check its qualification first.
+    task_type = contract.get("task_type", "")
+    if task_type:
+        from v7_harness.model_qualification import TASK_TYPES
+
+        if task_type not in TASK_TYPES:
+            report.errors.append(f"UNKNOWN_TASK_TYPE:{task_type} (known: {', '.join(TASK_TYPES)})")
+
     for item in contract.get("inputs", []):
         rel = item.split()[0] if item.split() else ""
         pinned = SHA_RE.search(item)
