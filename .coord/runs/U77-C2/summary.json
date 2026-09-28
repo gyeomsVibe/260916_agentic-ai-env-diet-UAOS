@@ -1,0 +1,24 @@
+{
+  "state": "SUCCEEDED",
+  "error_class": "NONE",
+  "effect_state": "CONFIRMED",
+  "promotion": "APPLIED",
+  "bundle_id": "c652247a5d99266fc56788ecd7c046288194c9cda7e73194bc40c78af539b74a",
+  "changed_files": [
+    "tests/test_u77_adaptive_nonstop.py",
+    "uaos_everywhere/uaos_global_rule_block.md"
+  ],
+  "conversation_id": "apply-deterministic",
+  "agy_usage": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "agy_workspace": "C:\\Users\\Kimyoongyeom\\.codex\\worktrees\\u76-budget-closeout\\260916_agentic-ai-env-diet\\.coord\\stage\\U77-C2",
+  "raw_stdout_path": ".coord\\runs\\U77-C2\\U77-C2-a001.json",
+  "raw_stderr_path": ".coord\\runs\\U77-C2\\U77-C2-a001.err",
+  "summary_path": ".coord\\runs\\U77-C2\\summary.json",
+  "acceptance_exit": 0,
+  "verdict_hint": "PASS",
+  "acceptance_log_path": ".coord\\runs\\U77-C2\\acceptance.log",
+  "replayed": true
+}
