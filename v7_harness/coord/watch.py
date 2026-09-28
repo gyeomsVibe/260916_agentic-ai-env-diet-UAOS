@@ -32,6 +32,9 @@ DEFAULT_TIMEOUT_S = 4 * 3600.0
 # `coord deliver` fall back to a cold session while the watcher is still running.
 LIVE_SCANS = 3
 LIVE_MIN_S = 90.0
+# Longer than the 120 s Claude dispatch timeout plus receipt writes. A crashed dispatcher must not suppress the
+# interactive fallback forever; after this bound the marker is evidence of failure, not an active dispatch.
+PENDING_MAX_AGE_S = 300.0
 
 
 def watch_file(project: Path, tool: str) -> Path:
@@ -108,11 +111,21 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
             for message_id, payload in box.peek():
                 if message_id in seen:
                     continue
-                seen.add(message_id)
                 # U64-F: `coord deliver` already handed this letter to a Claude process (its accepted receipt
                 # exists); waking the interactive session too would pay a second turn for the same letter.
                 if (mailbox_dir / "delivery" / "accepted" / f"{message_id}.json").is_file():
+                    seen.add(message_id)
                     continue
+                # U66: the marker exists before a direct-dispatch letter is published. Do not mark it seen: if the
+                # dispatch fails, the sender removes the marker and this same watcher becomes the fallback route.
+                pending = mailbox_dir / "delivery" / "pending" / f"{message_id}.json"
+                try:
+                    pending_live = clock() - pending.stat().st_mtime <= PENDING_MAX_AGE_S
+                except OSError:
+                    pending_live = False
+                if pending_live:
+                    continue
+                seen.add(message_id)
                 if _addressed(payload, tools):
                     body = payload if isinstance(payload, dict) else {}
                     return {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),

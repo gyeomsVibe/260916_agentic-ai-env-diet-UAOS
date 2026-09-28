@@ -273,6 +273,17 @@ def _write_receipt(path: Path, payload: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
 
 
+def _clear_owned_pending(path: Path, owner: str | None) -> None:
+    """Remove only the direct-dispatch marker owned by this guard winner."""
+    if not owner:
+        return
+    try:
+        if json.loads(path.read_text(encoding="utf-8")).get("owner") == owner:
+            path.unlink(missing_ok=True)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 # ── 통합 전달기 ──────────────────────────────────────────────
 # Why 300 s: a live dispatcher holds the guard at most for the Claude CLI timeout (120 s) plus receipt writes; 300 s
 # gives 2.5x margin so a slow but live dispatcher is never taken for a crashed one.
@@ -414,6 +425,7 @@ def _deliver_unlocked(
     target: str | None = None,
     thread: str = "",
     runner: Any = None,
+    pending_owner: str | None = None,
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -430,29 +442,11 @@ def _deliver_unlocked(
     # Stable id makes repeated calls with the same sender and bytes idempotent.
     digest = hashlib.sha256((actor + "\0" + message).encode("utf-8")).hexdigest()
     message_id = "relay_" + digest[:32]
-    box.publish(message_id, _payload(actor, message, digest, target))
+    pending = box.root / "delivery" / "pending" / f"{message_id}.json"
     ack_file = box.ack_dir / f"{message_id}.json"
     if ack_file.is_file():
+        _clear_owned_pending(pending, pending_owner)
         return DeliverResult(True, target or "auto", "ACKED", (), "", message_id, digest, str(ack_file))
-
-    # 자동 판별
-    if target is None:
-        from v7_harness.coord.presence import read as read_presence
-        codex_state = read_presence(desk, "codex")["state"]
-        if codex_state == "ACTIVE":
-            target = "codex"
-        else:
-            from v7_harness.coord.watch import watcher_live
-
-            claude_state = read_presence(desk, "claude")["state"]
-            # U61 (2026-09-28): the session heartbeat expires an hour after the last prompt, while `coord watch`
-            # beats every 30 s. A live watcher proves a Claude session is waiting for mail even when the user has
-            # been away, so the letter is queued for it instead of kept in the mailbox where nothing wakes.
-            if claude_state == "ACTIVE" or watcher_live(desk, "claude"):
-                target = "claude"
-            else:
-                # 둘 다 부재: 사서함에만 보존, 사용자 릴레이 요청 금지
-                return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
 
     # U64 (2026-09-28): coord watch only returns to the shell process that launched it; it cannot start a new AI turn.
     # It may suppress an ACK-only/liveness delivery, but a real delta must use the direct Claude dispatch path.
@@ -462,8 +456,9 @@ def _deliver_unlocked(
             return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
 
-    accepted =box.root / "delivery" / "accepted" / f"{message_id}.json"
+    accepted = box.root / "delivery" / "accepted" / f"{message_id}.json"
     if accepted.is_file():
+        _clear_owned_pending(pending, pending_owner)
         return DeliverResult(False, target, "DISPATCHED", (), _receipt_output(accepted),
                              message_id, digest, str(accepted))
 
@@ -477,6 +472,7 @@ def _deliver_unlocked(
             break
         time.sleep(CLAIM_SLEEP_S)
     if claim is None:
+        _clear_owned_pending(pending, pending_owner)
         return DeliverResult(False, target, "IN_FLIGHT", (), "", message_id, digest)
 
     result: DeliverResult
@@ -522,6 +518,7 @@ def _deliver_unlocked(
         return DeliverResult(False, str(target), result.reason, result.command, result.output,
                              message_id, digest, str(attempt_path))
     finally:
+        _clear_owned_pending(pending, pending_owner)
         try:
             box.nack(claim)
         except OSError:
@@ -550,9 +547,28 @@ def deliver(
     message_id = "relay_" + digest[:32]
     project = Path(project).resolve()
     box = _project_mailbox(project)
+    desk = box.root.parent.parent
+    requested_target = target
+    if target is None:
+        from v7_harness.coord.presence import read as read_presence
+        from v7_harness.coord.watch import watcher_live
+        if read_presence(desk, "codex")["state"] == "ACTIVE":
+            target = "codex"
+        elif read_presence(desk, "claude")["state"] == "ACTIVE" or watcher_live(desk, "claude"):
+            target = "claude"
+    # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
+    # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
+    pending = box.root / "delivery" / "pending" / f"{message_id}.json"
+    if target == "claude" and _requires_wake(message) and not pending.is_file():
+        try:
+            _write_receipt(pending, {"message_id": message_id, "target": "claude", "state": "PENDING"})
+        except FileExistsError:
+            pass
     # U48-D0 re-review (Claude, 2026-09-27): publish before the guard. A guard left by a crashed dispatcher used to
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
-    box.publish(message_id, _payload(actor, message, digest, target))
+    box.publish(message_id, _payload(actor, message, digest, requested_target))
+    if target is None:
+        return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
     guard = box.root / "delivery" / "guards" / f"{message_id}.lock"
     guard.parent.mkdir(parents=True, exist_ok=True)
     fd = _acquire_guard(guard, box, message_id, digest)
@@ -565,8 +581,16 @@ def deliver(
                                 ensure_ascii=False).encode("utf-8"))
         handle.flush()
         os.fsync(handle.fileno())
+    pending_owner = None
+    if target == "claude" and _requires_wake(message):
+        # The guard winner takes ownership even if another contender created the provisional marker. Guard losers
+        # cannot remove it; this closes the last window where a watcher could start a second paid turn.
+        pending.parent.mkdir(parents=True, exist_ok=True)
+        pending.write_text(json.dumps({"message_id": message_id, "target": "claude", "state": "PENDING",
+                                       "owner": owner}, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        pending_owner = owner
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
-                                 thread=thread, runner=runner)
+                                 thread=thread, runner=runner, pending_owner=pending_owner)
     finally:
         _release_guard(guard, owner)
