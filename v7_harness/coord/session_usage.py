@@ -11,6 +11,7 @@ so recording at the end of every card attributes each stretch of the session to 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -109,6 +110,24 @@ def _recorded_until(ledger: Path, session_id: str) -> str:
     return until
 
 
+def _digest(call_id: str) -> str:
+    # A short hash, not the raw id: rows stay free of provider ids; 64 bits make a collision across one ledger negligible.
+    return hashlib.sha256(call_id.encode("utf-8")).hexdigest()[:16]
+
+
+def _recorded_digests(ledger: Path) -> set[str]:
+    """Call digests of every session row (U79): a continued session's transcript repeats calls of its parent."""
+    seen: set[str] = set()
+    for line in _rows(ledger):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("kind") == "session" and isinstance(row.get("call_digests"), list):
+            seen.update(str(item) for item in row["call_digests"])
+    return seen
+
+
 def _seconds(start: str, end: str) -> float:
     def parse(stamp: str) -> datetime:
         return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
@@ -134,10 +153,14 @@ def record_session(project_root: Path, transcript: Path, *, work_id: str, actor:
     actor = actor or ("codex" if any(key.startswith("codex-") for key in calls) else "claude")
     with _ledger_lock(Path(project_root), lock_timeout_s) as ledger:
         since = _recorded_until(ledger, session_id)
-        window = sorted((call for call in calls.values() if call["ts"] > since), key=lambda call: call["ts"])
+        seen = _recorded_digests(ledger)
+        fresh = {_digest(key): call for key, call in calls.items() if call["ts"] > since}
+        skipped = sum(1 for digest in fresh if digest in seen)
+        fresh = {digest: call for digest, call in fresh.items() if digest not in seen}
+        window = sorted(fresh.values(), key=lambda call: call["ts"])
         if not window:
             return {"ledger": str(ledger), "session_id": session_id, "since": since or None, "api_calls": 0,
-                    "mode": "NOTHING_NEW", "appended": 0}
+                    "mode": "NOTHING_NEW", "appended": 0, "duplicate_calls_skipped": skipped}
         models = sorted({str(call["model"]) for call in window if call["model"]}) or ["unknown"]
         row: dict[str, Any] = {
             "schema": "uaos-usage-v2", "work_id": work_id, "actor": actor, "worker": actor,
@@ -147,7 +170,7 @@ def record_session(project_root: Path, transcript: Path, *, work_id: str, actor:
             # A session row is a cost measurement, not a worker attempt: RSI and admission read pilot/review rows.
             "exclusion_reason": "SESSION_COST_NOT_WORKER_ATTEMPT",
             "session_id": session_id, "window_start": window[0]["ts"], "window_end": window[-1]["ts"],
-            "api_calls": len(window),
+            "api_calls": len(window), "call_digests": sorted(fresh),
             **{key: sum(call[key] for call in window) for key in TOKEN_KEYS},
         }
         _check_secrets(row)
@@ -161,6 +184,6 @@ def record_session(project_root: Path, transcript: Path, *, work_id: str, actor:
                 handle.flush()
                 os.fsync(handle.fileno())
     return {"ledger": str(ledger), "since": since or None, "mode": "APPLY" if apply else "DRY_RUN",
-            "appended": 1 if apply else 0, **{key: row[key] for key in (
+            "appended": 1 if apply else 0, "duplicate_calls_skipped": skipped, **{key: row[key] for key in (
                 "session_id", "work_id", "model", "window_start", "window_end", "api_calls", "wall_time_s",
                 *TOKEN_KEYS)}}
