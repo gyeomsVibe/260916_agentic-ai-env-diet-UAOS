@@ -1,7 +1,7 @@
-# U54-S2 — CALLER_INPUT 22곳 검토: 모델 출력이 실행 명령이 되는 곳이 있는가
+# U54-S2 — CALLER_INPUT 23곳 검토: 모델 출력이 실행 명령이 되는 곳이 있는가
 
 > 상태: DONE-ACTING. 작성·판정은 Codex 부재 중 대행한 Claude다. 복귀한 Codex가 재검토한다(`.coord/codex_return_checklist.md`).
-> 기준 트리: U63/U64 재검토 트리(2026-09-28). 대상 목록: `docs/50_u54-tool-execution-firewall-gap-audit.md`의 CALLER_INPUT 22행.
+> 기준 트리: U63/U64 재검토 트리(2026-09-28). 대상 목록: `docs/50_u54-tool-execution-firewall-gap-audit.md`의 CALLER_INPUT 23행. U75(2026-09-28)에서 `calculator_gate.py` 1곳 추가.
 
 ## 1. 왜 이 검토가 필요한가 (초보자용 설명)
 
@@ -18,17 +18,18 @@
 ## 2. 판정 요약
 
 - 모델 출력이 실행 파일·셸 명령이 되는 곳(명령 주입): **0곳**
-- 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **9곳**
+- 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **10곳**
 - 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **10곳**
 - 사람 운영자(operator)가 명령을 직접 넘기는 도구(OPERATOR_COMMAND): **3곳**
 - 따라서 U54-S2 결론: 지금 코드에는 POLICY_DENIED 관문을 새로 끼울 **실행 지점이 없다**. 새 CALLER_INPUT 지점이 생기면 `tests/test_u54_s2_caller_review.py`가 실패해서 이 검토를 다시 하게 만든다.
 
-## 3. 22곳 개별 판정
+## 3. 23곳 개별 판정
 
 | 지점 | 판정 | 근거(무엇이 실행되고 모델 글은 어디로 가나) |
 |---|---|---|
 | `adapters/claude_worker.py:170` | DATA_ARG | `worker_command()`가 `claude` 실행 파일과 고정 옵션을 만든다. 프롬프트는 argv 한 칸 또는 stdin으로만 간다. 셸 없음. |
 | `adapters/lane_worker.py:78` | DATA_ARG | `lane_command()`가 Ollama 실행 명령을 만든다. 프롬프트는 argv 한 칸 또는 stdin. |
+| `calculator_gate.py:64` | DATA_ARG | `parent_digests()`가 병합 중에만 `git show HEAD:<경로>`·`git show MERGE_HEAD:<경로>`를 돌린다. 실행 파일 `git`과 부모 이름은 고정이고, 경로는 git 자신의 스테이지 목록(`git diff --cached --name-only`)에서 온 값이 argv 한 칸으로만 간다. 모델 출력이 닿지 않고 셸 없음. |
 | `coord/deliver.py:71` | DATA_ARG | `codex queue --thread <id> --message <편지>`. 편지 본문은 `--message` 값 한 칸이다. |
 | `coord/deliver.py:195` | DATA_ARG | `claude -p <편지> --output-format json`. 편지는 `-p` 값 한 칸, `--allowedTools`는 발신 코드의 설정값이다. |
 | `review.py:128` | DATA_ARG | `review_command()`가 `claude` 고정 명령을 만들고 검토 프롬프트는 값 또는 stdin이다. |

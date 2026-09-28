@@ -13,10 +13,12 @@ from v7_harness.firewall_audit import audit
 
 ROOT = Path(__file__).resolve().parents[1]
 REVIEW_DOC = ROOT / "docs" / "51_u54-s2-caller-input-review.md"
-# The 22 CALLER_INPUT sites reviewed in docs/51 (verdicts: DATA_ARG 9, FIXED_PLAN 10, OPERATOR_COMMAND 3).
+# The 23 CALLER_INPUT sites reviewed in docs/51 (verdicts: DATA_ARG 10, FIXED_PLAN 10, OPERATOR_COMMAND 3).
+# U75 added calculator_gate.py (git show of a merge parent, reviewed as DATA_ARG).
 REVIEWED = {
     "v7_harness/adapters/claude_worker.py": 1,
     "v7_harness/adapters/lane_worker.py": 1,
+    "v7_harness/calculator_gate.py": 1,
     "v7_harness/coord/deliver.py": 2,
     "v7_harness/coord/notify.py": 1,
     "v7_harness/coord/thrift.py": 1,
@@ -45,7 +47,7 @@ class CallerInputReviewTest(unittest.TestCase):
                 if ln.startswith("| `") and any(f"| {v} |" in ln for v in VERDICTS)]
         per_file = Counter("v7_harness/" + ln.split("`")[1].rsplit(":", 1)[0] for ln in rows)
         self.assertEqual(REVIEWED, dict(per_file))
-        self.assertEqual({"DATA_ARG": 9, "FIXED_PLAN": 10, "OPERATOR_COMMAND": 3},
+        self.assertEqual({"DATA_ARG": 10, "FIXED_PLAN": 10, "OPERATOR_COMMAND": 3},
                          dict(Counter(v for ln in rows for v in VERDICTS if f"| {v} |" in ln)))
 
     def test_no_command_injection_verdict_and_no_gap(self):
