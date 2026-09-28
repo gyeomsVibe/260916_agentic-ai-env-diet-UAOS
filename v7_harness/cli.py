@@ -868,6 +868,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_rsi_report = p_rsi_subs.add_parser("report", help="Per-worker pass/rework/blocked rates and recurring causes")
     p_rsi_report.add_argument("--project", default=".")
     p_rsi_report.set_defaults(func=cmd_rsi_report)
+    p_rsi_savings = p_rsi_subs.add_parser(
+        "savings", help="Paid-token savings from matched controlled pairs only; UNMEASURED below 10 (U76-A, read only)")
+    p_rsi_savings.add_argument("--project", default=".")
+    p_rsi_savings.set_defaults(func=cmd_rsi_savings)
     p_rsi_propose = p_rsi_subs.add_parser("propose", help="Deterministic remedies for the causes in the ledger")
     p_rsi_propose.add_argument("--project", default=".")
     p_rsi_propose.add_argument("--candidate-for", default=None, metavar="PROPOSAL_ID",
@@ -1579,6 +1583,13 @@ def cmd_rsi_report(args: argparse.Namespace) -> int:
     # An adopted change whose window is complete is due for its re-check: keep it or `rsi rollback`.
     report["trials"] = open_trials(project, rows)
     _print_json(report)
+    return 0
+
+
+def cmd_rsi_savings(args: argparse.Namespace) -> int:
+    from .coord.token_savings import report
+
+    _print_json(report(Path(args.project)))
     return 0
 
 
