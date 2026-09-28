@@ -1,3 +1,26 @@
+```contract
+work_id: U72-C
+worker: apply
+goal: Correct the U72 evidence: the 3x-regression gate holds only for suite runtime and is UNKNOWN for work cost, the complete-sample count is 9, and one duplicate relay to Codex is recorded
+inputs:
+- .coord/PLAN.md sha256=67dcf02f37e9dc35ea80472c5e1928e64eee5c6a9952f05a2ad9f62f6c852613
+- docs/60_u72-completion-evidence.md sha256=6c367730185d51baf6385c106a0467606816216ee4cba35edc1f7ad99c898a4e
+allow:
+- .coord/PLAN.md
+- docs/60_u72-completion-evidence.md
+acceptance: python -m unittest tests.test_u72l_desk_ledger tests.test_u69_admission_gate
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 600
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Self-critique after PR #41: the merged evidence overclaimed the 3x-regression gate. Evidence-only correction, no production change; the final verdict stays with Codex. Write the two files below exactly.
+
+===FILE: .coord/PLAN.md===
 # 통합 실행 계획
 
 상태 기준: `READY → ACTIVE → REVIEW → DONE`; 한 번에 활성 단계 하나, 단계별 단일 소유자 한 명.
@@ -280,3 +303,88 @@ Claude 대행 중 반영된 것. 만든 이가 유일한 검증자가 되지 않
 - 2026-09-26 [U42-R1] 계약 호출 상한대로 Claude 구현·Ollama 기계 분류·Antigravity 레드팀을 각 1회만 실행했다. Claude는 외부쓰기·예산 초과로 bundle 없이 BLOCKED, Antigravity는 P1 5종 FAIL을 확인했으나 자체 예산 초과로 보고서 승인을 거부했다. Ollama 분류 1개만 원문 대조 후 APPLIED했다. 신규 고정 인수는 retention import 오류로 exit 1이므로 U42를 `REVIEW (BLOCKED 증거 반환)`로 두고 PR #6 push·전역 배포·스케줄 등록을 중단한다.
 - 2026-09-26 [U42-R2] 재개 지시에 따라 Claude 원장 `NOTHING_TO_RECONCILE`, local 구현 재시도는 `rv.bak` 외부쓰기 감지로 ABANDONED 처리했다. Claude 격리 후보를 직접 테스트해 Windows path 정규화 2건을 보정하고, 정확한 6파일을 0토큰 apply bundle로 재구성했다. wrapper materialization·status 디코딩 반례까지 추가해 focused 56/56, 전체 783 OK, compileall 0, 고정 SHA 불변을 확인했다. 전역 설치기 apply/check drift 0, 프로젝트 고유 Windows 작업 Ready, manual-now dry-run 0으로 U42를 REVIEW에 반환한다.
 - 2026-09-26 [U45] Codex 한도 도달(5시간 97% 리셋 18:50 대기)에 따른 사용자 지시("전수파악 후 무승인 마무리지어라")에 따라 Antigravity가 완결 대행 수행: U42(5f49b85)+U44(40caf37) 기준선 머지 완결, SemVer 0.2.0 범프, `coord init` 프로젝트 매뉴얼/계약 템플릿 생성 구현, `docs/46` 범용 UAOS 핵심 설계서 발행, `tests/test_u45_general_uaos.py` 통과, 777 회귀 통과 확인 후 DONE으로 마감. Codex 복귀 재검토 대상 기록.
+===FILE: docs/60_u72-completion-evidence.md===
+# U72 프로젝트 완성 판정용 증거 묶음
+
+이 문서는 판정이 아니다. U67~U72-L은 모두 Claude가 Codex 대신(대행) 만든 결과라서, Claude가 스스로 "완성"이라고 판정하면 자기 결과를 자기가 승인하는 셈이 된다. 그래서 Claude는 증거만 모으고, 최종 판정은 복귀한 Codex가 한다. 카드 상태는 REVIEW로 둔다.
+
+## 준비: 장부 회수 (2026-09-28)
+
+- U72-L(PR #40, 병합 c53794b)이 병합된 뒤 런타임을 다시 설치했다. 새 런타임은 `0.3.0-29944e706459`이고, `install_uaos_everywhere.py --check`의 8개 항목이 모두 UNCHANGED였다.
+- `coord usage-collect --project <desk>`를 드라이런(dry-run)으로 먼저 돌렸다. 작업트리 35개에서 누락 행 143개가 나왔다. 병합 전 드라이런보다 1행 많은데, 그 사이에 #40 적용 실행이 한 번 있었기 때문이다.
+- 데스크 장부를 `.work/backup_20260928/runs.jsonl.pre_collect`에 백업한 뒤 `--apply`를 실행했다. 143행이 추가되어 69행이 212행이 되었다. 바로 다시 드라이런을 돌리니 누락 0행이었다.
+
+## 표본 선정 규칙
+
+- 표본은 "전체 회귀 시험의 벽시계(wall-clock) 기록이 남은 최근 완료 카드 10개"다.
+- 대상은 U63, U64, U66, U67, U68, U68-L, U69, U70, U71, U72-L이다.
+- U61과 U65는 전체 회귀 시간이 기록되지 않아 제외했다.
+- 각 항목의 출처는 다음과 같다.
+  - 품질: PLAN 카드에 적힌 인수 시험과 전체 회귀 결과
+  - 재작업: 데스크 장부에서 그 작업 ID의 PASS가 아닌 행 수
+  - 유료 토큰: 장부의 입력+출력 토큰 가운데 결정적(deterministic)·로컬 모델이 아닌 행
+  - 로컬 토큰: 장부의 qwen 행과 PLAN에 적힌 실측값
+  - 벽시계: 전체 회귀 시험 시간
+
+## 표본 10개
+
+1. **U63** — 품질: 집중 66/66, 전체 1098 OK(154.045초). 재작업: 장부 BLOCKED 2행(Claude 비용 상한, 로컬 컨텍스트 상한). 유료: 장부 703토큰(4+699). 로컬: 0.
+2. **U64(F 포함)** — 품질: 전체 1108 OK(156초). 재작업: 0(U64F PASS 1행). 유료: 파일럿 0. 로컬: 0.
+3. **U66** — 품질: 집중 34/34, 전체 1117 OK(145.792초). 재작업: Claude 검토에서 P2 2건을 찾아 고침. 장부: 이 작업 ID의 행이 없다(Codex 직접 작업). 유료·로컬: 알 수 없음(UNKNOWN).
+4. **U67** — 품질: 인수 61/61, 전체 1119 OK(150.390초). 재작업: 장부 BLOCKED 2행(U67-C1). 유료: 장부 4,420토큰(16+4,404). PLAN에는 감사 시도 485,172토큰이 상한 초과로 거부됐다고 적혀 있지만, 장부 행의 토큰은 null이다. 로컬: PLAN 기준 입력 3,403/3,431, 출력 1,194/1,130. 형식 위반으로 2회 REJECTED됐고 장부 행은 없다.
+5. **U68** — 품질: 인수 46/46, 전체 1121 OK(164.619초). 재작업: 0. 유료: 0(apply 작업자). 로컬: 0.
+6. **U68-L** — 품질: 인수 59/59, 전체 1124 OK(169.929초). 재작업: BLOCKED 1행(ollama_worker SYNTAX_ERROR를 EDIT 블록으로 재실행). 유료: 0. 로컬: 0.
+7. **U69** — 품질: 인수 52/52, 전체 1129 OK(177.8초). 재작업: 0. 유료: 0. 로컬: 0.
+8. **U70** — 품질: 인수 29/29, 전체 1137 OK(160.3초). 재작업: 0. 유료: 0. 로컬: 자격 실측(qwen2.5-coder:7b, 작업유형 2종 × 30항목). 이 호출들은 장부에 없다.
+9. **U71** — 품질: 전체 1138 OK(172.0초). 변이(mutation) 3건을 모두 검출했다. 재작업: 0. 유료: 0. 로컬: 0.
+10. **U72-L** — 품질: 인수 19/19, 전체 1143 OK(159.6초). 재작업: 0. 유료: 0. 로컬: 0.
+
+## 관문 대조
+
+- **P1 0**: 충족. `coord inbox` 159통 가운데 P1은 0통이다(세션 시작 훅 기준도 P1 0).
+- **3배 회귀 0**: 시험 실행 시간은 충족, 작업 비용(토큰)은 알 수 없음(UNKNOWN). 정정 절 참고.
+  - 전체 회귀 벽시계는 최소 145.792초(U66), 최대 177.8초(U69)로 비율 1.22배다.
+  - 바로 앞 카드와 비교한 최대 증가율은 U68→U68-L +3%, U68-L→U69 +5%, U70→U71 +7%다.
+  - 시험 수는 1098개에서 1143개로 45개 늘었다.
+- **품질**: 표본 10개 모두 인수와 전체 회귀가 통과(OK)했다. 다만 장부까지 갖춘 표본은 9개다(U66은 장부 행 0).
+- **재작업**: 표본 10개에서 PASS가 아닌 장부 행은 5행이다(U63 2, U67 2, U68-L 1). U67 이후 대행 카드 7개(U67~U72-L)에서 재작업은 U67-C1의 2행과 U68-L의 1행뿐이다.
+- **유료 토큰**: 장부로 확인되는 파일럿 유료 소비는 U63 703, U67 4,420이다. U68 이후는 apply 작업자라 0이다.
+
+## 남은 공백 (판정자가 알아야 할 것)
+
+1. **대행 세션 자체의 토큰**: Claude 대화 세션이 쓴 토큰(설계·검증·보고)은 장부에 들어가지 않는다. 파일럿 유료 0은 "구현 호출이 0"이라는 뜻이지 "작업 전체가 0토큰"이라는 뜻이 아니다. 따라서 전체 비용 절감은 측정되지 않았다(UNMEASURED).
+2. **벽시계 필드**: 결정적 파일럿 행의 `wall_time_s`가 모두 null이다. 이 문서의 벽시계는 PLAN에 적힌 전체 회귀 시간에서 가져왔다.
+3. **장부에 없는 로컬·Codex 실행**: U66 Codex 작업, U67 로컬 추출 2회, U70 자격 실측 호출은 장부 행이 없다. U72-L이 막은 것은 작업트리에 갇힌 행이다. 파일럿 밖의 호출(qualify, 직접 Codex 작업)을 기록하는 경로는 이 문서의 범위 밖이다.
+4. **Codex 재검토 대기**: U63, U64, U67~U72-L은 DONE-ACTING이다. Claude 리뷰 기본 상한 120,000과 장부 바닥 124,769의 충돌(U69)도 Codex가 판정해야 한다.
+
+## 판정자에게 드리는 제안 (결정은 Codex)
+
+- P1 0은 숫자로 충족된다. 3배 회귀 0은 시험 실행 시간에 대해서만 충족되고, 작업 비용에 대해서는 판정할 수 없다.
+- 공백 1~3은 관문 문구 밖이다. 하지만 "장부 누락 0"을 완성 조건으로 읽는다면 공백 3은 후속 카드(파일럿 밖 호출의 장부 기록)가 필요하다.
+- push·배포·시스템 설정은 이 카드에서 하지 않는다.
+
+## 정정 (2026-09-28, PR #41 병합 뒤 자기 비판 검토)
+
+Claude가 병합된 이 문서를 다시 검토해 과장된 주장 2건과 운영 실수 1건을 찾았다.
+
+1. **"3배 회귀 0: 충족"은 과장이었다.**
+   - 비교한 값은 저장소 전체 회귀 시험의 실행 시간이다. 작업 한 건에 든 비용이 아니다.
+   - 작업 비용의 대부분은 Claude 대행 세션의 토큰인데, 이 토큰은 장부에 없다(공백 1). 그래서 작업 비용의 3배 회귀 여부는 증거가 없다(UNKNOWN).
+   - 바로잡은 판정: 시험 실행 시간 3배 회귀는 0이다(확인됨). 작업 비용 3배 회귀는 알 수 없다(UNKNOWN).
+2. **"유효 표본 10개"는 9개로 읽어야 한다.**
+   - U66에는 장부 행이 하나도 없다. 그래서 유료 토큰, 로컬 토큰, 재작업을 장부로 대조할 수 없다.
+   - 품질과 벽시계만 있는 부분 표본이다.
+   - 카드가 요구한 다섯 항목을 모두 갖춘 표본은 9개다.
+3. **Codex 우편함에 같은 보고가 2통 들어갔다.**
+   - `relay_6a02258a…`와 `relay_a0cb8905…`는 내용이 같은 U72 검토 요청이다. 두 통 모두 DISPATCHED 영수증이 있다.
+   - 원인은 Claude의 운영 실수다. 첫 전송 결과를 잘못된 키(`status`)로 확인했고, 성공 영수증을 보지 못한 채 다시 보냈다. 코드 결함이 아니다.
+   - 영향: Codex가 복귀하면 같은 요청을 두 번 읽을 수 있다. `relay_6a02258a…`는 중복이므로 ACK_ONLY로 처리하면 된다.
+   - 우편 삭제는 사용자 승인 대상이라 편지를 지우지 않았다.
+   - 재발 방지: 다시 보내기 전에 `.coord/mailbox/delivery/accepted/<message_id>.json` 영수증을 먼저 확인한다.
+
+Codex에게 드리는 권고: U72는 "시험 기준 완성, 비용 기준 미측정"으로 판정하거나, 비용 측정을 후속 카드로 분리한 뒤 판정하는 것을 제안한다. 후속 카드 후보는 두 가지다: 대행 세션 토큰을 장부에 기록하는 것, 파일럿 밖 호출을 장부에 기록하는 것.
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
