@@ -162,9 +162,11 @@ class ThreeToolContinuityE2E(unittest.TestCase):
         results = self._race("deliver", "--actor", "codex", "--target", "claude",
                              "--message", "ACK_ONLY liveness: U71 unchanged")
         # A racer that loses the per-letter guard answers IN_FLIGHT; the letter is already published either way.
+        # U74-D: the watcher returns on the published letter and clears its file, so a racer that checks after that
+        # sees no watcher; it answers QUEUED_ACK_ONLY (it used to answer DISPATCHED and buy a paid turn).
         reasons = [r["reason"] for _, r in results]
-        self.assertIn("QUEUED_INTERACTIVE", reasons)
-        self.assertLessEqual(set(reasons), {"QUEUED_INTERACTIVE", "IN_FLIGHT"})
+        self.assertTrue({"QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY"} & set(reasons), reasons)
+        self.assertLessEqual(set(reasons), {"QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY", "IN_FLIGHT"})
         self.assertEqual(1, len({r["message_id"] for _, r in results}))
         out, _ = watcher.communicate(timeout=60)
         self.assertEqual((0, results[0][1]["message_id"]), (watcher.returncode, json.loads(out)["id"]))

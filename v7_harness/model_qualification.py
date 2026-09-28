@@ -266,7 +266,39 @@ def qualify(store: Path, provider: Provider, model: str, sources: list[Path],
                  "qualify_min": QUALIFY_MIN, "receipts": [asdict(r) for r in receipts]}
         _write(store, _key(provider.name, model, task), entry)
         result["tasks"][task] = {"passed": passed, "total": total, "verdict": entry["verdict"]}
+    result["usage_ledger"] = record_qualification_usage(store, result, [asdict(r) for r in receipts])
     return result
+
+
+def record_qualification_usage(store: Path, result: dict[str, Any], receipts: list[dict[str, Any]]) -> str | None:
+    """U74-B: one usage-ledger row for a qualification run, when the store is a project's `.coord/qualification`.
+
+    Seen 2026-09-28 (U72): the U70/U71 qualification calls spent local tokens that only the qualification records
+    held; the ledger had no row. A store elsewhere (a test folder, a scratch copy) has no project ledger: None.
+    A ledger failure is reported, never allowed to undo a verdict that is already written.
+    """
+    store = Path(store).resolve()
+    if store.name != QUALIFICATION_STORE.name or store.parent.name != QUALIFICATION_STORE.parent.name:
+        return None
+    from .coord.usage_ledger import UsageRejected, record_usage
+
+    entry = {
+        "schema": "uaos-usage-v2", "work_id": f"QUALIFY-{result['model']}-{str(result['digest'])[:12]}",
+        "actor": "coordinator", "worker": result["provider"], "model": result["model"], "kind": "qualification",
+        "collection_mode": "automatic",
+        "input_tokens": sum(int(r["input_tokens"]) for r in receipts),
+        "output_tokens": sum(int(r["output_tokens"]) for r in receipts),
+        # A local model has no prompt cache; zeros make the four-kind count complete instead of unknown.
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        "wall_time_s": round(sum(float(r["elapsed_s"]) for r in receipts), 3),
+        "outcome": ",".join(f"{task}={info['verdict']}" for task, info in sorted(result["tasks"].items())),
+        "receipt": str(store), "independent_verifier": None, "rsi_eligible": False,
+        "exclusion_reason": "QUALIFICATION_MEASUREMENT", "calls": len(receipts),
+    }
+    try:
+        return str(record_usage(store.parent.parent, entry))
+    except (UsageRejected, OSError) as exc:
+        return f"ERROR:{type(exc).__name__}:{exc}"[:300]
 
 
 def lookup(store: Path, *, provider: str, model: str, digest: str, task_type: str) -> str:

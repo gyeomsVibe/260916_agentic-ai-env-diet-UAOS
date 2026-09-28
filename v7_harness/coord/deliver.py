@@ -455,6 +455,11 @@ def _deliver_unlocked(
         if watcher_live(desk, "claude") and not _requires_wake(message):
             return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
+        # U74-D: an explicit ACK_ONLY never spends a paid turn, even with no watcher (global relay rule). The letter
+        # is already published; the next session reads it from the inbox.
+        if _ACK_RE.search(message.upper()):
+            return DeliverResult(False, "claude", "QUEUED_ACK_ONLY", (), "", message_id, digest,
+                                 str(box.inbox_dir / f"{message_id}.json"))
 
     accepted = box.root / "delivery" / "accepted" / f"{message_id}.json"
     if accepted.is_file():
