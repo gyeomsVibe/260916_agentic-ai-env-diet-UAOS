@@ -17,6 +17,22 @@ from typing import Any
 
 # The global rule's cost gate: "a 3x cost regression is a failed gate" (Verification, v5.29).
 RATIO_LIMIT = 3.0
+# U80: the baseline is pinned in a reviewed, committed file. A caller-chosen card count could make any card pass
+# (--baseline-cards 1 raises the average nine-fold), so a baseline that differs from the pin is only exploratory.
+BASELINE_FILE = Path(".coord") / "card_baseline.json"
+
+
+def pinned_baseline(project: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads((Path(project) / BASELINE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("baseline"), str) or not data["baseline"]:
+        return None
+    cards = data.get("baseline_cards")
+    if not isinstance(cards, int) or isinstance(cards, bool) or cards < 1:
+        return None
+    return {"baseline": data["baseline"], "baseline_cards": cards}
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 METRICS = ("total_tokens", "output_tokens")
 
@@ -81,14 +97,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Per-card 3x cost gate over the usage ledger (read only)")
     parser.add_argument("--project", default=".")
     parser.add_argument("--card", required=True)
-    parser.add_argument("--baseline", required=True, help="Exact work_id of the baseline row(s)")
-    parser.add_argument("--baseline-cards", type=int, required=True, help="How many cards the baseline covered")
+    parser.add_argument("--baseline", help="Exploratory: exact work_id of the baseline row(s); default is the pin")
+    parser.add_argument("--baseline-cards", type=int, help="Exploratory: cards the baseline covered; default is the pin")
     args = parser.parse_args(argv)
-    result = report(Path(args.project), card=args.card, baseline=args.baseline, baseline_cards=args.baseline_cards)
+    project = Path(args.project)
+    pin = pinned_baseline(project)
+    baseline = args.baseline if args.baseline is not None else (pin or {}).get("baseline")
+    cards = args.baseline_cards if args.baseline_cards is not None else (pin or {}).get("baseline_cards")
+    if not baseline or cards is None:
+        result: dict[str, Any] = {"card": args.card, "status": "UNKNOWN", "pinned": pin,
+                                  "reason": f"no valid pinned baseline in {BASELINE_FILE.as_posix()}"}
+    else:
+        result = report(project, card=args.card, baseline=baseline, baseline_cards=cards)
+        result["pinned"] = pin
+        result["exploratory"] = pin is None or pin != {"baseline": baseline, "baseline_cards": cards}
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
-    # Exit 0 only on PASS: FAIL and UNKNOWN both keep the next card closed.
-    return 0 if result["status"] == "PASS" else 1
+    # Exit 0 only on PASS against the pinned baseline: FAIL, UNKNOWN and exploratory runs keep the next card closed.
+    return 0 if result["status"] == "PASS" and not result.get("exploratory", True) else 1
 
 
 if __name__ == "__main__":

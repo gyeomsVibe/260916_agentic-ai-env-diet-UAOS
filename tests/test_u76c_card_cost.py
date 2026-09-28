@@ -91,14 +91,37 @@ class CardCostTests(unittest.TestCase):
         self.assertEqual(before, hashlib.sha256(self.ledger.read_bytes()).hexdigest())
         self.assertEqual(1, result["malformed"])
 
+    def _pin(self, text: str) -> None:
+        (self.root / ".coord" / "card_baseline.json").write_text(text, encoding="utf-8")
+
     def test_exit_code_is_zero_only_on_pass(self) -> None:
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            self._write(U74_ROWS + [_row("U80", inp=1_000_000, out=10_000)])
+            project = ["--project", str(self.root)]
+            self.assertEqual(1, main(project + ["--card", "U80"]))  # no pin: UNKNOWN
+            self._pin(json.dumps({"baseline": "U67-U73-ACTING", "baseline_cards": 9}))
+            self.assertEqual(0, main(project + ["--card", "U80"]))
+            self.assertEqual(1, main(project + ["--card", "U74"]))  # 3.14x FAIL
+            self.assertEqual(1, main(project + ["--card", "NONE"]))
+            # U80 red team: choosing a smaller card count would make U74 pass; an override is exploratory only.
+            out.seek(0)
+            out.truncate()
+            self.assertEqual(1, main(project + ["--card", "U74", "--baseline-cards", "1"]))
+            shown = json.loads(out.getvalue())
+            self.assertEqual("PASS", shown["status"])
+            self.assertTrue(shown["exploratory"])
+
+    def test_a_malformed_pin_is_unknown(self) -> None:
         with patch("sys.stdout", new_callable=io.StringIO):
             self._write(U74_ROWS)
-            args = ["--project", str(self.root), "--card", "U74", "--baseline", "U67-U73-ACTING"]
-            self.assertEqual(1, main(args + ["--baseline-cards", "9"]))
-            self.assertEqual(0, main(args + ["--baseline-cards", "1"]))
-            self.assertEqual(1, main(["--project", str(self.root), "--card", "NONE", "--baseline", "U67-U73-ACTING",
-                                      "--baseline-cards", "9"]))
+            for text in ("{bad", json.dumps({"baseline": "U67-U73-ACTING", "baseline_cards": 0}),
+                         json.dumps({"baseline": "", "baseline_cards": 9}), json.dumps([1])):
+                self._pin(text)
+                self.assertEqual(1, main(["--project", str(self.root), "--card", "U74"]), text)
+
+    def test_the_committed_pin_is_the_u72_baseline(self) -> None:
+        pin = json.loads((Path(__file__).resolve().parents[1] / ".coord" / "card_baseline.json").read_text("utf-8"))
+        self.assertEqual(("U67-U73-ACTING", 9), (pin["baseline"], pin["baseline_cards"]))
 
 
 if __name__ == "__main__":
