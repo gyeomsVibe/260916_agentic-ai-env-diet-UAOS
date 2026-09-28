@@ -1,3 +1,127 @@
+```contract
+work_id: U69
+worker: apply
+goal: Refuse a paid pilot run, cascade escalation or review before the call when its token, USD or time budget is below the cheapest complete call the project's usage ledger records
+inputs:
+- v7_harness/cli.py sha256=7664b61b25b7003d0c5ba20b1df573cc3426ec70a3e2959576aa5115a63f0b94
+- v7_harness/review.py sha256=7c405909d7f25e7f80d43fbb9bd63b9d5ebfaa2de629364914063253f9f36308
+allow:
+- v7_harness/admission.py
+- v7_harness/cli.py
+- v7_harness/review.py
+- tests/test_u69_admission_gate.py
+- docs/56_u69-paid-call-admission-gate.md
+acceptance: python -m unittest tests.test_u69_admission_gate tests.test_u38_cost_gate_and_claude_worker tests.test_u44_claude_contract tests.test_u54_s2_caller_review
+forbidden: design changes; edits outside allow; weakening or deleting existing tests; writing the real home directory; network; model calls; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 900
+remote_budget_tokens: 0
+```
+
+## Instructions for the worker
+
+Card U69 (docs/55): U67-C1 spent 485,172 tokens and $0.43 under a 12,000-token contract before the B85 gate discarded it. The new tests fail on origin/main 90df07e (no admission module). Judge claude (ACTING while Codex is LIMITED); Codex re-reviews. Write the five files below exactly.
+
+===FILE: v7_harness/admission.py===
+"""U69: refuse a paid call before it starts when its contract cannot pay for even the cheapest call seen so far.
+
+The cost gate (B85) judges a paid run after it has spent. U67-C1 showed the gap: a Claude review under a 12,000-token
+contract spent 485,172 tokens and $0.43 before the gate threw the result away. Every Claude call re-reads a fixed
+context (system prompt, tools, the staged files it opens) as cache reads, so a call has a floor no contract can go under.
+
+The floor is measured, not guessed: the smallest complete spend the project's own usage ledger holds for that worker
+and call kind. The minimum is a lower bound, so the gate only refuses a budget that no recorded call has ever fit; it
+never refuses a call that might fit. Without a sample the call is admitted as UNMEASURED, because refusing then would
+make the first measurement impossible.
+
+Decisions:
+- ADMIT: every dimension that has a floor fits its budget.
+- ADMIT_UNMEASURED: no complete sample yet for this worker and kind.
+- REFUSE: a budget is below its floor; the reason names the dimension, e.g. BUDGET_BELOW_FLOOR:tokens:12000<124769.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from .pilot import COST_TOKEN_KEYS
+
+LEDGER = Path(".coord") / "usage" / "runs.jsonl"
+
+
+def _whole(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def ledger_rows(project: Path) -> list[dict[str, Any]]:
+    """Every readable row of the project's usage ledger. Unreadable lines are skipped: they carry no spend to learn."""
+    path = Path(project) / LEDGER
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def observed_floor(rows: list[dict[str, Any]], worker: str, kind: str) -> dict[str, int] | None:
+    """The cheapest complete spend for *worker* and *kind*: tokens always, micro-dollars and seconds when reported.
+
+    A row counts only when all four token kinds are whole numbers. A row that omitted cache reads would look cheaper
+    than the call really was and pull the floor down to a value no real call reaches.
+    """
+    tokens: list[int] = []
+    microusd: list[int] = []
+    seconds: list[int] = []
+    for row in rows:
+        if row.get("worker") != worker or row.get("kind") != kind:
+            continue
+        counts = [_whole(row.get(key)) for key in COST_TOKEN_KEYS]
+        if any(count is None for count in counts):
+            continue
+        tokens.append(sum(counts))  # type: ignore[arg-type]
+        if _whole(row.get("cost_microusd")) is not None:
+            microusd.append(row["cost_microusd"])
+        wall = row.get("wall_time_s")
+        if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0:
+            seconds.append(int(wall))
+    if not tokens:
+        return None
+    floor = {"tokens": min(tokens), "samples": len(tokens)}
+    if microusd:
+        floor["microusd"] = min(microusd)
+    if seconds:
+        floor["seconds"] = min(seconds)
+    return floor
+
+
+def admit(project: Path, *, worker: str, kind: str, budget_tokens: int, budget_usd: float = 0.0,
+          timeout_s: int = 0) -> dict[str, Any]:
+    """Compare the contract's token, dollar and time budgets with the observed floor, before any spend."""
+    floor = observed_floor(ledger_rows(project), worker, kind)
+    if floor is None:
+        return {"decision": "ADMIT_UNMEASURED", "worker": worker, "kind": kind, "floor": None}
+    reasons = []
+    if budget_tokens < floor["tokens"]:
+        reasons.append(f"BUDGET_BELOW_FLOOR:tokens:{budget_tokens}<{floor['tokens']}")
+    cap_microusd = int(round(budget_usd * 1_000_000))
+    if cap_microusd > 0 and "microusd" in floor and cap_microusd < floor["microusd"]:
+        reasons.append(f"BUDGET_BELOW_FLOOR:usd:{budget_usd:g}<{floor['microusd'] / 1_000_000:g}")
+    if timeout_s > 0 and "seconds" in floor and timeout_s < floor["seconds"]:
+        reasons.append(f"BUDGET_BELOW_FLOOR:seconds:{timeout_s}<{floor['seconds']}")
+    return {"decision": "REFUSE" if reasons else "ADMIT", "worker": worker, "kind": kind, "floor": floor,
+            "reasons": reasons}
+===FILE: v7_harness/cli.py===
 """
 Command-line interface for v7 harness.
 
@@ -1733,3 +1857,425 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "
 
 if __name__ == "__main__":
     sys.exit(main())
+===FILE: v7_harness/review.py===
+"""U38: an independent, read-only review of a pilot bundle by Claude Code (`pilot review`). docs/40 §2-2.
+
+The review is evidence for the judge, never a verdict. On one OS account every actor name can be forged (B83), so
+a reviewer's PASS cannot stand in for Codex's or the user's approval; it is written with "advisory": true. A reviewer
+never reviews its own worker's bundle, and it runs under the same budget gate as a paid worker (B85).
+"""
+
+from __future__ import annotations
+
+import difflib
+import json
+import re
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+# U46-J1: agy lets a conductor wake Antigravity through its CLI instead of a mailbox letter a person must relay.
+REVIEWERS = ("claude", "agy")
+SCHEMA_HINT = ('{"verdict": "PASS" or "REWORK", "counterexamples": ["..."], '
+               '"evidence_lines": ["path:line quote", "..."]}')
+MAX_DIFF_CHARS = 60_000
+FINAL_ANSWER = ("Stop reading. Answer now with the one JSON verdict object from what you have already read: "
+                + SCHEMA_HINT)
+# Windows caps a whole command line at 32,767 characters (WinError 206 on the U44-FIX4 review). Past
+# ARGV_PROMPT_CHARS (adapters/long_prompt.py) the request goes on standard input, which claude -p reads with the short
+# argv prompt (live: 46,529 chars).
+STDIN_PROMPT = "The full review request (contract and diff) is on standard input. Follow it."
+
+
+class ReviewRefused(Exception):
+    pass
+
+
+def bundle_diff(source: Path, staging: Path, changed: list[str]) -> str:
+    parts = []
+    for rel in changed:
+        before = (source / rel).read_text(encoding="utf-8", errors="replace").splitlines(True) if (source / rel).is_file() else []
+        after = (staging / rel).read_text(encoding="utf-8", errors="replace").splitlines(True) if (staging / rel).is_file() else []
+        parts.extend(difflib.unified_diff(before, after, f"a/{rel}", f"b/{rel}"))
+    return "".join(parts)
+
+
+def review_prompt(task_id: str, manual_text: str, diff: str, spill_path: str | Path | None = None) -> str:
+    # U52: a plain diff[:MAX] cut the tail silently while the prompt called the diff complete; the gate keeps head and
+    # tail, marks the cut, and the prompt says the diff is partial so the reviewer reads the changed files instead.
+    from .output_gate import gate_output
+
+    gated = gate_output(diff, MAX_DIFF_CHARS, spill_path)
+    scope = ("The diff below is PARTIAL (see the U52 OUTPUT CUT marker): read the changed files in the current "
+             "directory for the omitted part before judging it. " if gated.truncated else
+             "The diff below is the complete change: judge from it. ")
+    return (f"[{task_id}] Review this change against its contract. {scope}"
+            "Read a file only to confirm one specific counterexample, and answer within a few turns.\n\n"
+            f"## Contract\n{manual_text}\n\n## Diff\n```diff\n{gated.text}\n```\n\n"
+            f"Reply with exactly one JSON object: {SCHEMA_HINT}")
+
+
+def merge_usage(first: dict[str, int], second: dict[str, int]) -> dict[str, int]:
+    merged = {key: first.get(key, 0) + second.get(key, 0) for key in set(first) | set(second) if key != "cost_microusd"}
+    if "cost_microusd" in first or "cost_microusd" in second:
+        # claude reports a resumed session's running total (U44 live: 251,432 then 268,659), so take the larger.
+        merged["cost_microusd"] = max(first.get("cost_microusd", 0), second.get("cost_microusd", 0))
+    return merged
+
+
+def parse_verdict(text: str) -> dict[str, Any] | None:
+    match = re.search(r"\{.*\}", text or "", re.S)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("verdict") not in ("PASS", "REWORK"):
+        return None
+    return {"verdict": data["verdict"],
+            "counterexamples": [str(x)[:500] for x in data.get("counterexamples") or []][:20],
+            "evidence_lines": [str(x)[:300] for x in data.get("evidence_lines") or []][:40]}
+
+
+def run_review(*, task_id: str, work_dir: Path, source: Path, manual_text: str, reviewer: str, budget: int,
+               budget_usd: float = 0.0, model: str | None = None, timeout_s: int = 600,
+               runner: Any = subprocess.run) -> dict[str, Any]:
+    from .adapters.claude_worker import DEFAULT_MODEL, review_command, usage_from, worker_env
+    from .pilot import evaluate_cost_gate
+
+    if reviewer not in REVIEWERS:
+        raise ReviewRefused(f"UNKNOWN_REVIEWER:{reviewer}")
+    if budget <= 0:
+        raise ReviewRefused("REVIEW_WITHOUT_BUDGET: pass --budget > 0 (a review is a paid call)")
+    if reviewer == "claude" and not budget_usd > 0:
+        # agy has no dollar cap option; its review is held by the token budget gate alone (B85).
+        raise ReviewRefused("REVIEW_WITHOUT_USD_CAP: pass --budget-usd > 0 (claude --max-budget-usd, before spending)")
+    runs = Path(work_dir) / "runs" / task_id
+    try:
+        summary = json.loads((runs / "summary.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReviewRefused(f"NO_PILOT_SUMMARY:{runs / 'summary.json'} ({type(exc).__name__})") from exc
+    try:
+        author = (runs / "worker").read_text(encoding="utf-8").strip()
+    except OSError:
+        author = ""
+    if not author:
+        # Fail closed: without the author the rule "never review your own worker's bundle" cannot be checked.
+        raise ReviewRefused(f"AUTHOR_UNKNOWN: {runs / 'worker'} is missing (bundle built before U38?)")
+    if author == reviewer:
+        raise ReviewRefused(f"REVIEWER_IS_AUTHOR:{reviewer} wrote this bundle")
+    staging = Path(summary.get("agy_workspace") or "")
+    changed = [str(x) for x in summary.get("changed_files") or []]
+    if not changed or not staging.is_dir():
+        raise ReviewRefused("NOTHING_TO_REVIEW: no changed files or no staged copy")
+    # U69: U67-C1 was a 12,000-token review that spent 485,172 before the gate discarded it. Refuse before the call
+    # when the budget is below the cheapest review this reviewer has recorded in the project's ledger.
+    from .admission import admit
+
+    admission = admit(Path(source), worker=reviewer, kind="review", budget_tokens=budget, budget_usd=budget_usd,
+                      timeout_s=timeout_s)
+    if admission["decision"] == "REFUSE":
+        raise ReviewRefused("ADMISSION_REFUSED:" + ";".join(admission["reasons"]))
+
+    # The spill goes in the run folder, never in staging: a file written there would become part of the bundle.
+    prompt = review_prompt(task_id, manual_text, bundle_diff(Path(source), staging, changed), runs / "review.diff")
+    started = time.monotonic()
+    usage: dict[str, int] = {}
+    error = ""
+    verdict = None
+    conversation_id = None
+    try:
+        if reviewer == "agy":
+            usage, verdict, error, conversation_id = _agy_review(task_id, prompt, runs, timeout_s, runner)
+            raise _Reviewed
+        from .adapters.long_prompt import ARGV_PROMPT_CHARS
+
+        via_stdin = len(prompt) > ARGV_PROMPT_CHARS
+        done = runner(review_command(STDIN_PROMPT if via_stdin else prompt, model or DEFAULT_MODEL, budget_usd),
+                      cwd=str(staging), env=worker_env(), capture_output=True, timeout=timeout_s,
+                      **({"input": prompt.encode("utf-8")} if via_stdin else {}))
+        result = json.loads(done.stdout.decode("utf-8", errors="replace"))
+        if isinstance(result, dict):
+            usage = usage_from(result)
+            verdict = parse_verdict(str(result.get("result") or ""))
+            left_usd = budget_usd - usage.get("cost_microusd", 0) / 1_000_000
+            if (verdict is None and result.get("subtype") == "error_max_turns" and result.get("session_id")
+                    and left_usd >= 0.01):
+                # Out of turns before answering (U44-FIX3: 6 turns of reading, no verdict). One more turn in the same
+                # session answers from what it already read (U44 live: 1 turn, 48k tokens) instead of a fresh review.
+                done = runner(review_command(FINAL_ANSWER, model or DEFAULT_MODEL, left_usd,
+                                             resume=str(result["session_id"])),
+                              cwd=str(staging), env=worker_env(), capture_output=True, timeout=timeout_s)
+                final = json.loads(done.stdout.decode("utf-8", errors="replace"))
+                if isinstance(final, dict):
+                    usage = merge_usage(usage, usage_from(final))
+                    verdict = parse_verdict(str(final.get("result") or ""))
+                    result = final
+            if verdict is None:
+                error = f"REVIEW_UNPARSED: the reviewer did not return the JSON verdict ({result.get('subtype')})"
+        else:
+            error = "REVIEW_NOT_JSON_OBJECT"
+    except _Reviewed:
+        pass
+    except subprocess.TimeoutExpired:
+        error = f"REVIEW_TIMEOUT:{timeout_s}s"
+    except (OSError, ValueError) as exc:
+        error = f"REVIEW_FAILED:{type(exc).__name__}: {exc}"[:300]
+    cost_gate = evaluate_cost_gate(usage, budget)
+    record = {
+        "task_id": task_id, "reviewer": reviewer, "author_worker": author, "bundle_id": summary.get("bundle_id"),
+        # Evidence for the judge, not a verdict (B83): the judge still approves or rejects the bundle.
+        "advisory": True,
+        "verdict": verdict["verdict"] if verdict and cost_gate == "WITHIN" else "UNUSABLE",
+        "counterexamples": (verdict or {}).get("counterexamples", []),
+        "evidence_lines": (verdict or {}).get("evidence_lines", []),
+        "cost_gate": cost_gate, "usage": usage, "elapsed_s": int(time.monotonic() - started), "error": error,
+    }
+    if reviewer == "agy":
+        record["judge_conversation_id"] = conversation_id
+    out = runs / f"review_{reviewer}.json"
+    out.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    record["review_path"] = str(out)
+    _record_usage(Path(source), task_id, reviewer, model or (DEFAULT_MODEL if reviewer == "claude" else "agy-default"),
+                  usage, record, out)
+    return record
+
+
+class _Reviewed(Exception):
+    """Leaves the claude call path once the agy review has run."""
+
+
+def _agy_review(task_id: str, prompt: str, runs: Path, timeout_s: int,
+                runner: Any) -> tuple[dict[str, int], dict[str, Any] | None, str, str | None]:
+    """Antigravity reads the request from a file in the run folder (a diff can pass the 32,767-character Windows
+    command line) and answers in JSON. No permission bypass: it can read, and only the pilot applies anything."""
+    import os
+
+    from .adapters.agy import AgyRequest, build_agy_command, parse_agy_result
+
+    request = runs / "review_agy_request.md"
+    request.write_text(prompt, encoding="utf-8")
+    short = (f"Read {request.name} in this folder: a review request with the contract and the complete diff. "
+             f"Do not edit any file. Reply with exactly one JSON object: {SCHEMA_HINT}")
+    argv = build_agy_command(AgyRequest(task_id=task_id, title="review", prompt=short, workspace=runs,
+                                        isolation_mode="staging", print_timeout_s=timeout_s))
+    done = runner(argv, cwd=str(runs), env={**os.environ, "UAOS_WORKER": "1"}, capture_output=True,
+                  timeout=timeout_s + 60)
+    outcome = parse_agy_result(stdout=done.stdout or b"", stderr=done.stderr or b"", exit_code=done.returncode)
+    usage = dict(outcome.usage)
+    if not outcome.successful:
+        return usage, None, f"REVIEW_FAILED:agy {outcome.error_class}", outcome.conversation_id
+    envelope = json.loads(done.stdout.decode("utf-8", errors="replace"))
+    text = envelope.get("response") if isinstance(envelope.get("response"), str) else json.dumps(
+        envelope.get("structured_output"))
+    verdict = parse_verdict(text)
+    return (usage, verdict, "" if verdict else "REVIEW_UNPARSED: the reviewer did not return the JSON verdict (agy)",
+            outcome.conversation_id)
+
+
+def _record_usage(source: Path, task_id: str, reviewer: str, model: str, usage: dict[str, int], record: dict,
+                  receipt: Path) -> None:
+    """A review is a paid call; it goes in the ledger as kind "review" (RSI windows read kind "pilot" only)."""
+    if not ((source / ".git").is_dir() or (source / ".coord" / "PLAN.md").is_file()):
+        return
+    from .coord.usage_ledger import record_usage
+
+    entry = {
+        "schema": "uaos-usage-v2", "work_id": f"{task_id}-review-{reviewer}", "actor": reviewer, "model": model,
+        "kind": "review", "collection_mode": "automatic",
+        "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
+        # U46-J2: absolute, so the receipt resolves from any cwd (it was stored as ..\..\runs\...).
+        "wall_time_s": None, "outcome": record["verdict"], "receipt": str(Path(receipt).resolve()),
+        "independent_verifier": None,
+        "rsi_eligible": False, "exclusion_reason": "ADVISORY_REVIEW", "worker": reviewer, "cost_gate": record["cost_gate"],
+    }
+    for extra in ("cache_creation_input_tokens", "cache_read_input_tokens", "cost_microusd"):
+        if extra in usage:
+            entry[extra] = usage[extra]
+    try:
+        record_usage(source, entry)
+    except Exception as exc:  # noqa: BLE001 - the review file is the receipt; the ledger is best effort
+        record["usage_ledger_error"] = f"{type(exc).__name__}: {exc}"[:200]
+===FILE: tests/test_u69_admission_gate.py===
+"""U69: a paid call whose contract is below the observed floor is refused before it spends.
+
+The numbers are the project's real ledger: the cheapest complete Claude review (U44-FIX5) counted 124,769 tokens and
+$0.133923, and U67-C1 ran a review under a 12,000-token contract that then spent 485,172 tokens and $0.43.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest import mock
+
+from v7_harness.admission import admit, observed_floor
+from v7_harness.cli import main
+from v7_harness.manual import new_manual
+from v7_harness.review import ReviewRefused, run_review
+
+REVIEW_FIX5 = {"worker": "claude", "kind": "review", "input_tokens": 10, "output_tokens": 1897,
+               "cache_creation_input_tokens": 23779, "cache_read_input_tokens": 99083, "cost_microusd": 133923}
+REVIEW_FIX = {"worker": "claude", "kind": "review", "input_tokens": 20, "output_tokens": 8191,
+              "cache_creation_input_tokens": 72346, "cache_read_input_tokens": 497581, "cost_microusd": 470850}
+FLOOR_TOKENS = 124769
+
+
+def _ledger(root: Path, *rows: dict) -> None:
+    usage = root / ".coord" / "usage"
+    usage.mkdir(parents=True, exist_ok=True)
+    (usage / "runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows) + "{not json\n", encoding="utf-8")
+
+
+class FloorTests(unittest.TestCase):
+    def test_floor_is_the_cheapest_complete_row_of_that_worker_and_kind(self) -> None:
+        rows = [REVIEW_FIX, REVIEW_FIX5,
+                # Incomplete or foreign rows would pull the floor under any real call; they do not count.
+                {**REVIEW_FIX5, "cache_read_input_tokens": None, "input_tokens": 1},
+                {k: v for k, v in REVIEW_FIX5.items() if k != "cache_creation_input_tokens"},
+                {**REVIEW_FIX5, "output_tokens": True},
+                {**REVIEW_FIX5, "kind": "pilot", "cache_read_input_tokens": 0},
+                {**REVIEW_FIX5, "worker": "agy", "cache_read_input_tokens": 0}]
+        self.assertEqual({"tokens": FLOOR_TOKENS, "microusd": 133923, "samples": 2},
+                         observed_floor(rows, "claude", "review"))
+        self.assertIsNone(observed_floor(rows, "claude", "judge"))
+
+    def test_decisions(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertEqual("ADMIT_UNMEASURED", admit(root, worker="claude", kind="review", budget_tokens=1)["decision"])
+            _ledger(root, REVIEW_FIX, {**REVIEW_FIX5, "wall_time_s": 95.4})
+            refused = admit(root, worker="claude", kind="review", budget_tokens=12000, budget_usd=0.05, timeout_s=60)
+            self.assertEqual("REFUSE", refused["decision"])
+            self.assertEqual([f"BUDGET_BELOW_FLOOR:tokens:12000<{FLOOR_TOKENS}", "BUDGET_BELOW_FLOOR:usd:0.05<0.133923",
+                              "BUDGET_BELOW_FLOOR:seconds:60<95"], refused["reasons"])
+            # Exactly the floor fits: the floor is a call that really happened within that spend.
+            self.assertEqual("ADMIT", admit(root, worker="claude", kind="review", budget_tokens=FLOOR_TOKENS,
+                                            budget_usd=0.133923, timeout_s=95)["decision"])
+            # A zero dollar or time budget means "not set" (agy has no dollar cap), not "below the floor".
+            self.assertEqual("ADMIT", admit(root, worker="claude", kind="review", budget_tokens=200000)["decision"])
+
+
+class PilotRunAdmissionTests(unittest.TestCase):
+    def _manual(self, root: Path, budget: int) -> Path:
+        (root / "pkg").mkdir(exist_ok=True)
+        (root / "pkg" / "config.py").write_text("TIMEOUT = 30\n", encoding="utf-8")
+        path = root / "m.md"
+        path.write_text(new_manual(root, work_id="U69_T", worker="agy", goal="Set TIMEOUT = 60 in `pkg/config.py`.",
+                                   inputs=["pkg/config.py"], allow=["pkg/config.py"],
+                                   acceptance="python -c \"import pkg.config\"", judge="codex",
+                                   remote_budget_tokens=budget), encoding="utf-8")
+        return path
+
+    def _run(self, root: Path, *extra: str) -> tuple[int, str, mock.MagicMock]:
+        out = io.StringIO()
+        with mock.patch("v7_harness.pilot.run_pilot", return_value={"state": "SUCCEEDED", "verdict_hint": "PASS"}) as run, \
+                mock.patch("v7_harness.cli.detect_actor", return_value="codex"), \
+                redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(["pilot", "run", "--task", "U69_T", "--source", str(root), "--manual", str(self._manual(root, 12000)),
+                         *extra])
+        return code, out.getvalue(), run
+
+    def test_a_budget_below_the_floor_never_starts_the_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _ledger(root, {**REVIEW_FIX5, "worker": "agy", "kind": "pilot"})
+            code, out, run = self._run(root)
+            self.assertEqual(2, code)
+            run.assert_not_called()
+            report = json.loads(out)
+            self.assertEqual(("ADMISSION_REFUSED", [f"BUDGET_BELOW_FLOOR:tokens:12000<{FLOOR_TOKENS}"]),
+                             (report["error_class"], report["admission"]["reasons"]))
+
+    def test_a_budget_at_or_above_the_floor_and_an_approval_replay_run(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _ledger(root, {**REVIEW_FIX5, "worker": "agy", "kind": "pilot", "cache_read_input_tokens": 0})
+            code, _, run = self._run(root)  # floor 25,686 without cache reads, still above 12,000
+            self.assertEqual(2, code)
+            run.assert_not_called()
+            _ledger(root, {"worker": "agy", "kind": "pilot", "input_tokens": 3000, "output_tokens": 500,
+                           "cache_creation_input_tokens": 0, "cache_read_input_tokens": 4000})
+            code, _, run = self._run(root)
+            run.assert_called_once()
+            # --approve replays a saved bundle and spends nothing, so it is not admitted again.
+            _ledger(root, {**REVIEW_FIX5, "worker": "agy", "kind": "pilot"})
+            code, _, run = self._run(root, "--approve", "b" * 64)
+            run.assert_called_once()
+
+
+class ReviewAdmissionTests(unittest.TestCase):
+    def test_the_u67_c1_review_is_refused_before_the_call(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            source, staging, runs = root / "src", root / "stage", root / "work" / "runs" / "U69_R"
+            for folder in (source, staging, runs):
+                folder.mkdir(parents=True)
+            (source / "a.py").write_text("x = 1\n", encoding="utf-8")
+            (staging / "a.py").write_text("x = 2\n", encoding="utf-8")
+            (runs / "summary.json").write_text(json.dumps({"agy_workspace": str(staging), "changed_files": ["a.py"]}),
+                                               encoding="utf-8")
+            (runs / "worker").write_text("agy", encoding="utf-8")
+            _ledger(source, REVIEW_FIX5)
+            runner = mock.Mock(side_effect=AssertionError("the paid reviewer must not start"))
+            with self.assertRaises(ReviewRefused) as caught:
+                run_review(task_id="U69_R", work_dir=root / "work", source=source, manual_text="m", reviewer="claude",
+                           budget=12000, budget_usd=0.5, runner=runner)
+            self.assertEqual(f"ADMISSION_REFUSED:BUDGET_BELOW_FLOOR:tokens:12000<{FLOOR_TOKENS}", str(caught.exception))
+            runner.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
+===FILE: docs/56_u69-paid-call-admission-gate.md===
+# U69 유료 호출 입장 관문
+
+## 왜 필요한가
+
+B85 비용 관문(cost gate)은 유료 호출이 **끝난 뒤** 쓴 토큰을 계약 상한과 비교한다. 초과한 결과는 승인하지 않지만 돈과 한도는 이미 쓴 뒤다. U67-C1이 그 빈틈을 보여 줬다. 12,000토큰 계약의 Claude 감사가 실제로는 485,172토큰과 $0.43을 쓰고 나서야 폐기됐다.
+
+Claude 호출은 매 턴 시스템 프롬프트·도구 정의·읽은 파일 같은 고정 컨텍스트를 캐시 읽기(cache read)로 다시 센다. 그래서 어떤 계약도 내려갈 수 없는 바닥(floor)이 있다. 바닥보다 작은 상한은 호출 전에 이미 실패가 확정된 계약이다.
+
+## 무엇을 하나
+
+`v7_harness/admission.py`가 호출 **전에** 프로젝트 사용량 장부(`.coord/usage/runs.jsonl`)를 읽어 판정한다.
+
+- 바닥 = 같은 작업자(worker)·같은 호출 종류(kind: `pilot` 또는 `review`)의 기록 중 네 가지 토큰 종류(input, output, cache_creation, cache_read)가 모두 정수로 보고된 행의 **최솟값**. 비용(micro-USD)과 벽시계(`wall_time_s`)는 보고된 행이 있을 때만 바닥을 만든다.
+- 캐시 토큰이 빠진 행은 실제보다 싸 보여 바닥을 끌어내리므로 표본에서 뺀다.
+- 판정
+  - `ADMIT`: 바닥이 있는 모든 차원(토큰·USD·초)에서 상한이 바닥 이상이다.
+  - `ADMIT_UNMEASURED`: 표본이 없다. 첫 측정 자체를 막으면 영원히 바닥을 알 수 없으므로 허용하고, 끝난 뒤 B85가 판정한다.
+  - `REFUSE`: 어느 한 차원이라도 상한이 바닥보다 작다. 이유는 `BUDGET_BELOW_FLOOR:tokens:12000<124769`처럼 차원과 두 숫자를 남긴다.
+- USD·시간 상한이 0이면 "설정 안 함"으로 본다(agy에는 달러 상한 옵션이 없다).
+
+## 어디에 걸려 있나
+
+- `pilot run --worker agy|claude`: 매뉴얼 검사 뒤, 작업자 실행 전. 거부 시 `state: REFUSED`, `error_class: ADMISSION_REFUSED`, 종료 코드 2.
+- `pilot run --worker cascade`의 유료 승격: 거부되면 `escalation: REFUSED:ADMISSION:<이유>`로 남기고 로컬 결과를 그대로 답으로 둔다.
+- `pilot review --reviewer claude|agy`: 저자·변경 확인 뒤, 리뷰어 호출 전. 거부 시 `ADMISSION_REFUSED:<이유>`.
+- `--approve`는 저장된 번들을 재생할 뿐 새로 쓰지 않으므로 다시 판정하지 않는다.
+
+## 왜 최솟값인가
+
+최솟값은 "실제로 일어난 가장 싼 호출"이다. 상한이 그보다 작으면 기록상 한 번도 들어맞은 적이 없는 계약이다. 반대로 최솟값 이상이면 들어맞을 수도 있으므로 막지 않는다. 즉 이 관문은 **확정된 낭비만** 막고, 가능성이 있는 호출은 막지 않는다(거짓 거부 0을 우선).
+
+## 한계와 남은 위험
+
+- 바닥은 과거 표본이다. 프롬프트나 도구가 줄어 실제 바닥이 내려가도, 상한을 한 번 올려 새 표본이 기록되기 전까지는 옛 바닥으로 거부한다. 탈출구는 상한을 바닥 이상으로 올리는 것이다.
+- 2026-09-28 이 데스크 장부의 Claude 리뷰 바닥은 124,769토큰(U44-FIX5)이다. U47-C2가 정한 리뷰 기본 상한 120,000은 이 바닥보다 작아 거부된다. 상한 재결정은 Codex 복귀 판정 대상이다.
+- 절감량은 통제 비교 전까지 `UNMEASURED`다. 확실한 것은 U67-C1 같은 호출에서 유료 토큰 0으로 거부된다는 점뿐이다.
+
+## 고정 인수
+
+`tests/test_u69_admission_gate.py` — 바닥 계산(불완전·다른 작업자·다른 종류 행 제외), 세 차원 거부와 경계값 허용, `pilot run` 작업자 미실행, 승인 재생 제외, U67-C1 리뷰의 호출 전 거부.
+===END===
+
+## Output
+
+- Reply with ===FILE blocks only. No explanations. Do not claim success; the acceptance command decides.
