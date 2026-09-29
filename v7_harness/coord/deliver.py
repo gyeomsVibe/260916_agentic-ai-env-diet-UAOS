@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from v7_harness.coord.stream import SECRET_PATTERNS
+from v7_harness.coord.stream import SECRET_PATTERNS, _try_lock, _unlock
 from v7_harness.coord.mailbox import Mailbox
 
 
@@ -319,32 +319,7 @@ def _open_excl(path: Path) -> int | None:
     return None
 
 
-if os.name == "nt":
-    import msvcrt
-
-    def _try_lock(fd: int) -> bool:
-        os.lseek(fd, 0, os.SEEK_SET)
-        try:
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # non-blocking; locks are per handle, so a second open conflicts
-            return True
-        except OSError:
-            return False
-
-    def _unlock(fd: int) -> None:
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-else:
-    import fcntl
-
-    def _try_lock(fd: int) -> bool:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # flock, not lockf: it conflicts across opens in one process
-            return True
-        except OSError:
-            return False
-
-    def _unlock(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+# U86: the OS lock helpers moved to stream.py, which now locks the same way (imported above).
 
 
 @contextmanager

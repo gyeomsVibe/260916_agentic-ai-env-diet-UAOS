@@ -47,7 +47,33 @@ class StreamBusy(RuntimeError):
 
 _LOCAL_LOCK = threading.Lock()
 LOCK_TIMEOUT_S = 10.0
-LOCK_STALE_S = 60.0
+
+if os.name == "nt":
+    import msvcrt
+
+    def _try_lock(fd: int) -> bool:
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # non-blocking; locks are per handle, so a second open conflicts
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _try_lock(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # flock, not lockf: it conflicts across opens in one process
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 @contextmanager
@@ -57,34 +83,34 @@ def _exclusive(lock_path: Path):
     Windows 에서는 `O_APPEND` 동시 쓰기가 원자적이지 않아 줄이 통째로 사라졌다(실측).
     잠금은 날짜 파일이 아니라 스트림 폴더 하나에 건다. 날짜 파일마다 걸면 자정 전후나
     보관(롤오버) 중에 다른 파일을 쓰는 작업을 막지 못해 사건이 사라진다.
-    60초 넘은 잠금은 죽은 프로세스의 것으로 보고 회수한다.
+    U86: 잠금은 OS 파일 잠금(U83의 `.recover`와 같은 방식)이다. 보유자가 죽으면 OS가 즉시 풀고, 살아서 멈춘
+    보유자에게서는 빼앗지 않는다. 예전의 "60초 넘은 잠금 파일 회수"는 파일 나이로 보유자 생사를 추정해, 60초 넘게
+    멈춘 보유자의 잠금을 지우고 두 쓰기를 겹치게 할 수 있었다. 잠금 파일은 지우지 않고 다시 쓴다.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + LOCK_TIMEOUT_S
     with _LOCAL_LOCK:
-        handle = None
-        while handle is None:
-            try:
-                handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except (FileExistsError, PermissionError):
-                # Windows 는 삭제 대기 중인 잠금 파일을 열면 PermissionError 를 낸다(8프로세스 경합에서
-                # 300회당 3~11건 실측). 이것도 "다른 쪽이 잡고 있음"이므로 기다렸다 다시 시도한다.
-                try:
-                    age = time.time() - lock_path.stat().st_mtime
-                except (FileNotFoundError, PermissionError):
-                    time.sleep(0.01)
-                    continue
-                if age > LOCK_STALE_S:
-                    lock_path.unlink(missing_ok=True)
-                    continue
+        fd = None
+        try:
+            while True:
+                if fd is None:
+                    try:
+                        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+                    except PermissionError:
+                        # U86 이전 런타임이 지우는 중인 잠금 파일(Windows 삭제 대기)을 열면 난다. 잠시 뒤 다시 연다.
+                        fd = None
+                if fd is not None and _try_lock(fd):
+                    break
                 if time.monotonic() > deadline:
                     raise StreamBusy("STREAM_LOCK_TIMEOUT")
                 time.sleep(0.01)
-        try:
-            yield
+            try:
+                yield
+            finally:
+                _unlock(fd)
         finally:
-            os.close(handle)
-            lock_path.unlink(missing_ok=True)
+            if fd is not None:
+                os.close(fd)
 
 
 @dataclass(frozen=True)
