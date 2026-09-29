@@ -1,4 +1,4 @@
-## UAOS — 모든 프로젝트에 공통인 협업 운영 체계(Unified Agent Operating System)
+## UAOS-RSI — 모든 agentic AI 환경의 기본 운영체제(Unified Agent Operating System with evidence-gated Recursive Self-Improvement)
 
 - 명령 `uaos` = `{uaos}`. UAOS 저장소의 `v7_harness`를 어느 폴더에서든 실행한다. 아래 `uaos …`는 이 명령으로 바꿔 읽는다.
 - 프로젝트 안이나 그 상위 폴더에 `.coord/PLAN.md`가 있으면 UAOS 프로젝트다. 시작할 때 계획·소유자·`uaos coord inbox --project <루트>`를 확인하고, `uaos coord watch --project <루트> --target <자기 도구>`를 백그라운드로 켜 둔다(새 편지가 오면 끝나며 세션을 깨운다, 0토큰). 도구끼리는 `uaos coord deliver`로 보내고 사용자에게 전달·복사·승인을 부탁하지 않는다.
