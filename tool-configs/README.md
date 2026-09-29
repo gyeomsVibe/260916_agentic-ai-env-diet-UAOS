@@ -4,8 +4,8 @@
 
 | 사본 | 원래 위치 | 내용 |
 |---|---|---|
-| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Claude Code 전역 규칙 |
-| `claude/output-styles/brief-ko.md` | `~/.claude/output-styles/` | 매 요청에 붙는 보고 양식(결과·과정·근거) |
+| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | **갱신 안 함.** 전역 규칙 v6.0.0부터 `260718.../shared/global-rules` 생성기가 `~/.claude/CLAUDE.md`를 배포하므로, 이 파일은 그 이전(v9.1 한국어 규칙)의 기록일 뿐이다. 복원은 생성기의 `-Mode Apply`로 한다 |
+| `claude/output-styles/brief-ko.md` | `~/.claude/output-styles/` | 매 요청에 붙는 보고 양식(결과·근거·위험·다음·남은 일). 홈 파일을 고치면 같은 커밋에서 이 사본도 고친다(`tests/test_u92_tool_configs_brief_ko.py`) |
 | `claude/settings.hooks.json` | `~/.claude/settings.json`의 `outputStyle`·`env`만 | 자동 압축 22%(1M 창 약 220k). 훅 없음 |
 | `codex/hooks.json` | `~/.codex/hooks.json` | 비어 있음 |
 | `antigravity/hooks.json`, `mcp_config.json` | `~/.gemini/config/` | 비어 있음 |
