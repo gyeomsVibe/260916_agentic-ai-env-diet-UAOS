@@ -11,11 +11,11 @@
 
 ## 요약
 
-- 전체 지점: 38
+- 전체 지점: 39
 - GAP: 0
 - CALLER_INPUT: 23
 - GUARDED: 2
-- FIXED: 9
+- FIXED: 10
 - PASS_THROUGH: 4
 
 ## 전체 목록
@@ -42,15 +42,16 @@
 | `v7_harness/gemini_shim.py:61` | READ | `tool_calls` | MODEL | no | no | PASS_THROUGH |
 | `v7_harness/gemini_shim.py:92` | READ | `tool_calls` | MODEL | no | no | PASS_THROUGH |
 | `v7_harness/gemini_shim.py:159` | READ | `tool_calls` | MODEL | no | no | PASS_THROUGH |
-| `v7_harness/global_install.py:434` | INDIRECT | `run -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/global_install.py:455` | INDIRECT | `run -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/global_install.py:495` | INDIRECT | `run -> subprocess.run` | FIXED | no | no | FIXED |
 | `v7_harness/isolation/git_worktree.py:62` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/judge.py:166` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/judge.py:328` | INDIRECT | `approver -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/olla.py:562` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/olla.py:945` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/olla.py:1082` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/pilot.py:714` | DIRECT | `subprocess.run` | CALLER | yes | yes | GUARDED |
-| `v7_harness/pilot.py:723` | DIRECT | `subprocess.run` | CALLER | yes | no | GUARDED |
+| `v7_harness/pilot.py:724` | DIRECT | `subprocess.run` | CALLER | yes | yes | GUARDED |
+| `v7_harness/pilot.py:733` | DIRECT | `subprocess.run` | CALLER | yes | no | GUARDED |
 | `v7_harness/proof_receipt.py:187` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/review.py:136` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/review.py:148` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
@@ -79,7 +80,7 @@
 - `v7_harness/execution/agy_launcher.py:85` DIRECT `subprocess.Popen`
 - `v7_harness/execution/launcher.py:117` DIRECT `subprocess.run`
 - `v7_harness/execution/launcher.py:211` DIRECT `subprocess.Popen`
-- `v7_harness/global_install.py:434` INDIRECT `run -> subprocess.run`
+- `v7_harness/global_install.py:455` INDIRECT `run -> subprocess.run`
 - `v7_harness/isolation/git_worktree.py:62` DIRECT `subprocess.run`
 - `v7_harness/judge.py:166` DIRECT `subprocess.run`
 - `v7_harness/judge.py:328` INDIRECT `approver -> subprocess.run`
