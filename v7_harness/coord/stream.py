@@ -113,7 +113,14 @@ class Event:
 
 
 def stream_dir(project: Path) -> Path:
-    return project / ".coord" / "stream"
+    """U84: one stream per repository. A linked worktree's events belong to the main checkout's desk (U59).
+
+    Seen 2026-09-29: `coord log` in `.claude/worktrees/<name>` wrote to that worktree's gitignored stream while
+    `coord deliver` from the same folder reached the desk, so 76 acting events never reached the desk's codex_brief.
+    """
+    from .hook_context import shared_desk
+
+    return shared_desk(Path(project)) / ".coord" / "stream"
 
 
 def stream_lock(project: Path) -> Path:
