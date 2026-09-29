@@ -467,6 +467,53 @@ def register_sentinel(project: Path, home: Path, python: str, *, run: Callable[.
     return {"ok": ok, "task": name, "cmd_file": str(cmd_path), "results": results, "advice": advice}
 
 
+# U91: the query uses PowerShell property names, which (unlike schtasks CSV headers) are not translated.
+SENTINEL_TASK_QUERY = (
+    "Get-ScheduledTask | ForEach-Object { [pscustomobject]@{ name = $_.TaskName; "
+    "run = (($_.Actions | ForEach-Object { \"$($_.Execute) $($_.Arguments)\" }) -join ' | ') } } "
+    "| ConvertTo-Json -Compress"
+)
+STALE_SENTINEL_ADVICE = (
+    "Replace it: run this installer with --register-sentinel <project> --apply (the runtime sentinel at every logon), "
+    "then delete the old task in Task Scheduler. Changing scheduled tasks waits for the user."
+)
+
+
+def stale_sentinel_tasks(*, run: Callable[..., Any] = subprocess.run, system: str | None = None) -> list[dict[str, str]] | None:
+    """U91: scheduled tasks that start `coord sentinel` from a checkout instead of the installed runtime.
+
+    Seen 2026-09-29: a hand-made "UAOS Sentinel 30m" task ran `python -m v7_harness.cli coord sentinel` in the desk
+    checkout, dozens of merges behind, so the U88 P1 fix never reached the always-on sentinel, and its loop lock made
+    the runtime sentinel skip with ALREADY_RUNNING. Only the launcher (~/.uaos/uaos.py, through the sentinel_*.cmd this
+    installer writes) follows reinstalls. None means the query failed: unknown, never reported as clean.
+    """
+    system = system or platform.system()
+    if system != "Windows":
+        return []
+    try:
+        # 60 s: Get-ScheduledTask over a few hundred tasks took about 2 s here; the margin covers a cold PowerShell.
+        done = run(["powershell", "-NoProfile", "-Command", SENTINEL_TASK_QUERY], capture_output=True, text=True,
+                   timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0 or not (done.stdout or "").strip():
+        return None
+    try:
+        data = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return None
+    # ConvertTo-Json writes a single task as an object, several as a list.
+    tasks = data if isinstance(data, list) else [data]
+    stale = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        command = str(task.get("run") or "")
+        if "coord sentinel" in command and "uaos.py" not in command:
+            stale.append({"name": str(task.get("name")), "run": command[:300]})
+    return stale
+
+
 # ---------------------------------------------------------------- entry point
 
 
@@ -513,6 +560,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         output["drift"] = [c.target for c in pending]
         code = 1 if pending else 0
+        # U91: scheduled tasks belong to this PC's real user; a test or staging --home has none to check.
+        if Path(args.home).resolve() == Path.home().resolve():
+            stale = stale_sentinel_tasks()
+            if stale is None:
+                output["sentinel_tasks"] = "UNKNOWN"
+            elif stale:
+                output["drift"] += [f"stale sentinel task: {task['name']}" for task in stale]
+                output["stale_sentinel_advice"] = STALE_SENTINEL_ADVICE
+                code = 1
     elif args.apply:
         output["applied"] = apply(changes, args.home)
     else:
