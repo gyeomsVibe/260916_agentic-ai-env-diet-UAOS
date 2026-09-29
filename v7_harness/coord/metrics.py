@@ -49,6 +49,10 @@ def _cursor_stats(project: Path) -> dict[str, Any]:
 def maybe_sample(project: Path, *, events: list[dict[str, Any]], now: float | None = None) -> bool:
     """마지막 표본에서 10분이 지났으면 한 줄을 남긴다. 남겼으면 True."""
     try:
+        from .hook_context import shared_desk
+
+        # U84: the sample, the brief and the cursor are desk state; a linked worktree's event samples the desk (U59).
+        project = shared_desk(Path(project))
         path = samples_path(project)
         moment = time.time() if now is None else now
         if path.is_file() and moment - path.stat().st_mtime < MIN_INTERVAL_S:
