@@ -28,6 +28,7 @@ from v7_harness.coord.deliver import (
     _deliver_to_codex,
     deliver,
 )
+from v7_harness.coord import deliver as deliver_module
 from v7_harness.coord.mailbox import Mailbox
 
 
@@ -291,7 +292,9 @@ class TestGuardRecovery(unittest.TestCase):
             guards = guard.parent
             self.assertFalse(guard.exists())
             self.assertEqual(1, len(list(guards.glob(f"{guard.name}.stale-*"))))  # preserved, not deleted
-            self.assertEqual([], list(guards.glob("*.recover")))
+            self.assertEqual([], list(guards.glob("*.recover.stale-*")))  # U83: the lock file stays; never stolen
+            with deliver_module._recover_lock(guard, 0.0) as held:
+                self.assertTrue(held, "the recovery lock was left held")
             attempts = project / ".coord" / "mailbox" / "delivery" / "attempts"
             states = [json.loads(p.read_text(encoding="utf-8")).get("state") for p in attempts.glob("*.json")]
             self.assertEqual(1, states.count("GUARD_RECOVERED"))

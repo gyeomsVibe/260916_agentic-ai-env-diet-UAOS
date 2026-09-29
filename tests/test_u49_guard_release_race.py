@@ -70,7 +70,10 @@ class GuardReleaseRaceTests(unittest.TestCase):
             result = deliver(self.project, message="U49-G1R plain", actor="codex", target="claude", runner=_Runner())
         self.assertEqual("DISPATCHED", result.reason)
         self.assertEqual([], list(self.guards.glob("*.lock")))
-        self.assertEqual([], list(self.guards.glob("*.recover")))
+        self.assertEqual([], list(self.guards.glob("*.recover.stale-*")))  # U83: the lock file stays; never stolen
+        for recover in self.guards.glob("*.recover"):
+            with deliver_module._recover_lock(recover.with_suffix(""), 0.0) as held:
+                self.assertTrue(held, "the recovery lock was left held")
 
     def test_replaced_guard_is_left_to_its_new_owner(self) -> None:
         class _Replace(_Runner):

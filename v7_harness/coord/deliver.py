@@ -288,13 +288,15 @@ def _clear_owned_pending(path: Path, owner: str | None) -> None:
 # Why 300 s: a live dispatcher holds the guard at most for the Claude CLI timeout (120 s) plus receipt writes; 300 s
 # gives 2.5x margin so a slow but live dispatcher is never taken for a crashed one.
 GUARD_STALE_S = 300.0
-# The recovery lock is held only for a stat, a rename and an open (milliseconds); 60 s means its holder crashed.
-RECOVER_STALE_S = 60.0
+# U83 (Codex REJECT of U49-G1R, 2026-09-29): the recovery lock is an OS byte-range lock on `<guard>.recover`, not an
+# exclusively created file aged by mtime. The OS drops it when its holder exits or crashes, so nothing ever steals it by
+# age: a holder paused for any length of time keeps it, and the file itself is never unlinked, so no caller can delete
+# another holder's lock.
 # 50 x 20 ms bounds the claim retry at about 1 s, well above the few ms a concurrent publish holds the file open.
 CLAIM_TRIES = 50
 CLAIM_SLEEP_S = 0.02
 # Release waits for the recovery lock at most 5 s: recovery holds it for milliseconds, so 5 s only runs out when a
-# recoverer crashed inside it; the guard is then left for stale recovery, which can delay but never double-dispatch.
+# recoverer is paused inside it; the guard is then left for stale recovery, which can delay but never double-dispatch.
 RELEASE_WAIT_S = 5.0
 
 
@@ -317,10 +319,65 @@ def _open_excl(path: Path) -> int | None:
     return None
 
 
+if os.name == "nt":
+    import msvcrt
+
+    def _try_lock(fd: int) -> bool:
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # non-blocking; locks are per handle, so a second open conflicts
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _try_lock(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # flock, not lockf: it conflicts across opens in one process
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _recover_lock(guard: Path, wait_s: float):
+    """Yield True while holding the OS lock on `<guard>.recover`, or False if it was not taken within wait_s."""
+    path = guard.with_name(guard.name + ".recover")
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        yield False
+        return
+    try:
+        deadline = time.monotonic() + wait_s
+        while not _try_lock(fd):
+            if time.monotonic() >= deadline:
+                yield False
+                return
+            time.sleep(CLAIM_SLEEP_S)
+        try:
+            yield True
+        finally:
+            try:
+                _unlock(fd)
+            except OSError:
+                pass  # close below releases it anyway
+    finally:
+        os.close(fd)
+
+
 def _acquire_guard(guard: Path, box: Mailbox, message_id: str, digest: str) -> int | None:
     """Take the per-message dispatch guard, recovering one left by a crashed dispatcher. None means IN_FLIGHT.
 
-    Recovery runs under a second exclusive lock so the age check and the rename cannot interleave with another
+    Recovery runs under the OS recovery lock so the age check and the rename cannot interleave with another
     recoverer (otherwise one could rename a guard that another had just re-created). The stale guard is renamed,
     not deleted, and an attempt receipt records the recovery.
     """
@@ -332,17 +389,9 @@ def _acquire_guard(guard: Path, box: Mailbox, message_id: str, digest: str) -> i
             return None
     except OSError:
         pass  # released since (or delete pending on Windows); the exclusive open below decides
-    recover = guard.with_name(guard.name + ".recover")
-    rfd = _open_excl(recover)
-    if rfd is None:
-        try:
-            if time.time() - recover.stat().st_mtime >= RECOVER_STALE_S:
-                os.rename(recover, recover.with_name(f"{recover.name}.stale-{uuid.uuid4().hex}"))
-        except OSError:
-            pass
-        return None  # another recoverer is working now; this caller's message is already published
-    os.close(rfd)
-    try:
+    with _recover_lock(guard, 0.0) as held:
+        if not held:
+            return None  # another recoverer or releaser is working now; this caller's message is already published
         try:
             age = time.time() - guard.stat().st_mtime
         except OSError:
@@ -356,8 +405,6 @@ def _acquire_guard(guard: Path, box: Mailbox, message_id: str, digest: str) -> i
                            {"message_id": message_id, "digest": digest, "state": "GUARD_RECOVERED",
                             "stale_guard": str(stale), "age_s": round(age, 1), "timestamp_ns": time.time_ns()})
         return _open_excl(guard)
-    finally:
-        recover.unlink(missing_ok=True)
 
 
 def _release_guard(guard: Path, owner: str) -> None:
@@ -365,24 +412,12 @@ def _release_guard(guard: Path, owner: str) -> None:
 
     U49-G1R (Codex REJECT of G1, 2026-09-27): an unconditional unlink by a dispatcher that outlived GUARD_STALE_S removed
     the new holder's guard, and G1's owner check alone still let a recovery land between the read and the unlink.
-    Holding `<guard>.recover` across compare and unlink makes release and recovery mutually exclusive, because recovery
+    Holding the recovery lock across compare and unlink makes release and recovery mutually exclusive, because recovery
     ages, renames and re-creates the guard only while holding that lock too.
     """
-    recover = guard.with_name(guard.name + ".recover")
-    deadline = time.monotonic() + RELEASE_WAIT_S
-    rfd = _open_excl(recover)
-    while rfd is None and time.monotonic() < deadline:
-        try:
-            if time.time() - recover.stat().st_mtime >= RECOVER_STALE_S:
-                os.rename(recover, recover.with_name(f"{recover.name}.stale-{uuid.uuid4().hex}"))
-        except OSError:
-            pass
-        time.sleep(CLAIM_SLEEP_S)
-        rfd = _open_excl(recover)
-    if rfd is None:
-        return  # left for stale recovery: a delay, never a second dispatcher
-    os.close(rfd)
-    try:
+    with _recover_lock(guard, RELEASE_WAIT_S) as held:
+        if not held:
+            return  # left for stale recovery: a delay, never a second dispatcher
         data = None
         for _ in range(CLAIM_TRIES):  # a Windows sharing violation is transient; do not strand our own guard
             try:
@@ -394,8 +429,6 @@ def _release_guard(guard: Path, owner: str) -> None:
                 return
         if isinstance(data, dict) and data.get("owner") == owner:
             guard.unlink(missing_ok=True)
-    finally:
-        recover.unlink(missing_ok=True)
 
 
 def _dispatch_count(attempts: Path, message_id: str) -> int:
