@@ -32,6 +32,8 @@ _CODE = [re.compile(p, re.MULTILINE) for p in (
     r"^ImportError: cannot import name\b",
 )]
 
+# U85: a traceback's final line naming an exception by its module path, e.g. `v7_harness.coord.stream.StreamRejected:`.
+_QUALIFIED_EXC = re.compile(r"^((?:[A-Za-z_]\w*\.)+)[A-Za-z_]\w*: ", re.MULTILINE)
 _MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([^']+)'")
 _MISSING_FILE = re.compile(r"can't open file '([^']+)': \[Errno 2\]")
 # 환경 신호(강함). 테스트 대상 코드가 내기 어려운 것만 둔다.
@@ -60,6 +62,21 @@ def _module_cls(name: str, staging: Path | None, changed_files: list[str], chang
     return "INFRA"  # 작업자와 무관한 패키지가 환경에 없다
 
 
+def _project_exception(output: str, staging: Path | None) -> str | None:
+    """U85: the first exception whose defining module is a staged file: the code under test or its test raised it.
+
+    Seen 2026-09-29: U83 (MailboxRejected) and U84-F1 (StreamRejected) were UNKNOWN, so RSI reported a recurring cause
+    with no remedy. Library exceptions (sqlite3, subprocess) are not staged files and stay UNKNOWN.
+    """
+    if staging is None:
+        return None
+    for m in _QUALIFIED_EXC.finditer(output):
+        module = Path(*m.group(1).rstrip(".").split("."))
+        if (staging / module.with_suffix(".py")).is_file() or (staging / module / "__init__.py").is_file():
+            return m.group(0).strip()
+    return None
+
+
 def classify(output: str, exit_code: int | None, changed_files: Iterable[str] = (),
              changed_texts: Iterable[str] = (), staging: Path | None = None) -> tuple[str, str]:
     """Return (class, signature). class is CODE, INFRA or UNKNOWN."""
@@ -68,6 +85,9 @@ def classify(output: str, exit_code: int | None, changed_files: Iterable[str] = 
         m = pat.search(output)
         if m:
             return "CODE", m.group(0).strip()[:120]
+    signature = _project_exception(output, staging)
+    if signature:
+        return "CODE", signature[:120]
     m = _MISSING_MODULE.search(output)
     if m:
         return _module_cls(m.group(1), staging, changed_files, changed_texts), m.group(0)[:120]
