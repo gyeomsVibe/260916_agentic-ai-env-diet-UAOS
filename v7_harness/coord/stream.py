@@ -249,7 +249,9 @@ def archive_settled(project: Path, *, now: datetime | None = None) -> dict[str, 
                 "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in live),
                 encoding="utf-8",
             )
-    return {"archived": len(settled), "kept": len(live), "archive": str(archive_file.relative_to(project))}
+    # U84-F1 (Codex REJECT of U84): from a worktree the archive is on the desk, outside `project`; relative_to raised
+    # after the stream was already rewritten. relpath resolves from either checkout and is unchanged for a plain one.
+    return {"archived": len(settled), "kept": len(live), "archive": os.path.relpath(archive_file, project)}
 
 
 def append_event(
@@ -291,9 +293,10 @@ def append_event(
         finally:
             os.close(handle)
         snapshot = [*existing_events, json.loads(line)]
+        # 일이 일어난 자리에서 운용 표본을 남긴다(U15 S14). 실패해도 무시한다.
+        # U84-F1 (Codex REJECT of U84): the desk and its worktrees share one samples file, so it is written under the
+        # stream lock; unlocked, a concurrent Windows append lost 1 of 48 rows in 1 of 8 runs on 12 busy cores.
+        from v7_harness.coord.metrics import maybe_sample
 
-    # 일이 일어난 자리에서 운용 표본을 남긴다(U15 S14). 잠금 밖에서, 실패해도 무시한다.
-    from v7_harness.coord.metrics import maybe_sample
-
-    maybe_sample(project, events=snapshot)
+        maybe_sample(project, events=snapshot)
     return event
