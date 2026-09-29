@@ -232,6 +232,46 @@ def ring_bell(project_root: Path, box: Mailbox, *, runner: Any = None, sessions_
     return {"rung": result.sent, "reason": result.reason, "pending": len(ids)}
 
 
+def _last_pass_by_step(project_root: Path) -> dict[str, float]:
+    """U88: latest ledger PASS time per step; a `-R<n>` retry also counts for the step it retries.
+
+    Seen 2026-09-29: the P1 wake still listed U80 and U86 after U80-R1 and U86-R1 passed, and it grew with every BLOCKED
+    message ever sent, so the one P1 at each session start carried no signal. An unreadable ledger proves nothing.
+    """
+    import re
+
+    try:
+        from ..rsi import load_rows
+
+        rows = load_rows(project_root)
+    except Exception:  # noqa: BLE001 - no evidence means every alert stays
+        return {}
+    passed: dict[str, float] = {}
+    for row in rows:
+        work_id, ts = row.get("work_id"), row.get("ts")
+        if row.get("outcome") != "PASS" or not isinstance(work_id, str):
+            continue
+        if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+            continue
+        for step in {work_id, re.sub(r"-R\d+$", "", work_id)}:
+            passed[step] = max(passed.get(step, 0.0), float(ts))
+    return passed
+
+
+def _passed_since(passed: dict[str, float], payload: dict[str, Any]) -> bool:
+    """U88: the message's own step passed after the message was written. A missing or unreadable time keeps the alert."""
+    from datetime import datetime
+
+    step, stamp = payload.get("step"), payload.get("ts")
+    if not isinstance(step, str) or step not in passed or not isinstance(stamp, str):
+        return False
+    try:
+        blocked_at = datetime.fromisoformat(stamp).timestamp()
+    except ValueError:
+        return False
+    return passed[step] > blocked_at
+
+
 def run_sentinel_cycle(
     project_root: Path,
     box: Mailbox,
@@ -274,6 +314,8 @@ def run_sentinel_cycle(
         p1_reasons.append(f"NEEDS_RECONCILIATION: {','.join(stable_tasks)}")
         p1_events.append({"kind": "needs_reconciliation", "tasks": stable_tasks})
 
+    passed = _last_pass_by_step(project_root)
+    p1_superseded: list[str] = []
     # Read only. Claiming to look hid each message from real consumers for the length of the check.
     for msg_id, payload in box.peek():
         if not isinstance(payload, dict):
@@ -284,6 +326,9 @@ def run_sentinel_cycle(
             and not isinstance(expires_at, bool)
             and float(expires_at) <= t0
         ):
+            continue
+        if payload.get("kind") == "BLOCKED" and not payload.get("is_p1") and _passed_since(passed, payload):
+            p1_superseded.append(str(payload.get("step")))
             continue
         if payload.get("kind") == "BLOCKED" or payload.get("is_p1"):
             p1_reasons.append(f"BLOCKED_TASK: {payload.get('step')}")
@@ -340,6 +385,7 @@ def run_sentinel_cycle(
         "wall_time_s": wall_time_s,
         "paid_api_calls": 0,
         "p1_wake_emitted": p1_wake_emitted,
+        "p1_superseded": sorted(set(p1_superseded)),
         "lock_status": lock_info["status"],
         "reconcile_tasks": reconcile_tasks,
         "recovered_claims": recovered,
