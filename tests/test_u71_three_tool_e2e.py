@@ -136,7 +136,7 @@ class ThreeToolContinuityE2E(unittest.TestCase):
         statuses = sorted(r["status"] for _, r in results)
         self.assertEqual(["ACK_ONLY"] * (RACERS - 1) + ["ACTIONABLE_DELTA"], statuses)
         delta = next(r for _, r in results if r["status"] == "ACTIONABLE_DELTA")
-        self.assertEqual(("THRIFT", "codex", "COMMANDER_RESERVE"), (delta["state"], delta["target"], delta["policy"]))
+        self.assertEqual(("LOW", "codex", "COMMANDER_RESERVE"), (delta["state"], delta["target"], delta["policy"]))
         self.assertEqual(1, len(self._packets()))
 
         # HANDOFF_READY: Claude's watcher is the only wake path; thrift itself starts no model.
@@ -209,7 +209,7 @@ class ThreeToolContinuityE2E(unittest.TestCase):
 
         # One writer per step: THRIFT, HANDOFF, RETURN_REVIEW and LOCKDOWN each left exactly one thrift letter.
         self.assertEqual(4, len(self._letters("thrift_")))
-        self.assertEqual(3, len(self._packets()))  # RETURN_REVIEW is NORMAL: a letter, no packet
+        self.assertEqual(3, len(self._packets()))  # RETURN_REVIEW is AMPLE: a letter, no packet
 
 
 if __name__ == "__main__":

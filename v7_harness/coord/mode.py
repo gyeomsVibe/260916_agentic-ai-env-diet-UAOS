@@ -12,8 +12,8 @@ nothing changed when a card overspent. This module is the one place the runtime 
   (`card_cost`); over it the card is split, not continued. Normal mode keeps only the 3x regression rule.
 
 Not to be confused with `coord thrift` (U63, `thrift.py`): that is a handoff ladder over an observed remaining-quota
-percentage (its NORMAL/THRIFT/HANDOFF_READY states decide reserves and handoff packets). It runs inside this mode;
-its NORMAL state means "no handoff needed", never "token-thrift is off".
+percentage (its AMPLE/LOW/HANDOFF_READY states decide reserves and handoff packets; U96-N renamed them from
+NORMAL/THRIFT). It runs inside this mode; AMPLE means "no handoff needed", never "token-thrift is off".
 """
 
 from __future__ import annotations
