@@ -103,6 +103,17 @@ def main() -> int:
             if tag in seen_rows and seen_rows[tag] != status:
                 items.append((time.time(), f"PLAN {key} ({coord.parent.name}): {seen_rows[tag]} -> {status}"[:SNIPPET]))
     items.sort()
+    # U101: letters and PLAN rows missed direct commits, hand-written leases and uncommitted edits (U100 audit).
+    try:
+        from absence_brief import absence_items  # deployed next to this hook in ~/.uaos/hooks
+    except ImportError:
+        from uaos_everywhere.hooks.absence_brief import absence_items
+    others = absence_items(ROOT, since)
+    if others:
+        print(f"OTHER TOOLS CHANGED since your last prompt ({len(others)} items): audit each before new work;"
+              " the user must not have to ask (U101).")
+        for line in others[:MAX_LINES]:
+            print(f"- {line[:SNIPPET]}")
     cursor_path.parent.mkdir(parents=True, exist_ok=True)
     cursor_path.write_text(json.dumps({"since": time.time(), "plan": new_rows}, ensure_ascii=False), encoding="utf-8")
     if not items:
