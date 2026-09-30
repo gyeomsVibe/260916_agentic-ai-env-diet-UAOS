@@ -27,7 +27,7 @@ from v7_harness.isolation.errors import (
     SourceDivergenceError,
     WatchScanUnavailableError,
 )
-from v7_harness.isolation.manifest import PatchBundle, build_manifest
+from v7_harness.isolation.manifest import DeterministicManifest, PatchBundle, build_manifest
 from v7_harness.isolation.promotion import apply_promotion, dry_run_promotion
 from v7_harness.isolation.security import snapshot_watch_roots
 from v7_harness.isolation.staging import NonGitStagingAdapter, StagingWorkspace
@@ -284,6 +284,32 @@ def work_dir_excludes(work_dir: Path, source_dir: Path, task_id: str) -> list[st
     names = ("coord.sqlite3", "coord.sqlite3-wal", "coord.sqlite3-shm", "coord.sqlite3-journal",
              "coord.sqlite3.writer.lock", "stage", f"runs/{task_id}")
     return [prefix + name for name in names]
+
+
+# A runaway worker can touch thousands of files; the summary names the first 50 (sorted), enough to judge the escape.
+SOURCE_ESCAPE_LIST_LIMIT = 50
+
+
+def source_escape_paths(base: DeterministicManifest | None, source_dir: Path, excludes: list[str]) -> list[str]:
+    """Source files changed while the worker ran, relative and sorted (U96-S).
+
+    The worker's workspace is the stage, so a changed source file escaped containment, or a second writer ran during
+    the paid run; both break the single-writer rule, which is why the class stays SOURCE_DIVERGED. An unreadable source
+    returns [] here: the dry run and apply still fail closed on the manifest hash. A workspace without a base manifest
+    (mocked in tests, or replayed) has nothing to compare against and also returns [].
+    """
+    if base is None:
+        return []
+    try:
+        now = build_manifest(source_dir, excludes=excludes)
+    except Exception:
+        return []
+    if now.manifest_hash == base.manifest_hash:
+        return []
+    before = {entry.path: entry.sha256 for entry in base.entries}
+    after = {entry.path: entry.sha256 for entry in now.entries}
+    changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+    return changed[:SOURCE_ESCAPE_LIST_LIMIT]
 
 
 def reconcile_pilot(*, work_dir: Path, task_id: str) -> dict[str, Any]:
@@ -645,6 +671,12 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         except Exception:
             watch_error = ("EXTERNAL_WRITE", "UNKNOWN")
 
+        # 9b. U96-S: name every source file changed during the run, even when another error ended it first.
+        source_changed = source_escape_paths(workspace.base_manifest, Path(config.source_dir), source_excludes)
+        if source_changed and watch_error is None:
+            watch_error = ("SOURCE_DIVERGED", "UNKNOWN")
+        external_paths.extend(f"source:{path}" for path in source_changed)
+
         # 10. Success check and bundle creation
         outcome: AgyOutcome | None = launcher.last_outcome
         is_success = (
@@ -925,8 +957,8 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         if state == "FAILED" and (error_class in ("TIMEOUT", "NEEDS_RECONCILIATION") or effect_state == "UNKNOWN"):
             summary["next_action"] = f"python -m v7_harness.cli pilot reconcile --task {config.task_id}"
 
-        # B41: external_paths for EXTERNAL_WRITE
-        if external_paths and error_class == "EXTERNAL_WRITE":
+        # B41: external_paths for EXTERNAL_WRITE; U96-S adds source files (prefix "source:") under either class.
+        if external_paths and error_class in ("EXTERNAL_WRITE", "SOURCE_DIVERGED"):
             summary["external_paths"] = external_paths
 
         # 13. Persist summary and return
