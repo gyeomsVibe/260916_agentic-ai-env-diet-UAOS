@@ -67,6 +67,25 @@ UAOS-RSI는 한 프로젝트, 한 도구용 스크립트가 아니라 **어느 �
 - **U105 PR마다 검증 편지 자동 발송**: 지금은 사람이 기억해서 보낸다. PR이 열리면 `coord deliver --target antigravity`로 검증 매뉴얼을 보내는 단계를 만든다.
 - 커밋 서명 규칙: Codex·Antigravity가 커밋할 때 서명 줄을 붙이지 않아 49개 커밋은 누가 만들었는지 가릴 수 없다. 각 도구의 규칙 파일에 서명 줄을 넣는다(Codex 복귀 뒤 합의).
 
+## 5-1. U104 (2026-10-01, 병합 뒤 첫 사용에서 나온 결함)
+
+- **사건**: U103-V 검증 편지(relay_2d1f…, 00:48)가 Antigravity에게 보이지 않았습니다. Antigravity는 00:54에 "편지가 오면 착수"라고 답했고, 사용자가 Claude의 보고 줄을 Antigravity에 직접 붙여 넣었습니다.
+- **원인(실측)**: Antigravity 훅은 자기 앞 미처리 편지 12통 중 **파일 이름순 앞 5통**만 보여 줬습니다. 앞 5통은 모두 9/26자였고, 새 편지는 11번째였습니다. Claude는 보낸 쪽 `ok: true`만 확인했고, 받는 쪽 훅 출력은 확인하지 않았습니다.
+- **수정**: 편지를 최신순으로 보여 주고, 가장 새 편지의 본문 160자를 함께 보여 줍니다(`hook_context.agy_letters/agy_line`). 실제 우편함으로 확인한 결과, 첫 항목이 relay_2d1f였고 본문도 표시됐습니다.
+- **세 도구 설정 대조(Claude 대행, 값은 비밀이 없는 항목만 확인)**:
+
+| 항목 | Claude Code | Codex | Antigravity |
+|---|---|---|---|
+| 규칙 | CLAUDE.md(정본 v7.3.0) | AGENTS.md(같은 정본) | GEMINI.md(같은 정본) |
+| 출석·변경 알림 훅 | SessionStart·UPS `--say p1 --delta` | SessionStart·UPS `--say none --delta` | PreInvocation `--say agy --delta` |
+| olla MCP | 등록·allow 3개 | 등록·`default_tools_approval_mode=approve` | 등록 |
+| olla 통째 읽기 관문 | PreToolUse(Read) `olla hook-read` | PreToolUse(Bash) `olla hook-shell` | `olla-guard` 묶음(불변) |
+| 편지로 깨우기 | `coord watch` 백그라운드(세션 깨움) | 교환원(sentinel) | **없음**: 사용자 지시가 올 때만 훅이 읽음 |
+| 헤드리스 호출 | `worker: claude` | `codex exec` | `pilot run --worker agy`, `pilot review --reviewer agy` |
+
+- **결론**: Antigravity는 편지만으로는 깨어나지 않습니다. 사용자 없이 일을 맡기려면 헤드리스 경로(`pilot review --reviewer agy`, `--worker agy`)를 써야 합니다. 편지는 사용자가 Antigravity 창에서 지시할 때 읽히는 보조 경로입니다.
+- **첫 헤드리스 검토 실측(U104-A1)**: 108초, 172,760토큰(입력 162,380, 캐시 읽기 555,630 별도), 반례 0건. 상한 60,000을 넘어 판정은 UNUSABLE(참고 증거로도 쓰지 않음) 처리됐습니다. Antigravity 1회 호출의 고정 입력이 약 16만 토큰이므로, 검토 상한은 이 실측의 약 1.2배인 **200,000**으로 잡습니다. 표본이 1건뿐이므로 다음 3회 실측으로 다시 정합니다.
+
 ## 6. 측정 상태
 
 - 토큰 절감: **UNMEASURED**(미측정). 거부 관문의 효과는 다음 2주 `olla stats`의 codex·claude digest·deny 수로 본다.
