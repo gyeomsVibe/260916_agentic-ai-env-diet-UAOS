@@ -16,6 +16,11 @@ POLICIES = {
 }
 class ThriftRejected(ValueError): pass
 LOCK_STALE_S = 60.0
+# U96-N: ladder states. AMPLE = enough quota left, no handoff; LOW = keep working under the tool's reserve policy.
+# They were NORMAL/THRIFT until U96-N, which read as "token-thrift is off" beside the default mode (U95-T, mode.py).
+AMPLE, LOW, HANDOFF_READY = "AMPLE", "LOW", "HANDOFF_READY"
+# Records written before U96-N still hold the old names; map them so an old NORMAL never looks like a return from LOW.
+LEGACY_STATES = {"NORMAL": AMPLE, "THRIFT": LOW}
 
 def _atomic(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,11 +79,11 @@ def apply(project: Path, *, tool: str, remaining_percent: float, current_card: s
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= float(v) <= 100 for v in values):
         raise ThriftRejected("percentages must be numbers in 0..100")
     if handoff_at > thrift_at: raise ThriftRejected("handoff threshold must not exceed thrift threshold")
-    state = "NORMAL" if remaining_percent >= thrift_at else ("HANDOFF_READY" if remaining_percent <= handoff_at else "THRIFT")
+    state = AMPLE if remaining_percent >= thrift_at else (HANDOFF_READY if remaining_percent <= handoff_at else LOW)
     fields = tuple(value.strip() if isinstance(value, str) else "" for value in
                    (current_card, next_action, acceptance, stop_condition))
-    if state != "NORMAL" and not all(fields):
-        raise ThriftRejected("non-NORMAL state requires current card, next action, acceptance, and stop condition")
+    if state != AMPLE and not all(fields):
+        raise ThriftRejected("non-AMPLE state requires current card, next action, acceptance, and stop condition")
     current_card, next_action, acceptance, stop_condition = fields
     policy, forbidden = POLICIES[tool]
     observed = {"schema":"uaos-thrift-v1","tool":tool,"state":state,"remaining_percent":float(remaining_percent),
@@ -98,10 +103,11 @@ def apply(project: Path, *, tool: str, remaining_percent: float, current_card: s
         if previous.get("input_fingerprint") == fingerprint:
             return {"status":"ACK_ONLY","state":state,"fingerprint":fingerprint}
         stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc); desk = read_all(project); git = _git_snapshot(source)
-        target = tool if state == "THRIFT" else (_successor(tool, desk) if state == "HANDOFF_READY" else tool)
-        event = "RETURN_REVIEW" if state == "NORMAL" and previous.get("state") not in (None, "NORMAL") else "HANDOFF"
+        target = tool if state == LOW else (_successor(tool, desk) if state == HANDOFF_READY else tool)
+        previous_state = LEGACY_STATES.get(previous.get("state"), previous.get("state"))
+        event = "RETURN_REVIEW" if state == AMPLE and previous_state not in (None, AMPLE) else "HANDOFF"
         packet_path = None; packet_hash = None
-        if state != "NORMAL":
+        if state != AMPLE:
             packet_path = project / ".coord" / "handoff" / f"{tool}-{stamp:%Y%m%dT%H%M%S.%fZ}.md"; packet_path.parent.mkdir(parents=True, exist_ok=True)
             content = "\n".join([f"# {event} {tool}",f"- state: {state}",f"- policy: {policy}",
                 f"- observed remaining percentage: {float(remaining_percent):g}% (not a token estimate)",
@@ -122,7 +128,7 @@ def apply(project: Path, *, tool: str, remaining_percent: float, current_card: s
                   "packet_path":str(packet_path) if packet_path else None,"packet_sha256":packet_hash,"generated_at":stamp.isoformat()}
         tools[tool] = record
         _atomic(state_path, {"schema":"uaos-thrift-v1","sequence":sequence,"tools":tools})
-        if state == "NORMAL" and event != "RETURN_REVIEW":
+        if state == AMPLE and event != "RETURN_REVIEW":
             return {"status":"ACK_ONLY",**record}
         root = project / ".coord" / "mailbox"; root.mkdir(parents=True, exist_ok=True); box = Mailbox(root)
         message_id = f"thrift_{tool}_{sequence}_{fingerprint[:16]}"
