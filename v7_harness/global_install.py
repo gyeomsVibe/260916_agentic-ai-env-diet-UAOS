@@ -330,9 +330,10 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                     after.pop(AGY_GROUP, None)
                 else:
                     # Antigravity runs hooks inside ~/.gemini/config (antigravity-cli#1005); --from-hook reads
-                    # workspacePaths from stdin instead. It reads a JSON result on stdout, so the hook prints {}.
+                    # workspacePaths from stdin instead. It reads a JSON result on stdout: {} or, when its UAOS line
+                    # changed, injectSteps with that line (U95-A; before, it always printed {} and learned nothing).
                     after[AGY_GROUP] = {"enabled": True, "PreInvocation": [{"type": "command", "command": presence_command(
-                        python, launcher, "antigravity", "ACTIVE", 3600, "empty-json")}]}
+                        python, launcher, "antigravity", "ACTIVE", 3600, "agy")}]}
                 changes.append(_json_change("antigravity hooks", path, data, after, path.exists()))
                 changes[-1].detail = changes[-1].detail or shell_note
 

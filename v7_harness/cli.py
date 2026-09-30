@@ -764,7 +764,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_deliver = p_coord_subs.add_parser("deliver", help="Durable direct tool delivery")
     p_coord_deliver.add_argument("--project", default=".")
     p_coord_deliver.add_argument("--actor", required=True, choices=["codex", "claude", "antigravity"])
-    p_coord_deliver.add_argument("--target", default=None, choices=["codex", "claude"])
+    # U95-A: antigravity has no CLI to wake; its letter waits in the inbox and its PreInvocation hook names it.
+    p_coord_deliver.add_argument("--target", default=None, choices=["codex", "claude", "antigravity"])
     p_coord_deliver.add_argument("--message", required=True)
     p_coord_deliver.add_argument("--thread", default="")
     p_coord_deliver.set_defaults(func=cmd_coord_deliver)
@@ -792,9 +793,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_presence.add_argument("--from-hook", action="store_true", default=False,
                                   help="Find the project from the hook payload on stdin (cwd, workspacePaths), "
                                        "CLAUDE_PROJECT_DIR or --project, walking up to .coord/PLAN.md; never fails the hook")
-    p_coord_presence.add_argument("--say", choices=["json", "brief", "none", "empty-json", "p1"], default="json",
-                                  help="What to print: presence JSON (default), one context line, nothing, {}, or "
-                                       "p1 = one line only when a P1 wake waits and Codex is not ACTIVE (U38)")
+    p_coord_presence.add_argument("--say", choices=["json", "brief", "none", "empty-json", "p1", "agy"], default="json",
+                                  help="What to print: presence JSON (default), one context line, nothing, {}, "
+                                       "p1 = one line only when a P1 wake waits and Codex is not ACTIVE (U38), or "
+                                       "agy = Antigravity injectSteps JSON on a turn's first call when its line "
+                                       "changed, else {} (U95-A)")
     # U57-D: the acting conductor had to write a Codex quota lease through Python (2026-09-27); the lease itself
     # (U47-A1b) already existed in presence.mark, only the flag was missing.
     p_coord_presence.add_argument("--lease", action="store_true", default=False,
@@ -1290,9 +1293,13 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             print(line)
         elif say == "empty-json":
             print("{}")
+        elif say == "agy":
+            # Antigravity reads one JSON object on stdout; a skip, an error or an unchanged line prints {}.
+            print(json.dumps({"injectSteps": [{"ephemeralMessage": line}]}, ensure_ascii=False) if line else "{}")
 
     if getattr(args, "from_hook", False):
         from .coord.hook_context import (
+            agy_line,
             brief_line,
             hook_project,
             hook_session,
@@ -1318,7 +1325,10 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
                 mark(project, args.tool, args.state, ttl_s=args.ttl, session=hook_session(stdin_text))
             presence = read_all(project)
-            line = p1_line(project, presence) if say == "p1" else brief_line(project, presence)
+            if say == "agy":
+                line = agy_line(project, presence, stdin_text)
+            else:
+                line = p1_line(project, presence) if say == "p1" else brief_line(project, presence)
             if say == "brief":
                 alert = retention_alert(project)
                 if retention_alert_is_new(project, alert):

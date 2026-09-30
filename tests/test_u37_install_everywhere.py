@@ -94,7 +94,7 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("[features]\nhooks = true\nweb = true", toml)
         agy = json.loads((self.home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
         self.assertIn("lint", agy)
-        self.assertIn("--say empty-json", agy["uaos-presence"]["PreInvocation"][0]["command"])
+        self.assertIn("--say agy", agy["uaos-presence"]["PreInvocation"][0]["command"])
         backups = list((self.home / ".uaos-backups").rglob("settings.json"))
         self.assertEqual(1, len(backups))
         self.assertIn("echo mine", backups[0].read_text(encoding="utf-8"))
