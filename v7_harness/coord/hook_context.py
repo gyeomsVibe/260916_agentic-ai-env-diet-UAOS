@@ -143,7 +143,10 @@ def brief_line(project: Path, presence: dict[str, Any]) -> str:
     wakes = sum(1 for item in inbox if item.startswith("wake_"))
     reviews = sum(1 for item in inbox if item.startswith("rsi_review_"))
     desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
+    from .mode import mode_phrase  # U95-T: every session learns the operating mode from code, not only the rules
+
     return (f"UAOS project {Path(project).name}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
+            f"{mode_phrase(project)} "
             "Read .coord/PLAN.md; `coord inbox` lists what waits. "
             # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
             "Keep `coord watch --target <you>` running in the background; send by `coord deliver`, never via the user."
@@ -241,7 +244,10 @@ def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
     letters = agy_letters(project)
     desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
     conversation = str(event.get("conversationId") or "")
-    fingerprint = hashlib.sha256("\n".join([conversation, desk, *letters]).encode("utf-8")).hexdigest()
+    from .mode import mode_phrase  # U95-T
+
+    mode = mode_phrase(project)
+    fingerprint = hashlib.sha256("\n".join([conversation, desk, mode, *letters]).encode("utf-8")).hexdigest()
     seen = Path(project) / AGY_SEEN
     try:
         if seen.read_text(encoding="utf-8").strip() == fingerprint:
@@ -255,7 +261,7 @@ def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
         pass  # a hook never fails the session; the line is said again next time
     line = (f"UAOS project {Path(project).name}: desk {desk}. Antigravity conducts only while codex and claude are "
             "both LIMITED/ABSENT; otherwise it does only work orders addressed to antigravity and never judges its "
-            "own work. ")
+            f"own work. {mode} ")
     if letters:
         line += (f"{len(letters)} letter(s) for antigravity in .coord/mailbox/inbox: {', '.join(letters[:AGY_SHOWN])}. "
                  "Each names a work manual: keep to its allow, acceptance, forbidden and stop lines, then report with "
