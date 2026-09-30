@@ -23,8 +23,10 @@ from typing import Any, Callable
 from v7_harness.coord.mailbox import Mailbox
 from v7_harness.coord.presence import PRESENCE_DIR, TOOLS, replace_with_retry
 
-# 2 s between inbox scans: the hand-written loop used 30 s on 2026-09-27 and a letter waited at most that long;
-# one scan lists one directory, so a shorter interval costs only disk reads, never tokens.
+# 2 s between inbox scans (U94, 2026-09-30): a letter waits at most one interval before the watch wakes; the
+# hand-written loop of 2026-09-27 used 30 s. A scan lists the inbox and reads only letters it has not seen (U94-R1):
+# re-reading all 464 desk letters took 132 ms a scan, so 2 s kept a watcher busy 6.6% of the time (15x the 30 s
+# cost); the listing alone took 8.1 ms (0.4%). Never tokens either way.
 DEFAULT_INTERVAL_S = 2.0
 # 4 h per watch: the longest single wait seen on 2026-09-27 (Codex quota window). The session re-arms it after.
 DEFAULT_TIMEOUT_S = 4 * 3600.0
@@ -108,7 +110,8 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     try:
         while True:
             _beat(project, tools, token, interval_s, clock())
-            for message_id, payload in box.peek():
+            # U94-R1: decide on the name first and read a letter's file only when its id is new to this watch.
+            for message_id in box.list_inbox():
                 if message_id in seen:
                     continue
                 # U64-F: `coord deliver` already handed this letter to a Claude process (its accepted receipt
@@ -125,7 +128,11 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                     pending_live = False
                 if pending_live:
                     continue
+                data = box.read_message(message_id)
+                if data is None:
+                    continue  # claimed meanwhile, or not readable yet: the next scan looks again, as peek() did
                 seen.add(message_id)
+                payload = data.get("payload")
                 if _addressed(payload, tools):
                     body = payload if isinstance(payload, dict) else {}
                     return {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),

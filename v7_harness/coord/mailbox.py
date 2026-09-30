@@ -206,6 +206,10 @@ class Mailbox:
     def list_inbox(self) -> list[str]:
         return sorted([p.stem for p in self.inbox_dir.glob("*.json") if p.is_file()])
 
+    def read_message(self, message_id: str) -> dict | None:
+        """One inbox letter without claiming it; None when it is gone (claimed) or unreadable."""
+        return _read_message(self.inbox_dir / f"{message_id}.json")
+
     def peek(self) -> list[tuple[str, object]]:
         """Read inbox payloads without claiming them, so a status check never hides a message from a consumer."""
         messages: list[tuple[str, object]] = []
