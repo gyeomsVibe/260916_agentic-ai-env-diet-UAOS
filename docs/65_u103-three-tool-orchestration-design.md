@@ -86,6 +86,21 @@ UAOS-RSI는 한 프로젝트, 한 도구용 스크립트가 아니라 **어느 �
 - **결론**: Antigravity는 편지만으로는 깨어나지 않습니다. 사용자 없이 일을 맡기려면 헤드리스 경로(`pilot review --reviewer agy`, `--worker agy`)를 써야 합니다. 편지는 사용자가 Antigravity 창에서 지시할 때 읽히는 보조 경로입니다.
 - **첫 헤드리스 검토 실측(U104-A1)**: 108초, 172,760토큰(입력 162,380, 캐시 읽기 555,630 별도), 반례 0건. 상한 60,000을 넘어 판정은 UNUSABLE(참고 증거로도 쓰지 않음) 처리됐습니다. Antigravity 1회 호출의 고정 입력이 약 16만 토큰이므로, 검토 상한은 이 실측의 약 1.2배인 **200,000**으로 잡습니다. 표본이 1건뿐이므로 다음 3회 실측으로 다시 정합니다.
 
+## 5-2. U105 (2026-10-01, 작업 도중 도착한 편지·P1)
+
+- 영수증: 세 도구 모두 새 편지를 "사용자가 다음 프롬프트를 칠 때"만 봤다. 긴 자율 작업 중 도착한 판정·P1은 사용자가 손으로 옮겼다.
+- 도구별 경로(각 도구 형식에 맞춤):
+
+| 도구 | 훅 | 출력 형식 | 비고 |
+|---|---|---|---|
+| Claude Code | PostToolUse(모든 도구) `--say p1 --delta --post-tool` | `hookSpecificOutput.additionalContext` JSON | 평문 stdout은 모델에 안 보임 |
+| Codex | PostToolUse(matcher Bash) `--say none --delta --post-tool` | 같은 JSON | Codex 쪽 표시 여부는 UNKNOWN, 실사용 확인 대상 |
+| Antigravity | PreInvocation(모든 모델 호출) | `injectSteps` | 델타의 "턴 첫 호출만" 제한 제거 |
+
+- 작업 도중 훅은 `--state`를 넘기지 않아 도구 호출마다 presence 파일을 쓰지 않는다. 델타 커서가 반복을 막는다.
+- 구현: **Antigravity 헤드리스 첫 실구현 카드**. `pilot run --worker agy`로 실행했고 cli.py·global_install.py를 바꿨다. 사용량은 agy 604,187토큰(캐시 읽기 3,019,232 별도), 상한 1,200,000 안(WITHIN)이다. 판정자(claude)가 인수 56개와 전체 1338개(skipped 6)를 다시 돌렸고 둘 다 OK였다.
+- 측정 정정: 창에 편지를 넣는 탐침(`agy -p --conversation 5d0b395f…`)을 했지만, 그 ID는 사용자 창이 아니라 이 실행의 헤드리스 대화였다. 헤드리스 턴이 열린 창에 보이는지는 **UNKNOWN**이다(U106에서 확인).
+
 ## 6. 측정 상태
 
 - 토큰 절감: **UNMEASURED**(미측정). 거부 관문의 효과는 다음 2주 `olla stats`의 codex·claude digest·deny 수로 본다.

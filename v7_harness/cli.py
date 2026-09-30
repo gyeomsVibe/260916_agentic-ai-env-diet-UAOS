@@ -810,6 +810,11 @@ def build_parser() -> argparse.ArgumentParser:
     # U103: the delta hook ran only for Claude and only in one project; each tool's hook now asks for its own.
     p_coord_presence.add_argument("--delta", action="store_true", default=False,
                                   help="With --from-hook: add what the other tools changed since this tool last looked")
+    # U105: Claude and Codex mid-turn hooks pass --post-tool to print PostToolUse JSON context.
+    p_coord_presence.add_argument("--post-tool", action="store_true", default=False,
+                                  help="With --from-hook: print the line as PostToolUse JSON "
+                                       "hookSpecificOutput.additionalContext (Claude, Codex mid-turn), "
+                                       "nothing when there is no news (U105)")
     # U57-D: the acting conductor had to write a Codex quota lease through Python (2026-09-27); the lease itself
     # (U47-A1b) already existed in presence.mark, only the flag was missing.
     p_coord_presence.add_argument("--lease", action="store_true", default=False,
@@ -1301,6 +1306,12 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
     say = getattr(args, "say", "json")
 
     def _emit(data: dict[str, Any], line: str = "") -> None:
+        if getattr(args, "post_tool", False):
+            # U105: plain stdout on PostToolUse never reaches the model; only this JSON does
+            if line:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}},
+                                 ensure_ascii=False))
+            return
         if say == "json":
             print(json.dumps(data, ensure_ascii=False))
         elif say in ("brief", "p1", "none") and line:
@@ -1356,9 +1367,9 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
 
                 event = json.loads(stdin_text) if stdin_text.strip() else {}
                 event = event if isinstance(event, dict) else {}
-                if event.get("invocationNum", 0) == 0:  # Antigravity: later calls of the same turn read nothing
-                    session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
-                    line = "\n".join(part for part in (line, delta_text(project, args.tool, session)) if part)
+                # U105: removed first-call limit (invocationNum 0) so a letter arriving mid-turn is heard at next call
+                session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
+                line = "\n".join(part for part in (line, delta_text(project, args.tool, session)) if part)
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
         except Exception as exc:  # noqa: BLE001
             _emit({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]})

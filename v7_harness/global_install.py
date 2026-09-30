@@ -96,9 +96,13 @@ def needs_quotes(python: str, launcher: Path) -> bool:
     return uaos_command(python, launcher).startswith('"')
 
 
-def presence_command(python: str, launcher: Path, tool: str, state: str, ttl: int, say: str,
+def presence_command(python: str, launcher: Path, tool: str, state: str | None, ttl: int, say: str,
                      delta: bool = False) -> str:
     # U103: `delta` adds what the other tools changed since this tool last looked (per-prompt hooks only).
+    # U105: mid-turn hooks pass state=None, omitting state/ttl and appending --post-tool.
+    if state is None:
+        return (f"{uaos_command(python, launcher)} coord presence --tool {tool} "
+                f"--from-hook --say {say}" + (" --delta" if delta else "") + " --post-tool")
     return (f"{uaos_command(python, launcher)} coord presence --tool {tool} --state {state} --ttl {ttl} "
             f"--from-hook --say {say}" + (" --delta" if delta else ""))
 
@@ -286,6 +290,9 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                         python, launcher, "claude", "ACTIVE", 3600, "p1", delta=True)}]}],
                     "SessionEnd": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
                         python, launcher, "claude", "ABSENT", 86400, "none")}]}],
+                    # U105 mid-turn notice: reaches Claude mid-turn on every tool call via PostToolUse JSON context.
+                    "PostToolUse": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
+                        python, launcher, "claude", None, 0, "p1", delta=True)}]}],
                 }
                 if shutil.which("olla"):
                     wanted["PreToolUse"] = [{"matcher": "Read", "hooks": [
@@ -321,6 +328,9 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                         python, launcher, "codex", "ACTIVE", 3600, "brief")}]}],
                     "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
                         python, launcher, "codex", "ACTIVE", 3600, "none", delta=True)}]}],
+                    # U105 mid-turn notice: reaches Codex mid-turn on Bash calls via PostToolUse JSON context.
+                    "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "timeout": 10, "command":
+                        presence_command(python, launcher, "codex", None, 0, "none", delta=True)}]}],
                 }
                 if shutil.which("olla"):
                     wanted["PreToolUse"] = [{"matcher": "Bash", "hooks": [
