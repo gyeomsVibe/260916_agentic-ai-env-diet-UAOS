@@ -88,9 +88,22 @@ def report(project: Path, *, card: str, baseline: str, baseline_cards: int) -> d
         return {**result, "status": "UNKNOWN", "reason": "card or baseline rows missing or zero"}
     ratios = {m: round(spent[m] / (base[m] / baseline_cards), 2) for m in METRICS}
     over = [m for m in METRICS if ratios[m] > RATIO_LIMIT]
-    return {**result, "status": "FAIL" if over else "PASS", "ratios": ratios, "over_limit": over,
-            "next_card_allowed": not over,
-            "reason": "over 3x the baseline card average: " + ", ".join(over) if over else None}
+    # U95-T: in token-thrift (the default) a card may spend at most its share of the budget; over it the 3x status is
+    # kept, but the next card stays closed until this one is split.
+    from .mode import SHARE_LIMIT, THRIFT, current_mode, over_share
+
+    mode = current_mode(project)["mode"]
+    beyond = over_share(project, ratios)
+    if over:
+        reason = "over 3x the baseline card average: " + ", ".join(over)
+    elif beyond:
+        reason = f"over its share ({SHARE_LIMIT:g}x the baseline card average, token-thrift): split the card: " \
+                 + ", ".join(beyond)
+    else:
+        reason = None
+    return {**result, "status": "FAIL" if over else "PASS", "ratios": ratios, "over_limit": over, "mode": mode,
+            "share_limit": SHARE_LIMIT if mode == THRIFT else None, "over_share": beyond,
+            "next_card_allowed": not over and not beyond, "reason": reason}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -113,8 +126,10 @@ def main(argv: list[str] | None = None) -> int:
         result["exploratory"] = pin is None or pin != {"baseline": baseline, "baseline_cards": cards}
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
-    # Exit 0 only on PASS against the pinned baseline: FAIL, UNKNOWN and exploratory runs keep the next card closed.
-    return 0 if result["status"] == "PASS" and not result.get("exploratory", True) else 1
+    # Exit 0 only on PASS against the pinned baseline: FAIL, UNKNOWN and exploratory runs keep the next card closed,
+    # and so does a card over its token-thrift share (U95-T).
+    allowed = result["status"] == "PASS" and result.get("next_card_allowed", False)
+    return 0 if allowed and not result.get("exploratory", True) else 1
 
 
 if __name__ == "__main__":

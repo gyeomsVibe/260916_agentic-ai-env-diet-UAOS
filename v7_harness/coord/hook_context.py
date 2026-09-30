@@ -143,7 +143,10 @@ def brief_line(project: Path, presence: dict[str, Any]) -> str:
     wakes = sum(1 for item in inbox if item.startswith("wake_"))
     reviews = sum(1 for item in inbox if item.startswith("rsi_review_"))
     desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
+    from .mode import mode_phrase  # U95-T: every session learns the operating mode from code, not only the rules
+
     return (f"UAOS project {Path(project).name}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
+            f"{mode_phrase(project)} "
             "Read .coord/PLAN.md; `coord inbox` lists what waits. "
             # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
             "Keep `coord watch --target <you>` running in the background; send by `coord deliver`, never via the user."
@@ -196,6 +199,76 @@ def p1_is_new(project: Path, line: str) -> bool:
     except OSError:
         pass  # a hook never fails the session; the line is said again next time
     return True
+
+
+# U95-A: Antigravity's dedupe record, beside p1_hook_seen.txt (.coord/presence/ is git-ignored).
+AGY_SEEN = Path(".coord") / "presence" / "agy_hook_seen.txt"
+AGY_TARGET = "antigravity"
+# Five ids (38 characters each) keep the line near 200 tokens; `coord inbox` lists the rest.
+AGY_SHOWN = 5
+
+
+def agy_letters(project: Path) -> list[str]:
+    """Ids of inbox letters addressed to Antigravity (requested_target or to), in name order."""
+    box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
+    found: list[str] = []
+    if not box_dir.is_dir():
+        return found
+    for path in sorted(box_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue  # claimed or mid-write: the next turn looks again
+        payload = data.get("payload") if isinstance(data, dict) else None
+        if isinstance(payload, dict) and AGY_TARGET in (payload.get("requested_target"), payload.get("to")):
+            found.append(path.stem)
+    return found
+
+
+def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
+    """U95-A: what Antigravity learns about UAOS on the first model call of a turn, said only when it changed.
+
+    Seen 2026-09-30: Antigravity's presence hook printed only {} and `coord deliver` could not address it, so its only
+    UAOS knowledge was GEMINI.md and every work order reached it through the user. The line names Antigravity's role
+    and the letters addressed to it. It repeats only when the conversation, the desk or those letters change, so an
+    unchanged desk costs no tokens; later calls of the same turn read nothing from disk.
+    """
+    try:
+        event = json.loads(stdin_text) if stdin_text.strip() else {}
+    except json.JSONDecodeError:
+        event = {}
+    if not isinstance(event, dict):
+        event = {}
+    if event.get("invocationNum", 0) != 0:
+        return ""
+    letters = agy_letters(project)
+    desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
+    conversation = str(event.get("conversationId") or "")
+    from .mode import mode_phrase  # U95-T
+
+    mode = mode_phrase(project)
+    fingerprint = hashlib.sha256("\n".join([conversation, desk, mode, *letters]).encode("utf-8")).hexdigest()
+    seen = Path(project) / AGY_SEEN
+    try:
+        if seen.read_text(encoding="utf-8").strip() == fingerprint:
+            return ""
+    except OSError:
+        pass
+    try:
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass  # a hook never fails the session; the line is said again next time
+    line = (f"UAOS project {Path(project).name}: desk {desk}. Antigravity conducts only while codex and claude are "
+            "both LIMITED/ABSENT; otherwise it does only work orders addressed to antigravity and never judges its "
+            f"own work. {mode} ")
+    if letters:
+        line += (f"{len(letters)} letter(s) for antigravity in .coord/mailbox/inbox: {', '.join(letters[:AGY_SHOWN])}. "
+                 "Each names a work manual: keep to its allow, acceptance, forbidden and stop lines, then report with "
+                 "`uaos coord deliver --actor antigravity --target claude --message ...`.")
+    else:
+        line += "No letter waits for antigravity; .coord/PLAN.md lists the cards."
+    return line[:900]
 
 
 RETENTION_SEEN = Path(".coord") / "presence" / "retention_seen.txt"

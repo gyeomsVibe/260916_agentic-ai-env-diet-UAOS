@@ -580,6 +580,9 @@ def deliver(
     # U48-D0 re-review (Claude, 2026-09-27): publish before the guard. A guard left by a crashed dispatcher used to
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
     box.publish(message_id, _payload(actor, message, digest, requested_target))
+    if target == "antigravity":
+        # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
+        return DeliverResult(False, "antigravity", "PUBLISHED", (), "", message_id, digest)
     if target is None:
         return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
     guard = box.root / "delivery" / "guards" / f"{message_id}.lock"
