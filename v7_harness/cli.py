@@ -846,6 +846,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_coord_inbox = p_coord_subs.add_parser("inbox")
     p_coord_inbox.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_inbox.add_argument("--all", action="store_true",
+                               help="List routine RUN notices too, with full summaries (U97-I)")
     p_coord_inbox.set_defaults(func=cmd_coord_inbox)
 
     p_coord_ack = p_coord_subs.add_parser("ack")
@@ -1531,8 +1533,15 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
     return 0
 
 
+# U97-I: pilot RUN notices go to the tool that ran the pilot, and the prompt hook already relays them; listing them
+# made the start-of-session inbox 80,966 bytes (298 of 480 letters). They are counted, never acked or moved.
+INBOX_ROUTINE_KINDS = frozenset({"RUN"})
+# 200 characters keep a letter's who/what/verdict; the full text stays in the letter and under `--all`.
+INBOX_SUMMARY_LIMIT = 200
+
+
 def cmd_coord_inbox(args: argparse.Namespace) -> int:
-    """U32b: list what waits in the voicemail without claiming it."""
+    """U32b: list what waits in the voicemail without claiming it (U97-I: routine RUN notices only counted)."""
     from .coord.mailbox import Mailbox
 
     mailbox_dir = Path(args.project) / ".coord" / "mailbox"
@@ -1540,16 +1549,23 @@ def cmd_coord_inbox(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": True, "messages": [], "bad": []}, ensure_ascii=False))
         return 0
     box = Mailbox(mailbox_dir)
+    show_all = bool(getattr(args, "all", False))
     messages = []
+    routine: dict[str, int] = {}
     for message_id, payload in box.peek():
         data = payload if isinstance(payload, dict) else {}
-        messages.append({
-            "id": message_id,
-            "kind": data.get("kind") or ("P1" if data.get("p1_alert") else None),
-            "step": data.get("step"),
-            "summary": data.get("summary") or data.get("wake_reason"),
-        })
-    print(json.dumps({"ok": True, "messages": messages, "bad": box.list_bad()}, ensure_ascii=False))
+        kind = data.get("kind") or ("P1" if data.get("p1_alert") else None)
+        if kind in INBOX_ROUTINE_KINDS and not show_all:
+            routine[kind] = routine.get(kind, 0) + 1
+            continue
+        summary = data.get("summary") or data.get("wake_reason")
+        if not show_all and isinstance(summary, str) and len(summary) > INBOX_SUMMARY_LIMIT:
+            summary = summary[:INBOX_SUMMARY_LIMIT] + "…"
+        messages.append({"id": message_id, "kind": kind, "step": data.get("step"), "summary": summary})
+    result: dict[str, Any] = {"ok": True, "messages": messages, "bad": box.list_bad()}
+    if routine:
+        result["routine_counted"] = routine  # listed in full with --all
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
