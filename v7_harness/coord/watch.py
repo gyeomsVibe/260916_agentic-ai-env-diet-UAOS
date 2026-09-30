@@ -23,9 +23,9 @@ from typing import Any, Callable
 from v7_harness.coord.mailbox import Mailbox
 from v7_harness.coord.presence import PRESENCE_DIR, TOOLS, replace_with_retry
 
-# 30 s between inbox scans: the hand-written loop used 30 s on 2026-09-27 and a letter waited at most that long;
+# 2 s between inbox scans: the hand-written loop used 30 s on 2026-09-27 and a letter waited at most that long;
 # one scan lists one directory, so a shorter interval costs only disk reads, never tokens.
-DEFAULT_INTERVAL_S = 30.0
+DEFAULT_INTERVAL_S = 2.0
 # 4 h per watch: the longest single wait seen on 2026-09-27 (Codex quota window). The session re-arms it after.
 DEFAULT_TIMEOUT_S = 4 * 3600.0
 # A watcher counts as live for three missed scans, and never less than 90 s, so one slow scan does not make
