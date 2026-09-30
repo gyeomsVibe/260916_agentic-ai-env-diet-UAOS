@@ -336,14 +336,15 @@ def main(argv: list[str] | None = None) -> int:
         return envelope("ERROR", "", {"input_tokens": 0, "output_tokens": 0}, f"ollama unreachable: {exc}")
     _log("pilot_local", status="GENERATED", elapsed_s=round(time.monotonic() - started, 1), **run, **usage)
 
+    # U102-W: keep the raw reply on every rejection; an empty record hid the U101-L2 cause (constants above __future__).
     if "===FILE:" not in text and "===EDIT:" not in text:
-        return envelope("ERROR", "", usage, "model returned no file block")
+        return envelope("ERROR", text, usage, "model returned no file block")
     try:
         written = _apply(text, workspace, task=args.prompt)
     except ValueError as exc:
-        return envelope("ERROR", "", usage, str(exc))
+        return envelope("ERROR", text, usage, str(exc))
     if not written:
-        return envelope("ERROR", "", usage, "no file written")
+        return envelope("ERROR", text, usage, "no file written")
     return envelope("SUCCESS", f"wrote: {', '.join(written)}", usage)
 
 
