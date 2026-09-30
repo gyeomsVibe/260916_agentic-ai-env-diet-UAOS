@@ -209,20 +209,22 @@ AGY_SHOWN = 5
 
 
 def agy_letters(project: Path) -> list[str]:
-    """Ids of inbox letters addressed to Antigravity (requested_target or to), in name order."""
+    """Ids of inbox letters addressed to Antigravity (requested_target or to), newest first (U104)."""
     box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
-    found: list[str] = []
+    found: list[tuple[float, str]] = []
     if not box_dir.is_dir():
-        return found
-    for path in sorted(box_dir.glob("*.json")):
+        return []
+    for path in box_dir.glob("*.json"):
         try:
+            mtime = path.stat().st_mtime
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue  # claimed or mid-write: the next turn looks again
         payload = data.get("payload") if isinstance(data, dict) else None
         if isinstance(payload, dict) and AGY_TARGET in (payload.get("requested_target"), payload.get("to")):
-            found.append(path.stem)
-    return found
+            found.append((mtime, path.stem))
+    # U104: name order showed the five oldest (2026-09-26) and hid a new verdict order; newest first instead.
+    return [stem for _, stem in sorted(found, reverse=True)]
 
 
 def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
@@ -263,12 +265,18 @@ def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
             "both LIMITED/ABSENT; otherwise it does only work orders addressed to antigravity and never judges its "
             f"own work. {mode} ")
     if letters:
-        line += (f"{len(letters)} letter(s) for antigravity in .coord/mailbox/inbox: {', '.join(letters[:AGY_SHOWN])}. "
+        try:
+            newest = json.loads((Path(project) / ".coord" / "mailbox" / "inbox" / f"{letters[0]}.json")
+                                .read_text(encoding="utf-8"))["payload"].get("message", "")
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            newest = ""  # claimed or mid-write: the ids still name it
+        line += (f"{len(letters)} letter(s) for antigravity in .coord/mailbox/inbox, newest first: "
+                 f"{', '.join(letters[:AGY_SHOWN])}. Newest says: {str(newest)[:160]} "
                  "Each names a work manual: keep to its allow, acceptance, forbidden and stop lines, then report with "
                  "`uaos coord deliver --actor antigravity --target claude --message ...`.")
     else:
         line += "No letter waits for antigravity; .coord/PLAN.md lists the cards."
-    return line[:900]
+    return line[:1100]  # U104: +160 chars for the newest letter's text, so the report instruction is not cut
 
 
 RETENTION_SEEN = Path(".coord") / "presence" / "retention_seen.txt"
