@@ -49,6 +49,8 @@ NOTES = (
     "New sessions pick up rules and hooks; an already open session does not.",
 )
 HOOK_MARK = "coord presence"
+# U103-O: the olla whole-read gates the installer adds when `olla` is on PATH; only these exact commands are ours.
+OLLA_HOOKS = ("olla hook-read", "olla hook-shell")
 DENY = ("CronCreate", "ScheduleWakeup", "mcp__Claude_Code_Remote__create_trigger", "mcp__Claude_Code_Remote__send_later")
 AGY_GROUP = "uaos-presence"
 STATE_FILE = "install_state.json"
@@ -94,9 +96,11 @@ def needs_quotes(python: str, launcher: Path) -> bool:
     return uaos_command(python, launcher).startswith('"')
 
 
-def presence_command(python: str, launcher: Path, tool: str, state: str, ttl: int, say: str) -> str:
+def presence_command(python: str, launcher: Path, tool: str, state: str, ttl: int, say: str,
+                     delta: bool = False) -> str:
+    # U103: `delta` adds what the other tools changed since this tool last looked (per-prompt hooks only).
     return (f"{uaos_command(python, launcher)} coord presence --tool {tool} --state {state} --ttl {ttl} "
-            f"--from-hook --say {say}")
+            f"--from-hook --say {say}" + (" --delta" if delta else ""))
 
 
 def launcher_text(repo: Path) -> str:
@@ -174,8 +178,9 @@ def _strip_uaos_hooks(groups: list[Any]) -> list[Any]:
         if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
             kept.append(group)
             continue
-        hooks = [h for h in group["hooks"] if not (isinstance(h, dict) and HOOK_MARK in str(h.get("command", ""))
-                                                   and "uaos.py" in str(h.get("command", "")))]
+        hooks = [h for h in group["hooks"] if not (isinstance(h, dict) and ((HOOK_MARK in str(h.get("command", ""))
+                                                   and "uaos.py" in str(h.get("command", "")))
+                                                   or h.get("command") in OLLA_HOOKS))]
         if hooks:
             kept.append({**group, "hooks": hooks})
     return kept
@@ -278,10 +283,13 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                         python, launcher, "claude", "ACTIVE", 3600, "brief")}]}],
                     # UserPromptSubmit stdout rides on the prompt: only a P1 hand-off while Codex is away (U38).
                     "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
-                        python, launcher, "claude", "ACTIVE", 3600, "p1")}]}],
+                        python, launcher, "claude", "ACTIVE", 3600, "p1", delta=True)}]}],
                     "SessionEnd": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
                         python, launcher, "claude", "ABSENT", 86400, "none")}]}],
                 }
+                if shutil.which("olla"):
+                    wanted["PreToolUse"] = [{"matcher": "Read", "hooks": [
+                        {"type": "command", "timeout": 10, "command": OLLA_HOOKS[0]}]}]
                 after = _merge_hooks(data, wanted, uninstall)
                 permissions = dict(after.get("permissions") or {})
                 deny = list(permissions.get("deny") or [])
@@ -312,8 +320,11 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                     "SessionStart": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
                         python, launcher, "codex", "ACTIVE", 3600, "brief")}]}],
                     "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
-                        python, launcher, "codex", "ACTIVE", 3600, "none")}]}],
+                        python, launcher, "codex", "ACTIVE", 3600, "none", delta=True)}]}],
                 }
+                if shutil.which("olla"):
+                    wanted["PreToolUse"] = [{"matcher": "Bash", "hooks": [
+                        {"type": "command", "timeout": 10, "command": OLLA_HOOKS[1]}]}]
                 changes.append(_json_change("codex hooks", path, data, _merge_hooks(data, wanted, uninstall),
                                             path.exists()))
                 changes[-1].detail = changes[-1].detail or shell_note
@@ -333,7 +344,7 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                     # workspacePaths from stdin instead. It reads a JSON result on stdout: {} or, when its UAOS line
                     # changed, injectSteps with that line (U95-A; before, it always printed {} and learned nothing).
                     after[AGY_GROUP] = {"enabled": True, "PreInvocation": [{"type": "command", "command": presence_command(
-                        python, launcher, "antigravity", "ACTIVE", 3600, "agy")}]}
+                        python, launcher, "antigravity", "ACTIVE", 3600, "agy", delta=True)}]}
                 changes.append(_json_change("antigravity hooks", path, data, after, path.exists()))
                 changes[-1].detail = changes[-1].detail or shell_note
 

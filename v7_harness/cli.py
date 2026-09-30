@@ -807,6 +807,9 @@ def build_parser() -> argparse.ArgumentParser:
                                        "p1 = one line only when a P1 wake waits and Codex is not ACTIVE (U38), or "
                                        "agy = Antigravity injectSteps JSON on a turn's first call when its line "
                                        "changed, else {} (U95-A)")
+    # U103: the delta hook ran only for Claude and only in one project; each tool's hook now asks for its own.
+    p_coord_presence.add_argument("--delta", action="store_true", default=False,
+                                  help="With --from-hook: add what the other tools changed since this tool last looked")
     # U57-D: the acting conductor had to write a Codex quota lease through Python (2026-09-27); the lease itself
     # (U47-A1b) already existed in presence.mark, only the flag was missing.
     p_coord_presence.add_argument("--lease", action="store_true", default=False,
@@ -1300,7 +1303,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
     def _emit(data: dict[str, Any], line: str = "") -> None:
         if say == "json":
             print(json.dumps(data, ensure_ascii=False))
-        elif say in ("brief", "p1") and line:
+        elif say in ("brief", "p1", "none") and line:
             print(line)
         elif say == "empty-json":
             print("{}")
@@ -1346,6 +1349,16 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                     line = line + " " + alert
             elif say == "p1" and not p1_is_new(project, line):
                 line = ""  # U46-P1: an unchanged P1 set is ACK_ONLY; it was repeated on every prompt
+            if say == "none":
+                line = ""  # `none` prints nothing of its own; only a U103 desk delta may speak
+            if getattr(args, "delta", False) and args.tool:
+                from .coord.desk_delta import delta_text
+
+                event = json.loads(stdin_text) if stdin_text.strip() else {}
+                event = event if isinstance(event, dict) else {}
+                if event.get("invocationNum", 0) == 0:  # Antigravity: later calls of the same turn read nothing
+                    session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
+                    line = "\n".join(part for part in (line, delta_text(project, args.tool, session)) if part)
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
         except Exception as exc:  # noqa: BLE001
             _emit({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]})

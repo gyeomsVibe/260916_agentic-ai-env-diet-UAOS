@@ -642,6 +642,17 @@ def shell_read_targets(command: str) -> list[str]:
     return targets
 
 
+def shell_read_deny(paths: list[Path]) -> str | None:
+    """U103-O: the Codex PreToolUse deny line for a whole print of >= DENY_WHOLE_READ_TOKENS, like olla-guard's."""
+    tokens = max((whole_read_tokens({"tool_input": {"file_path": str(p)}}) for p in paths), default=0)
+    if tokens < DENY_WHOLE_READ_TOKENS:
+        return None
+    log_usage("deny_whole_read", tokens=tokens)
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                       "permissionDecisionReason": f"Whole-file read of ~{tokens:,} tokens refused; run `olla digest "
+                       "<file>` or local_read_map (0 paid tokens), then print only the needed lines (`sed -n 'A,Bp'`)."}})
+
+
 def shell_read_hint(event: dict) -> str | None:
     command = (event.get("tool_input") or {}).get("command") or ""
     if isinstance(command, list):
@@ -651,8 +662,10 @@ def shell_read_hint(event: dict) -> str | None:
             parts = [part for part in parts[1:] if part[:1] not in "-/"]
         command = " ".join(parts)
     base = Path(event.get("cwd") or ".")
-    for raw in shell_read_targets(str(command)):
-        path = Path(raw) if Path(raw).is_absolute() else base / raw
+    paths = [Path(raw) if Path(raw).is_absolute() else base / raw for raw in shell_read_targets(str(command))]
+    if event.get("hook_event_name") == "PreToolUse":
+        return shell_read_deny(paths)
+    for path in paths:
         hint = read_hint({"tool_input": {"file_path": str(path)}})
         if hint:
             return hint.replace("then Read with offset/limit.", "then print only those lines (e.g. `sed -n 'A,Bp'`).")
@@ -666,7 +679,9 @@ def cmd_hook_shell(args: argparse.Namespace) -> int:
         hint = shell_read_hint(event) if isinstance(event, dict) else None
     except (ValueError, AttributeError, TypeError):
         return 0
-    if hint:
+    if hint and event.get("hook_event_name") == "PreToolUse":
+        print(hint)  # U103-O: already the whole PreToolUse deny
+    elif hint:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": hint}}, ensure_ascii=False))
         log_usage("hint_shell")
     return 0
