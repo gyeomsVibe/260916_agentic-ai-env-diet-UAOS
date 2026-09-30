@@ -255,6 +255,16 @@ def _last_task_complete(path: Path) -> dict[str, Any] | None:
 
 
 def _reset_at(message: str, completed_at: float) -> float:
+    # U100-P: a weekly limit prints the date too; read it before the clock-only form (2026-09-28 rollout).
+    dated = re.search(r"try again at ([A-Z][a-z]{2}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) (\d{1,2}):(\d{2})\s*([AP]M)",
+                      message or "", re.IGNORECASE)
+    if dated:
+        try:
+            day = datetime.strptime(f"{dated.group(1).title()} {dated.group(2)} {dated.group(3)}", "%b %d %Y")
+        except ValueError:
+            return completed_at + UNPARSED_RESET_S
+        hour = int(dated.group(4)) % 12 + (12 if dated.group(6).upper() == "PM" else 0)
+        return day.replace(hour=hour, minute=int(dated.group(5))).timestamp()
     match = re.search(r"try again at (\d{1,2}):(\d{2})\s*([AP]M)", message or "", re.IGNORECASE)
     if not match:
         return completed_at + UNPARSED_RESET_S
