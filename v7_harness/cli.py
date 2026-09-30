@@ -310,6 +310,15 @@ def cmd_pilot_run(args: argparse.Namespace) -> int:
                           "message": "paid workers (agy, claude) need --manual with remote_budget_tokens"},
                          indent=2, ensure_ascii=False))
         return 2
+    # U98-D-F1: without a manual lint never ran, so apply took any amount of dictated code (U98-D-R P1).
+    if chosen == "apply" and contract is None:
+        from .delegation import delegate_first_errors
+
+        refusal = delegate_first_errors(prompt or "", {"worker": "apply"}, source_dir)
+        if refusal:
+            print(json.dumps({"task_id": task_id, "state": "REFUSED", "error_class": "DELEGATE_FIRST",
+                              "verdict_hint": "BLOCKED", "manual_errors": refusal}, indent=2, ensure_ascii=False))
+            return 2
 
     # U69: refuse before the call when the contract cannot pay for the cheapest call this worker has made here.
     # An --approve replays the saved bundle and spends nothing, so it is not admitted again.
