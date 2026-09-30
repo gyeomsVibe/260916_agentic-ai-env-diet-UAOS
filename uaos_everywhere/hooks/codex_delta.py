@@ -53,6 +53,15 @@ def summary_of(path: Path) -> str:
     return " ".join(text.split())[:SNIPPET]
 
 
+def actor_of(path: Path) -> str:
+    """Who wrote a JSON letter (`payload.actor`), or "" when the file says nothing readable."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        return str(data.get("payload", data).get("actor") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
 def plan_rows(path: Path) -> dict[str, str]:
     rows = {}
     try:
@@ -90,7 +99,9 @@ def main() -> int:
                 if not path.is_file() or path.stat().st_mtime <= since:
                     continue
                 name = path.name.lower()
-                if name.startswith("claude_to_") or "claude" in name.split("-")[0]:
+                # U102-N: 240 of Claude's own evt letters carry "-claude-" mid-name; its relays say so only in actor.
+                own = name.startswith("claude_to_") or "claude" in name.split("-")[0] or "claude" in name.split("-")
+                if own or (path.suffix == ".json" and actor_of(path) == "claude"):
                     continue  # Claude's own letters are not news to Claude
                 if folder.name == "tasks" and "codex" not in name and "judgement" not in name and "review" not in name:
                     continue
