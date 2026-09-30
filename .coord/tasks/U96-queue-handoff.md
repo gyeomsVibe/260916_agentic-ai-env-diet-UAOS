@@ -23,3 +23,9 @@ Queue, in order. Each card needs a receipt, an apply manual, lint, dry run, appl
    - Run an A/B with `python -m v7_harness.cost_meter` on two comparable cards before adopting any Codex config lever from `.coord/notes/U95_token_thrift_research.md`.
 
 Codex re-review is owed for U95-A/B/T and the U95-R audit (acting judge: claude).
+
+## Status 2026-09-30 (second session)
+
+- U96-S, U96-N and U96-D are done in PR #69 (branch `claude/u96-queue`); the full suite passed 1267 tests. Codex re-review is owed for all three.
+- U95-E is not started. It is blocked on two things: the A/B needs Codex ACTIVE to run the two comparable cards, and adopting a Codex config lever changes tool settings, which waits for 윤겸스.
+- `card_cost --card U96-SND-ACTING` measured 12,031,135 tokens, 2.34x the baseline. It returned `next_card_allowed: false`, so a fresh session takes the next card.
