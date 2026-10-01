@@ -56,6 +56,13 @@ _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
     "ACTIONABLE_DELTA", "VERDICT_REQUESTED=YES", "APPROVAL_REQUIRED", r"(?:PRIORITY|SEVERITY|P1)=(?:P1|YES|1)"))
 
 
+def _digest(actor: str, message: str, card: str = "", window: str | None = None) -> str:
+    # U115: a card letter's id also covers its card and window, so the same text routed to another window is a new
+    # letter instead of a mailbox collision; without a card the id is exactly today's.
+    key = actor + "\0" + message + (f"\0{card}\0{window or ''}" if card else "")
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
 def _requires_wake(message: str) -> bool:
     """Only a real delta may spend a paid turn; ACK_ONLY, negated or incidental tokens never do."""
     upper = message.upper()
@@ -156,11 +163,13 @@ def _deliver_to_claude(
     runner: Any = None,
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
+    session: str = "",
 ) -> DeliverResult:
     try:
         with _claude_turn(project_dir, timeout):
             return _deliver_to_claude_locked(
-                message, project_dir=project_dir, runner=runner, timeout=timeout, allowed_tools=allowed_tools
+                message, project_dir=project_dir, runner=runner, timeout=timeout, allowed_tools=allowed_tools,
+                session=session,
             )
     except TimeoutError as exc:
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
@@ -173,6 +182,7 @@ def _deliver_to_claude_locked(
     runner: Any = None,
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
+    session: str = "",
 ) -> DeliverResult:
     claude_bin = shutil.which("claude")
     if not claude_bin:
@@ -181,7 +191,9 @@ def _deliver_to_claude_locked(
     session_path: Path | None = None
     session_id = ""
     resume = False
-    if project_dir:
+    if session:  # U115: a card window is an existing session; the default delivery session file is left alone
+        session_id, resume = session, True
+    elif project_dir:
         session_path = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.json"
         session_path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -300,10 +312,14 @@ CLAIM_SLEEP_S = 0.02
 RELEASE_WAIT_S = 5.0
 
 
-def _payload(actor: str, message: str, digest: str, target: str | None) -> dict[str, Any]:
+def _payload(actor: str, message: str, digest: str, target: str | None, card: str = "",
+             window: str | None = None) -> dict[str, Any]:
     """The one published body: the same bytes from every caller, so publish stays idempotent."""
-    return {"kind": "HANDOFF", "actor": actor, "message": message, "digest": digest,
+    body = {"kind": "HANDOFF", "actor": actor, "message": message, "digest": digest,
             "requested_target": target or "auto"}
+    if card:  # U115: only a card letter carries these keys, so a letter without --card keeps today's bytes
+        body.update(card=card, window=window)
+    return body
 
 
 def _open_excl(path: Path) -> int | None:
@@ -434,6 +450,8 @@ def _deliver_unlocked(
     thread: str = "",
     runner: Any = None,
     pending_owner: str | None = None,
+    card: str = "",
+    window: str = "",
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -448,7 +466,7 @@ def _deliver_unlocked(
     box = _project_mailbox(project)
     desk = box.root.parent.parent
     # Stable id makes repeated calls with the same sender and bytes idempotent.
-    digest = hashlib.sha256((actor + "\0" + message).encode("utf-8")).hexdigest()
+    digest = _digest(actor, message, card, window)
     message_id = "relay_" + digest[:32]
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
     ack_file = box.ack_dir / f"{message_id}.json"
@@ -502,6 +520,8 @@ def _deliver_unlocked(
             envelope += (f"\nAfter processing, run coord ack --id {message_id} for this project. "
                          "The sender keeps this message in the inbox until ACK.")
         if target == "codex":
+            if window:  # U115: the card's own Codex thread replaces the default thread
+                thread = window
             if not thread:
                 from v7_harness.coord.notify import resolve_thread
                 thread = resolve_thread(desk)
@@ -510,7 +530,7 @@ def _deliver_unlocked(
         elif target == "claude":
             prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
                 "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
-            result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner)
+            result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window)
         else:
             result = DeliverResult(False, str(target), f"UNKNOWN_TARGET:{target}", (), "")
 
@@ -548,6 +568,7 @@ def deliver(
     target: str | None = None,
     thread: str = "",
     runner: Any = None,
+    card: str = "",
 ) -> DeliverResult:
     """Serialize the complete publish-to-dispatch transaction per message.
 
@@ -556,7 +577,7 @@ def deliver(
     mailbox files while the owner is publishing or dispatching.
     """
     _check_secrets(message)
-    digest = hashlib.sha256((actor + "\0" + message).encode("utf-8")).hexdigest()
+    digest = _digest(actor, message)
     message_id = "relay_" + digest[:32]
     project = Path(project).resolve()
     box = _project_mailbox(project)
@@ -575,6 +596,14 @@ def deliver(
         from v7_harness.coord.presence import read as read_presence
         if read_presence(desk, target)["state"] in ("LIMITED", "ABSENT"):
             target = None
+    # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
+    # was resolved to None above, so it gets no window and stays mailbox-only (U113).
+    window = None
+    if card:
+        from v7_harness.coord.windows import window_for
+        window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
+        digest = _digest(actor, message, card, window)
+        message_id = "relay_" + digest[:32]
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
@@ -585,7 +614,7 @@ def deliver(
             pass
     # U48-D0 re-review (Claude, 2026-09-27): publish before the guard. A guard left by a crashed dispatcher used to
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
-    box.publish(message_id, _payload(actor, message, digest, requested_target))
+    box.publish(message_id, _payload(actor, message, digest, requested_target, card, window))
     if target == "antigravity":
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         return DeliverResult(False, "antigravity", "PUBLISHED", (), "", message_id, digest)
@@ -613,6 +642,7 @@ def deliver(
         pending_owner = owner
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
-                                 thread=thread, runner=runner, pending_owner=pending_owner)
+                                 thread=thread, runner=runner, pending_owner=pending_owner,
+                                 card=card, window=window or "")
     finally:
         _release_guard(guard, owner)

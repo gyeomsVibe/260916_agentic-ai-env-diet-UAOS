@@ -793,6 +793,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_deliver.add_argument("--target", default=None, choices=["codex", "claude", "antigravity"])
     p_coord_deliver.add_argument("--message", required=True)
     p_coord_deliver.add_argument("--thread", default="")
+    # U115: a card id routes the letter into that card's window (`.coord/windows/<card>.json`, U114).
+    p_coord_deliver.add_argument("--card", default="")
     p_coord_deliver.set_defaults(func=cmd_coord_deliver)
 
     p_coord_sentinel = p_coord_subs.add_parser("sentinel")
@@ -1223,7 +1225,7 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     from .coord.deliver import deliver
 
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
-                     target=args.target, thread=args.thread)
+                     target=args.target, thread=args.thread, card=args.card)
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
     ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY")
