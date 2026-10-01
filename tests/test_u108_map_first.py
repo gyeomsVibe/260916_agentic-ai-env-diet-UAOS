@@ -88,6 +88,14 @@ class OutlineTests(unittest.TestCase):
             reason = json.loads(olla.shell_read_deny([self.py]))["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("def func_3", reason)
 
+    def test_antigravity_view_deny_carries_the_outline(self):
+        # U111: the same outline reaches all three tools; Antigravity's view_file deny had none after U108.
+        call = {"toolCall": {"name": "view_file", "args": {"AbsolutePath": str(self.py)}}}
+        with mock.patch.object(olla, "DENY_WHOLE_READ_TOKENS", 10), mock.patch.object(olla, "log_usage"):
+            denied = olla.agy_hook("PreToolUse", call)
+        self.assertEqual("deny", denied["decision"])
+        self.assertIn("def func_3", denied["reason"])
+
     def test_small_reads_still_pass(self):
         small = self.root / "s.py"
         small.write_text("x = 1\n", encoding="utf-8")
