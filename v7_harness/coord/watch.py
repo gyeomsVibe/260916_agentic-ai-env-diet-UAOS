@@ -45,14 +45,16 @@ def watch_file(project: Path, tool: str) -> Path:
     return Path(project) / PRESENCE_DIR / f"{tool}.watch.json"
 
 
-def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, moment: float) -> None:
+def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, moment: float,
+          wakes_session: bool = False) -> None:
     live_for = max(LIVE_SCANS * interval_s, LIVE_MIN_S)
     for tool in tools:
         target = watch_file(project, tool)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(json.dumps({"tool": tool, "token": token, "pid": os.getpid(),
-                                   "expires_at": moment + live_for}), encoding="utf-8")
+                                   "expires_at": moment + live_for, "wakes_session": wakes_session}),
+                       encoding="utf-8")
         try:
             replace_with_retry(tmp, target)
         except PermissionError:
@@ -82,6 +84,15 @@ def watcher_live(project: Path, tool: str, *, now: float | None = None) -> bool:
     return isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > moment
 
 
+def watcher_wakes(project: Path, tool: str) -> bool:
+    """U117: a live watcher whose exit wakes its own session (a Claude Code background task) takes real deltas too."""
+    try:
+        record = json.loads(watch_file(project, tool).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return watcher_live(project, tool) and isinstance(record, dict) and record.get("wakes_session") is True
+
+
 def _addressed(payload: Any, tools: tuple[str, ...]) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -90,7 +101,7 @@ def _addressed(payload: Any, tools: tuple[str, ...]) -> bool:
 
 def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_TIMEOUT_S,
           interval_s: float = DEFAULT_INTERVAL_S, clock: Callable[[], float] | None = None,
-          sleep: Callable[[float], None] | None = None) -> dict[str, Any] | None:
+          sleep: Callable[[float], None] | None = None, wakes_session: bool = False) -> dict[str, Any] | None:
     """Return the first letter addressed to one of `tools` that was not in the inbox when the watch began.
 
     Letters already waiting are what `coord inbox` shows at session start; the watch reports only new ones, so a
@@ -109,7 +120,7 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     deadline = clock() + timeout_s
     try:
         while True:
-            _beat(project, tools, token, interval_s, clock())
+            _beat(project, tools, token, interval_s, clock(), wakes_session)
             # U94-R1: decide on the name first and read a letter's file only when its id is new to this watch.
             for message_id in box.list_inbox():
                 if message_id in seen:
