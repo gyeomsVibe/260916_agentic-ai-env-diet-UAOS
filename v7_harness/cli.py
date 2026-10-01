@@ -899,6 +899,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_pub.add_argument("--thread-id", default=None, help="Optional thread UUID")
     p_coord_pub.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_pub.set_defaults(func=cmd_coord_publish_thread)
+    # U114: one process (card) = one named window per tool; the manual's content is the window's first prompt.
+    p_coord_win = p_coord_subs.add_parser("window", help="Open (or reuse) the card's dedicated window in one tool")
+    p_coord_win.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_win.add_argument("--card", required=True, help="Card id, e.g. U114")
+    p_coord_win.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_win.add_argument("--title", required=True, help="Window title after [card]")
+    p_coord_win.add_argument("--prompt-file", required=True, help="Manual whose content opens the window")
+    p_coord_win.set_defaults(func=cmd_coord_window)
 
     # rsi: evidence-gated self-improvement (docs/38). observe → propose → try → gate → judge → rollback.
     p_rsi = subparsers.add_parser("rsi", help="Evidence-gated self-improvement: report, propose, gate, adopt, rollback")
@@ -1223,6 +1231,16 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
                       "message_id": result.message_id, "digest": result.digest,
                       "receipt": result.receipt, "output": result.output[:500]}, ensure_ascii=False))
     return 0 if ok else 1
+
+
+def cmd_coord_window(args: argparse.Namespace) -> int:
+    """U114: exit 0 with the window id, 2 when the tool is LIMITED/ABSENT (no window waits there)."""
+    from .coord import windows
+
+    prompt = Path(args.prompt_file).read_text(encoding="utf-8")
+    result = windows.open_window(Path(args.project), args.card, args.tool, args.title, prompt)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result.get("id") else 2
 
 
 def cmd_coord_publish_thread(args: argparse.Namespace) -> int:
