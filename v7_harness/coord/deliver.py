@@ -569,6 +569,12 @@ def deliver(
             target = "codex"
         elif read_presence(desk, "claude")["state"] == "ACTIVE" or watcher_live(desk, "claude"):
             target = "claude"
+    # U113: a relay queued into a LIMITED tool's thread waits there and costs one paid turn per letter when it returns
+    # (7 relays piled up in Codex's thread on 2026-10-01); its hooks show the inbox instead (desk delta, U103).
+    elif target in ("codex", "claude"):
+        from v7_harness.coord.presence import read as read_presence
+        if read_presence(desk, target)["state"] in ("LIMITED", "ABSENT"):
+            target = None
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
