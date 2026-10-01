@@ -53,7 +53,8 @@ class AgyReviewTest(unittest.TestCase):
         argv, kwargs = self.calls[0]
         self.assertEqual("agy", Path(argv[0]).stem)
         self.assertNotIn("--dangerously-skip-permissions", argv)
-        self.assertEqual(str(self.runs), kwargs["cwd"])
+        # U119-R2: a fitting request runs inline in an empty box under the run folder (agy read and ran files there).
+        self.assertEqual(str(self.runs / "agy_box"), kwargs["cwd"])
         request = (self.runs / "review_agy_request.md").read_text(encoding="utf-8")
         self.assertIn("```diff", request)
         self.assertIn("+X = 2", request)

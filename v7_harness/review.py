@@ -120,7 +120,11 @@ def run_review(*, task_id: str, work_dir: Path, source: Path, manual_text: str, 
         raise ReviewRefused("ADMISSION_REFUSED:" + ";".join(admission["reasons"]))
 
     # The spill goes in the run folder, never in staging: a file written there would become part of the bundle.
-    prompt = review_prompt(task_id, manual_text, bundle_diff(Path(source), staging, changed), runs / "review.diff")
+    diff = bundle_diff(Path(source), staging, changed)
+    if not diff.strip():
+        # U119-R: after --approve the source equals the staged copy; an empty-diff agy review searched files (395,104).
+        raise ReviewRefused("EMPTY_DIFF: the source already equals the staged copy; review before --approve")
+    prompt = review_prompt(task_id, manual_text, diff, runs / "review.diff")
     started = time.monotonic()
     usage: dict[str, int] = {}
     error = ""
@@ -199,9 +203,19 @@ def _agy_review(task_id: str, prompt: str, runs: Path, timeout_s: int,
     request.write_text(prompt, encoding="utf-8")
     short = (f"Read {request.name} in this folder: a review request with the contract and the complete diff. "
              f"Do not edit any file. Reply with exactly one JSON object: {SCHEMA_HINT}")
-    argv = build_agy_command(AgyRequest(task_id=task_id, title="review", prompt=short, workspace=runs,
+    workspace = runs
+    partial = prompt.startswith(f"[{task_id}] Review this change against its contract. The diff below is PARTIAL")
+    if len(prompt) < 24_000 and not partial:
+        # U119-R2: inline in an empty box = one turn (28,008 tokens measured vs a 25,012 floor). In the run folder agy
+        # ignored "no tool" (view_file 55, run_command 10: 73,063). 24,000 chars fit the 32,767-char Windows line.
+        # U119-R3: only the prompt's leading sentence marks a partial diff; a diff quoting the phrase fell back (55,062).
+        workspace = runs / "agy_box"
+        workspace.mkdir(exist_ok=True)
+        short = prompt + ("\n\nAnswer in this single reply. Do not call any tool, read files or run commands: the judge "
+                          "already ran the acceptance command and everything you need is above.")
+    argv = build_agy_command(AgyRequest(task_id=task_id, title="review", prompt=short, workspace=workspace,
                                         isolation_mode="staging", print_timeout_s=timeout_s))
-    done = runner(argv, cwd=str(runs), env={**os.environ, "UAOS_WORKER": "1"}, capture_output=True,
+    done = runner(argv, cwd=str(workspace), env={**os.environ, "UAOS_WORKER": "1"}, capture_output=True,
                   timeout=timeout_s + 60)
     outcome = parse_agy_result(stdout=done.stdout or b"", stderr=done.stderr or b"", exit_code=done.returncode)
     usage = dict(outcome.usage)
