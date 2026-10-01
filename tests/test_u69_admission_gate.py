@@ -69,7 +69,9 @@ class PilotRunAdmissionTests(unittest.TestCase):
         path.write_text(new_manual(root, work_id="U69_T", worker="agy", goal="Set TIMEOUT = 60 in `pkg/config.py`.",
                                    inputs=["pkg/config.py"], allow=["pkg/config.py"],
                                    acceptance="python -c \"import pkg.config\"", judge="codex",
-                                   remote_budget_tokens=budget), encoding="utf-8")
+                                   remote_budget_tokens=budget,
+                                   # U106: a paid worker on code needs a recorded reason; this fixture tests admission.
+                                   paid_reason="fixture exercises the admission gate"), encoding="utf-8")
         return path
 
     def _run(self, root: Path, *extra: str) -> tuple[int, str, mock.MagicMock]:

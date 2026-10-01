@@ -353,8 +353,10 @@ class ManualCliTests(unittest.TestCase):
                     seen.append(config.remote_budget_tokens)
                     return next(_results)
 
+                # U110: the paid stage is named on the run; without --escalate-to a failed local result goes to the judge.
                 with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run):
-                    _code, out = self._main(["pilot", "run", "--task", "U35_T", "--source", d, "--manual", str(root / "m.md")])
+                    _code, out = self._main(["pilot", "run", "--task", "U35_T", "--source", d, "--manual", str(root / "m.md"),
+                                             "--escalate-to", "agy"])
                 result = json.loads(out)
                 self.assertEqual((expected, verdict), (result["cost_gate"], result["verdict_hint"]))
                 self.assertEqual([None, budget], seen)  # the local first stage is free; the paid escalation is gated

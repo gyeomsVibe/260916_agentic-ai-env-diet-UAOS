@@ -14,7 +14,7 @@ import time
 from typing import Any
 
 from v7_harness.accept_triage import classify as classify_acceptance
-from v7_harness.adapters.agy import AgyOutcome, AgyRequest
+from v7_harness.adapters.agy import AgyOutcome, AgyRequest, count_olla_calls
 from v7_harness.broker.core import BrokerCore
 from v7_harness.execution.agy_launcher import AgyProcessLauncher
 from v7_harness.execution.circuit import set_quota_state
@@ -584,6 +584,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                     _write_summary(summary_path, replayed_summary)
                 return replayed_summary
 
+        run_started = time.strftime("%Y-%m-%dT%H:%M:%S")  # U106: window for counting this run's olla calls
         # 5. Staging directory setup
         staging_dir = work_dir / "stage" / config.task_id
         workspace = NonGitStagingAdapter(excludes=source_excludes).create_staging(config.source_dir, staging_dir)
@@ -597,6 +598,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
             isolation_mode=_derive_isolation_mode(workspace),
             print_timeout_s=config.print_timeout_s,
             model=config.model,
+            subcontract=worker_label(config.agy_command) == "agy",  # U106: only real Antigravity subcontracts to Ollama
         )
 
         # 7. Watch roots snapshot (B46: retry once on transient scan failure)
@@ -913,6 +915,14 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         # reads it so a reviewer never reviews its own worker's bundle (U38).
         try:
             (runs_dir / "worker").write_text(worker_label(config.agy_command), encoding="utf-8")
+        except OSError:
+            pass
+        # U106: whether the worker subcontracted to Ollama, beside the summary (key budget).
+        try:
+            from v7_harness.olla import USAGE_LOG
+
+            olla_calls = count_olla_calls(USAGE_LOG, run_started, time.strftime("%Y-%m-%dT%H:%M:%S"))
+            (runs_dir / "olla_calls.json").write_text(json.dumps(olla_calls, sort_keys=True), encoding="utf-8")
         except OSError:
             pass
         if config.remote_budget_tokens and cost_gate is None:

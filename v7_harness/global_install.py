@@ -50,7 +50,8 @@ NOTES = (
 )
 HOOK_MARK = "coord presence"
 # U103-O: the olla whole-read gates the installer adds when `olla` is on PATH; only these exact commands are ours.
-OLLA_HOOKS = ("olla hook-read", "olla hook-shell")
+# U107: hook-plan is the per-prompt split hint Antigravity gets from `olla hook-agy PreInvocation`.
+OLLA_HOOKS = ("olla hook-read", "olla hook-shell", "olla hook-plan")
 DENY = ("CronCreate", "ScheduleWakeup", "mcp__Claude_Code_Remote__create_trigger", "mcp__Claude_Code_Remote__send_later")
 AGY_GROUP = "uaos-presence"
 STATE_FILE = "install_state.json"
@@ -295,8 +296,12 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                         python, launcher, "claude", None, 0, "p1", delta=True)}]}],
                 }
                 if shutil.which("olla"):
-                    wanted["PreToolUse"] = [{"matcher": "Read", "hooks": [
-                        {"type": "command", "timeout": 10, "command": OLLA_HOOKS[0]}]}]
+                    # U108: Claude's Bash gets Codex's shell gate; `cat big.py` used to pass where Read was refused.
+                    wanted["PreToolUse"] = [
+                        {"matcher": "Bash", "hooks": [{"type": "command", "timeout": 10, "command": OLLA_HOOKS[1]}]},
+                        {"matcher": "Read", "hooks": [{"type": "command", "timeout": 10, "command": OLLA_HOOKS[0]}]}]
+                    wanted["UserPromptSubmit"].append({"hooks": [
+                        {"type": "command", "timeout": 10, "command": OLLA_HOOKS[2]}]})
                 after = _merge_hooks(data, wanted, uninstall)
                 permissions = dict(after.get("permissions") or {})
                 deny = list(permissions.get("deny") or [])
@@ -335,6 +340,8 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                 if shutil.which("olla"):
                     wanted["PreToolUse"] = [{"matcher": "Bash", "hooks": [
                         {"type": "command", "timeout": 10, "command": OLLA_HOOKS[1]}]}]
+                    wanted["UserPromptSubmit"].append({"hooks": [
+                        {"type": "command", "timeout": 10, "command": OLLA_HOOKS[2]}]})
                 changes.append(_json_change("codex hooks", path, data, _merge_hooks(data, wanted, uninstall),
                                             path.exists()))
                 changes[-1].detail = changes[-1].detail or shell_note

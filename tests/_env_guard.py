@@ -20,10 +20,12 @@ SAFE_OLLA_USAGE = Path(tempfile.gettempdir()) / f"uaos_test_olla_usage_{os.getpi
 def _remove_safe_log() -> None:
     # U47-O3: a file left in %TEMP% after the suite made every paid pilot run that ran the tests fail its watch-root
     # check as EXTERNAL_WRITE (U47-R2, 2026-09-26; 9 leftovers found). Worker subprocesses finish before this runs.
-    try:
-        SAFE_OLLA_USAGE.unlink(missing_ok=True)
-    except OSError:
-        pass
+    # U107-G: log_usage also leaves `<log>.lock`; it blocked U107-B-agy as EXTERNAL_WRITE on 2026-10-01.
+    for leftover in (SAFE_OLLA_USAGE, SAFE_OLLA_USAGE.with_suffix(".lock")):
+        try:
+            leftover.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def install() -> None:

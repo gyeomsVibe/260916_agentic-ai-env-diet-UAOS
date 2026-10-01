@@ -222,9 +222,11 @@ class SwapTest(unittest.TestCase):
                                lambda _t: contextlib.nullcontext()), \
                     contextlib.redirect_stdout(io.StringIO()):
                 ollama_worker.main(["-p", self._prompt(), "--add-dir", str(ws)])
-            self.assertEqual(len(sent), 1)
+            # U109: a reply with no blocks earns one repair call, which re-sends the same admitted prompt.
+            self.assertEqual(len(sent), 1 + ollama_worker.REPAIRS)
             self.assertIn("public note", sent[0])
-            self.assertNotIn("OUTSIDE_SECRET", sent[0])
+            for prompt in sent:
+                self.assertNotIn("OUTSIDE_SECRET", prompt)
 
     def test_swap_between_check_and_open_is_caught_on_the_handle(self):
         from v7_harness import context_admission

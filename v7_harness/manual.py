@@ -223,8 +223,9 @@ def lint(text: str, project: Path) -> ManualReport:
     blocks = dictated_paths(text)
     if worker == "apply" and not blocks:
         report.errors.append("NO_BLOCKS_FOR_APPLY: worker apply needs ===FILE/===EDIT blocks in the manual")
-    from v7_harness.delegation import delegate_first_errors
+    from v7_harness.delegation import delegate_first_errors, local_first_errors
     report.errors.extend(delegate_first_errors(text, contract, project))
+    report.errors.extend(local_first_errors(contract, project))  # U106: Ollama first for code work
     if blocks and allow:
         from v7_harness.isolation.errors import ScopeExpansionError
         from v7_harness.isolation.security import check_scope_confinement
@@ -277,6 +278,8 @@ def new_manual(
     stop: str = "two failures with the same cause; input hash mismatch; no output",
     instructions: str = "",
     context_allow: list[str] | None = None,
+    paid_after: str = "",
+    paid_reason: str = "",
 ) -> str:
     """A manual skeleton with the input hashes computed now, so the worker is pinned to these exact bytes."""
     project = Path(project)
@@ -298,6 +301,8 @@ def new_manual(
         f"timeout_s: {timeout_s}",
         f"remote_budget_tokens: {remote_budget_tokens}",
         *([f"remote_budget_usd: {remote_budget_usd:g}"] if remote_budget_usd > 0 else []),
+        *([f"paid_after: {paid_after}"] if paid_after else []),
+        *([f"paid_reason: {paid_reason}"] if paid_reason else []),
         "```",
         "",
         "## Instructions for the worker",

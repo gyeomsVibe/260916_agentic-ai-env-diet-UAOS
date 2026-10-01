@@ -77,3 +77,55 @@ def delegate_first_errors(text: str, contract: dict[str, Any], project: Path) ->
     if after and _failed_delegate(project, after, _card(contract.get("work_id"))):
         return []
     return [f"DELEGATE_FIRST: {lines} dictated code lines > {DICTATION_CODE_LINE_LIMIT}; write a spec for worker local (Ollama) or agy first, and apply only with apply_after: <work_id of that failed run>"]
+
+
+LOCAL_WORKERS = frozenset({"ollama", "local", "cascade"})  # U106: the free local routes; a paid worker takes code only after one of them failed.
+PAID_WORKERS = frozenset({"agy", "claude"})
+
+
+def _failed_local(project: Path, work_id: str, card: str) -> bool:
+    """Check if a local run with the given work_id failed."""
+    if not card or _card(work_id) != card:
+        return False
+    from v7_harness.coord.hook_context import shared_desk
+    path = shared_desk(project) / ".coord" / "usage" / "runs.jsonl"
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                if row.get("work_id") == work_id and row.get("worker") in LOCAL_WORKERS and row.get("outcome") in FAILED_OUTCOMES:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def local_first_errors(contract: dict[str, Any], project: Path) -> list[str]:
+    """Check if code work was attempted locally before routing to a paid worker."""
+    if contract.get("worker") not in PAID_WORKERS:
+        return []
+    raw_allow = contract.get("allow") or []
+    if isinstance(raw_allow, str):
+        raw_allow = [raw_allow]
+    normalized = [_normalize(str(p)) for p in raw_allow]
+    code_paths = [p for p in normalized if p.lower().endswith(CODE_SUFFIXES) and not p.startswith("tests/")]
+    if not code_paths:
+        return []
+    after = str(contract.get("paid_after") or "").strip()
+    if after and _failed_local(project, after, _card(contract.get("work_id"))):
+        return []
+    # U106: the commander may pick the paid worker by fit, but never silently: at least three words of reason.
+    if len(str(contract.get("paid_reason") or "").split()) >= 3:
+        return []
+    return [
+        "LOCAL_FIRST: code work goes to worker: cascade (Ollama first, escalates to the paid worker on a failed acceptance); a paid worker needs paid_after: <work_id of a failed Ollama/local/cascade run of this card> or paid_reason: <why this card needs the paid worker, at least 3 words>"
+    ]

@@ -46,6 +46,9 @@ TEXT_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yml", ".yaml", ".ps1"
 MAX_FILE_CHARS = 200_000
 
 
+OUTLINE_MAX_LINES = 60  # U108: enough to place every def of a 1,300-line module; keeps a deny short
+
+
 def _post(path: str, payload: dict, timeout: int = 900) -> dict:
     request = urllib.request.Request(
         f"{HOST}{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}
@@ -421,6 +424,8 @@ def digest_file(path: Path, focus: str, model: str, timeout: int) -> tuple[str, 
     text = path.read_text(encoding="utf-8", errors="replace")
     parts: list[str] = []
     usage_total = {"input_tokens": 0, "output_tokens": 0}
+    outline = code_outline(path)
+    exact = f"## exact outline (from the parser)\n{outline}\n## local model notes\n" if outline else ""
     for first, last, chunk in _digest_chunks(text):
         numbered = "\n".join(f"{first + i}: {line}" for i, line in enumerate(chunk.splitlines()))
         prompt = (
@@ -434,13 +439,13 @@ def digest_file(path: Path, focus: str, model: str, timeout: int) -> tuple[str, 
         usage_total["output_tokens"] += usage.get("output_tokens", 0)
         parts.append(answer.strip())
     header = f"# digest: {path.as_posix()} ({len(text.splitlines())} lines)"
-    return header + "\n" + "\n".join(parts) + "\n", usage_total
+    return header + "\n" + exact + "\n".join(parts) + "\n", usage_total
 
 
 # 같은 파일·같은 질문을 세 도구가 따로 요약하면 로컬 몇 분이 매번 다시 든다(U17 실측 파일당 약 1분).
 # 내용 해시로 묶으므로 파일이 바뀌면 자동으로 무효가 되고, 프로젝트를 가리지 않는다.
 DIGEST_CACHE_DIR = Path(os.environ.get("OLLA_CACHE", Path.home() / ".cache" / "olla" / "digest"))
-DIGEST_PROMPT_VERSION = "1"
+DIGEST_PROMPT_VERSION = "2"  # U108: digests now start with the exact code outline
 
 
 def _digest_cache_path(path: Path, focus: str, model: str) -> Path:
@@ -600,7 +605,7 @@ def cmd_hook_read(args: argparse.Namespace) -> int:
         output = {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": (
             f"Whole-file read of ~{tokens:,} tokens refused (limit {DENY_WHOLE_READ_TOKENS:,}). "
             f"Call the local_read_map tool (0 paid tokens; if deferred, first {LOAD_OLLA}) or Grep to find the lines, "
-            f"then Read with offset/limit. {hint}")}
+            f"then Read with offset/limit. {hint}" + _outline_note(Path(file)))}
         log_usage("deny_whole_read", file=file, tokens=tokens)
     else:
         log_usage("hint_read", file=file)
@@ -648,9 +653,11 @@ def shell_read_deny(paths: list[Path]) -> str | None:
     if tokens < DENY_WHOLE_READ_TOKENS:
         return None
     log_usage("deny_whole_read", tokens=tokens)
+    big = max(paths, key=lambda p: whole_read_tokens({"tool_input": {"file_path": str(p)}}))
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                        "permissionDecisionReason": f"Whole-file read of ~{tokens:,} tokens refused; run `olla digest "
-                       "<file>` or local_read_map (0 paid tokens), then print only the needed lines (`sed -n 'A,Bp'`)."}})
+                       "<file>` or local_read_map (0 paid tokens), then print only the needed lines (`sed -n 'A,Bp'`)."
+                       + _outline_note(big)}})
 
 
 def shell_read_hint(event: dict) -> str | None:
@@ -699,7 +706,7 @@ PLAN_HINT = (
     "`local_draft` (English prompt with format+example; korean=true only for user-facing text), "
     "search by meaning -> `local_search`. "
     "Do the rest yourself; verify local output, never let it judge. "
-    "Report: no text between tool calls; end in Korean with `**결과**:` / `- 과정: A → B → C` / `- 근거:` / "
+    "Report: no text between tool calls; end in Korean with `**결과**:` / `- 근거:` / "
     "`- **남은 일**:` only if the user must act."
 )
 # 출력 규칙은 시스템 규칙 파일에 있어도 매 턴 어겼다(실측: Claude 턴당 진행 설명 0~9개, Codex 2~33개).
@@ -1329,6 +1336,47 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("ask", "edit", "find") and _pilot_has_gpu():
         return GPU_BUSY_EXIT
     return args.func(args)
+
+
+def code_outline(path: Path) -> str:
+    """U108: exact line ranges from the parser (Python) or headings (Markdown); "" when there is none."""
+    import ast
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        lines: list[str] = []
+        if path.suffix == ".py":
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError):
+                return ""
+            funcs = (ast.FunctionDef, ast.AsyncFunctionDef)
+            for node in tree.body:
+                if not isinstance(node, funcs + (ast.ClassDef,)):
+                    continue
+                start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+                kind = "class" if isinstance(node, ast.ClassDef) else "def"
+                lines.append(f"L{start}-{node.end_lineno}: {kind} {node.name}")
+                if isinstance(node, ast.ClassDef):
+                    for m in node.body:
+                        if isinstance(m, funcs):
+                            mstart = min([m.lineno] + [d.lineno for d in m.decorator_list])
+                            lines.append(f"L{mstart}-{m.end_lineno}: def {node.name}.{m.name}")
+        elif path.suffix == ".md":
+            lines = [f"L{i}: {line.strip()}" for i, line in enumerate(text.splitlines(), 1) if line.startswith("#")]
+        else:
+            return ""
+    except OSError:
+        return ""
+    if len(lines) > OUTLINE_MAX_LINES:
+        extra = len(lines) - (OUTLINE_MAX_LINES - 1)
+        lines = lines[: OUTLINE_MAX_LINES - 1] + [f"... {extra} more"]
+    return "\n".join(lines)
+
+
+def _outline_note(path: Path) -> str:
+    outline = code_outline(path)
+    return f"\nExact outline of {path.name}:\n{outline}" if outline else ""
 
 
 if __name__ == "__main__":

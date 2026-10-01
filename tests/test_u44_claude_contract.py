@@ -24,7 +24,9 @@ class ClaudeContractTest(unittest.TestCase):
     def _manual(self, worker, judge="codex", usd=0.0, tokens=50000):
         return new_manual(self.root, work_id="T1", worker=worker, goal="Set X = 2 in `a.py`.", inputs=["a.py"],
                           allow=["a.py"], acceptance="python -c 1", judge=judge, remote_budget_tokens=tokens,
-                          remote_budget_usd=usd)
+                          remote_budget_usd=usd,
+                          # U106: a paid worker on code needs a recorded reason; this fixture tests the claude contract.
+                          paid_reason="fixture exercises the claude worker contract")
 
     def test_generated_claude_manual_passes_lint_with_usd_cap(self):
         text = self._manual("claude", usd=0.3)
