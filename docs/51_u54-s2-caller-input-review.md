@@ -1,7 +1,7 @@
 # U54-S2 — CALLER_INPUT 23곳 검토: 모델 출력이 실행 명령이 되는 곳이 있는가
 
 > 상태: DONE-ACTING. 작성·판정은 Codex 부재 중 대행한 Claude다. 복귀한 Codex가 재검토한다(`.coord/codex_return_checklist.md`).
-> 기준 트리: U63/U64 재검토 트리(2026-09-28). 대상 목록: `docs/50_u54-tool-execution-firewall-gap-audit.md`의 CALLER_INPUT 23행. U75(2026-09-28)에서 `calculator_gate.py` 1곳, U103(2026-10-01)에서 `coord/desk_delta.py` 1곳 추가.
+> 기준 트리: U63/U64 재검토 트리(2026-09-28). 대상 목록: `docs/50_u54-tool-execution-firewall-gap-audit.md`의 CALLER_INPUT 23행. U75(2026-09-28)에서 `calculator_gate.py` 1곳, U103(2026-10-01)에서 `coord/desk_delta.py` 1곳, U120(2026-10-01)에서 `coord/agy_dispatch.py` 1곳 추가.
 
 ## 1. 왜 이 검토가 필요한가 (초보자용 설명)
 
@@ -18,7 +18,7 @@
 ## 2. 판정 요약
 
 - 모델 출력이 실행 파일·셸 명령이 되는 곳(명령 주입): **0곳**
-- 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **10곳**
+- 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **11곳** (U120 `coord/agy_dispatch.py` 추가)
 - 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **11곳** (U103 `coord/desk_delta.py` 추가)
 - 사람 운영자(operator)가 명령을 직접 넘기는 도구(OPERATOR_COMMAND): **3곳**
 - 따라서 U54-S2 결론: 지금 코드에는 POLICY_DENIED 관문을 새로 끼울 **실행 지점이 없다**. 새 CALLER_INPUT 지점이 생기면 `tests/test_u54_s2_caller_review.py`가 실패해서 이 검토를 다시 하게 만든다.
@@ -38,6 +38,7 @@
 | `execution/agy_launcher.py:85` | DATA_ARG | `argv = self.agy_command + built[1:]`. `agy_command`는 설정의 고정 실행 파일, 뒤는 프롬프트 값이다. 너무 긴 프롬프트는 실행 전에 PROMPT_TOO_LONG_FOR_ARGV로 거부된다. |
 | `olla.py:945` | DATA_ARG | `python -m v7_harness.olla handoff --transcript <경로> --cwd <경로> --session <id>`. 훅 페이로드 값이 옵션 값으로만 간다. |
 | `coord/notify.py:219` | FIXED_PLAN | `command`는 notify가 스스로 만든 `codex` 명령이다. argv[0]만 `shutil.which`로 실제 경로로 바꾼다. |
+| `coord/agy_dispatch.py:58` | DATA_ARG | U120 자동 응답. `build_agy_command()`가 `agy` 실행 파일과 고정 옵션(`--dangerously-skip-permissions` 없음)을 만들고, 편지는 동료 데이터라고 감싼 프롬프트로 `-p` 값 한 칸에만 들어간다. 작업 폴더는 빈 `agy_box`, 셸 없음, 시간 제한 300초. `[agy-auto]` 꼬리표 편지는 다시 보내지 않고(왕복 고리 차단) 하루 20회 상한이 있다. |
 | `coord/desk_delta.py:35` | FIXED_PLAN | U103 변경 알림의 `_git()`. 실행 파일은 `git`, 하위 명령은 `log --all --no-merges --since=@<정수> --format=%h %s`(도구별 서명 줄 `--grep` 상수 포함)·`status --porcelain --untracked-files=no`·`ls-files -- .coord/tasks .coord/notes`로 모두 코드에 고정돼 있다. 프로젝트 경로는 `-C` 값 한 칸, `shell=False`, 10초 제한의 읽기 전용 조회다. 편지·모델 글은 인자로 들어가지 않는다. |
 | `coord/thrift.py:58` | FIXED_PLAN | 실행 파일은 `git`, 하위 명령은 `rev-parse`·`branch --show-current`·`status --short --untracked-files=all`로 코드에 고정돼 있다. 프로젝트 경로는 `-C` 값 한 칸이고 `shell=False`, `GIT_OPTIONAL_LOCKS=0`인 읽기 전용 스냅샷이다. |
 | `deploy_pc.py:219` | FIXED_PLAN | 배포 계획의 `git add -- <영수증 경로>`. 경로는 코드가 정한 영수증 파일이다. |
