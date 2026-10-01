@@ -27,7 +27,8 @@ class AgyLetterUnread(unittest.TestCase):
         (self.project / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
         sessions = Path(self._tmp.name) / "codex-sessions"
         sessions.mkdir()
-        self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(sessions)})
+        # U120 answers such letters headlessly by default; this file keeps the opted-out U118 route.
+        self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(sessions), "UAOS_AGY_AUTO": "0"})
         self._env.start()
 
     def tearDown(self):

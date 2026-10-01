@@ -626,6 +626,13 @@ def deliver(
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
         unread = ("UNREAD until a user turn in Antigravity; for a verdict run `pilot review --reviewer agy` "
                   "(headless, no user)") if _requires_wake(message) else ""
+        if unread and actor in ("claude", "codex") and os.environ.get("UAOS_AGY_AUTO", "1") != "0":
+            # U120: a headless one-turn answer (U119 live: 27,989 tokens) is mailed back to the sender; a failure,
+            # a loop tag or the daily cap keeps the U118 UNREAD route. UAOS_AGY_AUTO=0 opts out.
+            from v7_harness.coord.agy_dispatch import dispatch
+            row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run)
+            detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
+            unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
     if target is None:
         return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
