@@ -844,6 +844,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_watch.add_argument("--target", action="append", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_watch.add_argument("--timeout", type=float, default=4 * 3600.0, help="Seconds before exit 3 (default: 4 h)")
     p_coord_watch.add_argument("--interval", type=float, default=30.0, help="Seconds between inbox scans (default: 30)")
+    p_coord_watch.add_argument("--wakes-session", action="store_true",
+                               help="U117: this watch runs as a background task whose exit wakes its session")
     p_coord_watch.set_defaults(func=cmd_coord_watch)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
@@ -1430,7 +1432,8 @@ def cmd_coord_watch(args: argparse.Namespace) -> int:
     """U57-B: wait at zero model tokens until a new letter for one of the targets lands; exit 3 on timeout."""
     from .coord.watch import watch
 
-    found = watch(Path(args.project), tuple(args.target), timeout_s=args.timeout, interval_s=args.interval)
+    found = watch(Path(args.project), tuple(args.target), timeout_s=args.timeout, interval_s=args.interval,
+                  wakes_session=args.wakes_session)
     if found is None:
         print(json.dumps({"ok": False, "reason": "TIMEOUT", "targets": args.target}, ensure_ascii=False))
         return 3

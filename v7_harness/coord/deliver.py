@@ -482,8 +482,9 @@ def _deliver_unlocked(
     # U64 (2026-09-28): coord watch only returns to the shell process that launched it; it cannot start a new AI turn.
     # It may suppress an ACK-only/liveness delivery, but a real delta must use the direct Claude dispatch path.
     if target == "claude":
-        from v7_harness.coord.watch import watcher_live
-        if watcher_live(desk, "claude") and not _requires_wake(message):
+        from v7_harness.coord.watch import watcher_live, watcher_wakes
+        # U117: a watcher that wakes its own session takes real deltas too; U64's headless turn stays for the rest.
+        if watcher_live(desk, "claude") and (not _requires_wake(message) or watcher_wakes(desk, "claude")):
             return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
         # U74-D: an explicit ACK_ONLY never spends a paid turn, even with no watcher (global relay rule). The letter
