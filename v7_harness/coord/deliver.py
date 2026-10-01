@@ -191,8 +191,11 @@ def _deliver_to_claude_locked(
     session_path: Path | None = None
     session_id = ""
     resume = False
+    window_cwd = ""
     if session:  # U115: a card window is an existing session; the default delivery session file is left alone
-        session_id, resume = session, True
+        from v7_harness.coord.windows import claude_session
+
+        (session_id, window_cwd), resume = claude_session(session), True
     elif project_dir:
         session_path = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.json"
         session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -229,6 +232,8 @@ def _deliver_to_claude_locked(
     kwargs: dict[str, Any] = dict(capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if project_dir:
         kwargs["cwd"] = str(project_dir)
+    if window_cwd:  # U115 judge: resume where the window's transcript lives (it may have entered a worktree)
+        kwargs["cwd"] = window_cwd
 
     try:
         cp = execute(argv_list, **kwargs)
