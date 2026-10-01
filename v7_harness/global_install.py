@@ -225,9 +225,22 @@ def _text_change(target: str, path: Path, before: str | None, after: str, detail
     return Change(target, path, "UPDATE" if before is not None else "CREATE", detail, new_text=after)
 
 
+# U111: `olla` on PATH runs a copied release (PYTHONPATH=<release>); after the PR #81 merge it still ran old code
+# (51 stale files, 2026-10-01). The installer owns that copy like its other files.
+OLLA_RELEASE_RE = re.compile(r'PYTHONPATH="?([^";%$]+)')
+
+
+def olla_release_dir(which: Callable[[str], str | None] = shutil.which) -> Path | None:
+    """The folder the `olla` launcher puts first on PYTHONPATH, when it holds a v7_harness copy."""
+    found = which("olla")
+    match = OLLA_RELEASE_RE.search(_read(Path(found)) or "") if found else None
+    root = Path(match.group(1).strip()) if match else None
+    return root if root is not None and (root / "v7_harness").is_dir() else None
+
+
 def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True, extra_rules: tuple[Path, ...] = (),
          portable: bool = False,
-         enable_codex_hooks: bool = True, uninstall: bool = False) -> list[Change]:
+         enable_codex_hooks: bool = True, uninstall: bool = False, olla_release: Path | None = None) -> list[Change]:
     """Every change the install (or uninstall) would make, without writing anything."""
     home = Path(home)
     uaos_dir = home / ".uaos"
@@ -369,6 +382,15 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
         path = Path(path)
         changes.append(_text_change("extra rules", path, _read(path), _with_block(_read(path), block),
                                     "requested with --rules-file"))
+    if olla_release is not None and not uninstall:
+        source = Path(repo) / "v7_harness"
+        for src in sorted(source.rglob("*.py")):
+            if "__pycache__" in src.parts:
+                continue
+            dest = Path(olla_release) / "v7_harness" / src.relative_to(source)
+            change = _text_change("olla release", dest, _read(dest), src.read_text(encoding="utf-8"))
+            if change.action != "UNCHANGED":
+                changes.append(change)
     return changes
 
 
@@ -415,7 +437,9 @@ def apply(changes: list[Change], home: Path, backup_root: Path | None = None) ->
         if change.action not in ("CREATE", "UPDATE", "REMOVE") or change.path is None:
             continue
         if change.path.exists():
-            relative = change.path.relative_to(home) if change.path.is_relative_to(home) else Path(change.path.name)
+            # U111: two release files named __init__.py must not share one backup
+            relative = (change.path.relative_to(home) if change.path.is_relative_to(home)
+                        else change.path.relative_to(change.path.anchor))
             target = backup_dir / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(change.path, target)
@@ -581,7 +605,9 @@ def main(argv: list[str] | None = None) -> int:
 
     changes = plan(args.home, args.python, rules=not args.no_rules, extra_rules=tuple(args.rules_file),
                    portable=args.portable,
-                   enable_codex_hooks=not args.no_codex_feature, uninstall=args.uninstall)
+                   enable_codex_hooks=not args.no_codex_feature, uninstall=args.uninstall,
+                   # U111, like U91: the release belongs to this PC's real user; a test or staging --home never touches it.
+                   olla_release=olla_release_dir() if Path(args.home).resolve() == Path.home().resolve() else None)
     pending = [c for c in changes if c.action in ("CREATE", "UPDATE", "REMOVE")]
     output: dict[str, Any] = {"mode": "apply" if args.apply else ("check" if args.check else "dry-run"),
                               "changes": _report(changes)}

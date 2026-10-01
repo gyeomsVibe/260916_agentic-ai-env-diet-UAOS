@@ -1215,8 +1215,10 @@ def agy_hook(event_name: str, event: dict) -> dict | None:
             if tokens >= DENY_WHOLE_READ_TOKENS:
                 hint = read_hint(read_event) or ""
                 log_usage("deny_whole_read", tokens=tokens)
+                # U111: Antigravity gets the same exact outline as Claude's Read and Codex's shell denies (U108).
                 return {"decision": "deny", "reason": (f"Whole-file view of ~{tokens:,} tokens refused; find the lines with "
-                                                       f"the olla digest or grep, then view with StartLine/EndLine. {hint}")}
+                                                       f"the olla digest or grep, then view with StartLine/EndLine. {hint}"
+                                                       + _outline_note(Path(str(args.get("AbsolutePath") or ""))))}
         return None
     if event_name == "Stop":
         path = Path(str(event.get("transcriptPath") or ""))
