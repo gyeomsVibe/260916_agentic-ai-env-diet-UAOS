@@ -232,6 +232,32 @@ def ring_bell(project_root: Path, box: Mailbox, *, runner: Any = None, sessions_
     return {"rung": result.sent, "reason": result.reason, "pending": len(ids)}
 
 
+def _family(step: str) -> str:
+    """U116: retry family of a step: drop `-R<n>`, `-P`, `-agy`, then the digits after a lettered last segment.
+
+    U113-D3 -> U113-D, U106-A2-P -> U106-A, U115-L2 -> U115-L; a card id such as U86 stays U86 (its digits follow `U`
+    at the start, not a lettered `-X` segment), so a sibling step like U86-F1 (family U86-F) never clears U86.
+    """
+    import re
+
+    step = re.sub(r"-(R\d+|P|agy)$", "", step)
+    return re.sub(r"(-[A-Za-z]+)\d+$", r"\1", step)
+
+
+def _apply_after_links(project_root: Path) -> dict[str, str]:
+    """U116: work_id -> failed work_id it replaced, read from `.coord/tasks/*.md` contract manuals (U98-D)."""
+    links: dict[str, str] = {}
+    for manual in sorted((project_root / ".coord" / "tasks").glob("*.md")):
+        try:
+            head = manual.read_text(encoding="utf-8")[:2000]
+        except OSError:
+            continue
+        fields = dict(line.split(":", 1) for line in head.splitlines() if line.startswith(("work_id:", "apply_after:")))
+        if "work_id" in fields and "apply_after" in fields:
+            links[fields["work_id"].strip()] = fields["apply_after"].strip()
+    return links
+
+
 def _last_pass_by_step(project_root: Path) -> dict[str, float]:
     """U88: latest ledger PASS time per step; a `-R<n>` retry also counts for the step it retries.
 
@@ -247,13 +273,16 @@ def _last_pass_by_step(project_root: Path) -> dict[str, float]:
     except Exception:  # noqa: BLE001 - no evidence means every alert stays
         return {}
     passed: dict[str, float] = {}
+    links = _apply_after_links(project_root)  # U116: an apply run also passes the delegate it replaced
     for row in rows:
         work_id, ts = row.get("work_id"), row.get("ts")
         if row.get("outcome") != "PASS" or not isinstance(work_id, str):
             continue
         if not isinstance(ts, (int, float)) or isinstance(ts, bool):
             continue
-        for step in {work_id, re.sub(r"-R\d+$", "", work_id)}:
+        linked = links.get(work_id)
+        steps = {work_id, re.sub(r"-R\d+$", "", work_id), _family(work_id)}
+        for step in steps | ({linked, _family(linked)} if linked else set()):
             passed[step] = max(passed.get(step, 0.0), float(ts))
     return passed
 
@@ -263,13 +292,16 @@ def _passed_since(passed: dict[str, float], payload: dict[str, Any]) -> bool:
     from datetime import datetime
 
     step, stamp = payload.get("step"), payload.get("ts")
-    if not isinstance(step, str) or step not in passed or not isinstance(stamp, str):
+    if not isinstance(step, str) or not isinstance(stamp, str):
+        return False
+    done = max(passed.get(step, 0.0), passed.get(_family(step), 0.0))  # U116: a later retry of its family counts
+    if not done:
         return False
     try:
         blocked_at = datetime.fromisoformat(stamp).timestamp()
     except ValueError:
         return False
-    return passed[step] > blocked_at
+    return done > blocked_at
 
 
 def run_sentinel_cycle(
