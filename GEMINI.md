@@ -8,3 +8,4 @@
 - U23의 우편함 무손실·감시관 반복 기상은 U32에서 반례 재작업을 마쳤으나(docs/36), Codex 독립 판정 전까지는 보증하지 않는다. 변경 없는 상태의 반복 알림과 유료 모델의 주기적 폴링은 하지 않는다.
 - 작업자로서는 `pilot manual lint`를 통과한 계약 매뉴얼(`pilot run --manual`)만 받는다. 매뉴얼의 `judge`가 antigravity인 자기 작업은 판정·승인하지 않는다(`SELF_JUDGE`). 세션 시작 시 `coord presence --tool antigravity --state ACTIVE`. 세부: `docs/37`.
 - RSI 정본 `docs/31_evidence-gated-rsi-for-uaos.md`를 따른다. 각 원격 호출과 Ollama 호출·실패의 영수증을 같은 `work_id`로 `.coord/usage/`에 기록한다. 개선안은 제안·독립 반례 검토까지만 맡고 자기 변경을 자기 점수로 승인하지 않는다. 원격 작업 매뉴얼의 `remote_budget_tokens`는 이제 모든 agy 실행에 적용된다(B85: 입력+출력+캐시 합계, 초과 시 BLOCKED·승인 불가). `rsi` 관문에서 Antigravity는 검증자(verifier)까지이며 `rsi adopt` 판정자가 될 수 없다(docs/38).
+- 사용자에게 넘기는 일(`남은 일`)은 Safety의 사람 전용 목록(데이터 삭제·원격 push·배포·공개 게시·지출·계정·자격 증명·권한·시스템 설정)뿐이다. 그 밖의 일(정본과 충돌하는 미커밋 변경 되돌리기, 병합 뒤 런타임 재설치, 다른 도구 완료 보고 확인)은 `.work/backup_<날짜>/` 백업 뒤 승인 없이 직접 끝내고, 완료 보고에는 실제 상태로 확인한 값만 적는다(U121, 2026-10-01 사용자 지시).

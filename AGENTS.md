@@ -74,3 +74,4 @@
 - **전 프로젝트 가동(U37)**: `python uaos_everywhere/install_uaos_everywhere.py --apply`가 세 도구 전역 규칙 문단·출석 훅·Claude 예약 도구 차단을 설치한다(미리보기 기본, 백업, `--check`, `--uninstall`). 새 프로젝트는 `coord init`. 세부 docs/39.
 - **복귀 시 권한대행 인계 확인**: 한도·부재 후 다시 구동된 도구(Codex·Claude Code)는 구동과 동시에 `coord inbox`로 권한대행(Antigravity)의 인계 통지를 확인하고, `.coord/tasks/NEXT_MORNING_RESUME.md` 및 `.coord/codex_return_checklist.md`에 명시된 대행 구축 프로세스·프로젝트 검증 목록을 확인한 뒤 지휘·조율을 정상 재개한다.
 - 사용 기록은 개선 제안의 입력일 뿐 승인·판정 권한이 아니다. 10개 유효 표본마다 품질·재작업·토큰·시간을 비교하고, P1·품질 저하·3배 비용 회귀면 개선안을 채택하지 않는다. 자동 수집은 U27 검증 전까지 미구현이다.
+- U121: only the Safety human list goes to the user; finish the rest yourself (adapters/codex.md).
