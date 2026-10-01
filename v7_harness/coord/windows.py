@@ -4,6 +4,7 @@ session, Antigravity conversation. The record `.coord/windows/<card>.json` maps 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -35,6 +36,26 @@ def _record_path(project: Path, card: str) -> Path:
 
 def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def claude_session(short: str) -> tuple[str, str]:
+    """U115 judge: `claude --bg` prints an id prefix, but `--resume` needs the full id, and the transcript moves with a
+    session that entered a worktree. Return (full id, latest cwd) from the one transcript `<prefix>*.jsonl` under
+    `$CLAUDE_CONFIG_DIR` (default ~/.claude) `/projects/*/`; with none or several matches return (short, "")."""
+    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    found = sorted((home / "projects").glob(f"*/{short}*.jsonl"))
+    if len(found) != 1:
+        return short, ""
+    cwd = ""
+    with found[0].open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and row.get("cwd"):
+                cwd = str(row["cwd"])
+    return found[0].stem, cwd
 
 
 def window_for(project: Path, card: str, tool: str) -> str | None:
