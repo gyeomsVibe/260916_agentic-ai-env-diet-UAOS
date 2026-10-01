@@ -445,10 +445,15 @@ def cmd_pilot_run(args: argparse.Namespace) -> int:
             route = next_route("local_retry", failure, local_attempts=2, local_tokens=used_local)
         if route == "remote":
             first = summary
-            escalate_to = getattr(args, "escalate_to", "agy")
+            escalate_to = getattr(args, "escalate_to", None)
             escalation = (_admission(source_dir, escalate_to, contract)
                           if escalate_to in REMOTE_WORKERS and remote_budget else None)
-            if escalate_to in REMOTE_WORKERS and not remote_budget:
+            if escalate_to is None and remote_budget:
+                # U110: paying is the judge's call on each run (--escalate-to); auto-escalation spent ~7.6M Antigravity
+                # tokens on 9 runs (2026-09-30..10-01), most of them FAILED or blocked.
+                summary["escalation"] = "HELD:FAILED_LOCAL_GOES_TO_THE_JUDGE"
+                trace.append("held")
+            elif escalate_to in REMOTE_WORKERS + (None,) and not remote_budget:
                 # B85 rework: no contract budget, no paid escalation (lane runs the local model and stays allowed).
                 summary["escalation"] = "REFUSED:REMOTE_WITHOUT_MANUAL"
                 trace.append("refused")
@@ -526,6 +531,8 @@ def cmd_pilot_manual_new(args: argparse.Namespace) -> int:
         remote_budget_usd=args.remote_budget_usd,
         instructions=instructions,
         context_allow=args.context_allow,
+        paid_after=args.paid_after,
+        paid_reason=args.paid_reason,
     )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -633,13 +640,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_pilot_run.add_argument("--watch-root", action="append", default=[], help="Watch roots for external write detection")
     p_pilot_run.add_argument("--print-timeout", type=int, default=600, help="Print timeout in seconds")
     p_pilot_run.add_argument("--agy-command", nargs="*", default=None, help="Custom worker command prefix (overrides --worker)")
-    p_pilot_run.add_argument("--worker", choices=["agy", "local", "lane", "cascade", "auto", "apply", "claude"], default="agy", help="claude = Claude Code on the paid account (needs a manual with remote_budget_tokens; judge codex or user); agy = remote worker (uses account quota); local = this machine's Ollama model, one-shot; lane = Claude Code tool loop on the local model; apply = apply the ===FILE/===EDIT blocks written in the prompt, no model (0 tokens)")
+    p_pilot_run.add_argument("--worker", choices=["agy", "local", "lane", "cascade", "auto", "apply", "claude"], default="auto", help="auto (default) = the router picks: dictated code -> apply, a specific task -> cascade (Ollama first), else agy; claude = Claude Code on the paid account (needs a manual with remote_budget_tokens; judge codex or user); agy = remote worker (uses account quota); local = this machine's Ollama model, one-shot; lane = Claude Code tool loop on the local model; apply = apply the ===FILE/===EDIT blocks written in the prompt, no model (0 tokens)")
     p_pilot_run.add_argument("--manual", default=None,
                              help="Work manual with a ```contract block: linted first, then its worker, acceptance, allow list and timeout drive the run")
     p_pilot_run.add_argument("--allow", action="append", default=[],
                              help="Path or glob the worker may change (repeatable); anything else is rejected as SCOPE_VIOLATION")
     # cascade 승격 대상 작업자(lane의 e2e 실패 빈발로 기본값은 agy)
-    p_pilot_run.add_argument("--escalate-to", choices=["agy", "lane", "claude"], default="agy", help="Worker for cascade second stage when local gets REWORK (default: agy)")
+    p_pilot_run.add_argument("--escalate-to", choices=["agy", "lane", "claude"], default=None, help="Worker for the cascade's second stage when local gets REWORK; omitted: hold for the judge (U110)")
     p_pilot_run.add_argument("--coord-log", dest="coord_log", action="store_true", default=True,
                              help="Record this run in the coordination stream (.coord/stream); on by default")
     p_pilot_run.add_argument("--no-coord-log", dest="coord_log", action="store_false",
@@ -679,6 +686,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_manual_new.add_argument("--remote-budget-usd", type=float, default=0.0,
                               help="Dollar cap for worker claude (claude --max-budget-usd); lint requires it > 0")
     p_manual_new.add_argument("--instructions-file", default=None, help="Prose instructions to append")
+    p_manual_new.add_argument("--paid-after", default="", help="U106: work_id of a failed local run of this card")
+    p_manual_new.add_argument("--paid-reason", default="", help="U106: why this card needs the paid worker (3+ words)")
     p_manual_new.set_defaults(func=cmd_pilot_manual_new)
 
     # pilot reconcile

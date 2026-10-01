@@ -48,10 +48,14 @@ EDIT_RE = re.compile(
     r"^===EDIT:\s*(?P<path>[^\n=]+?)\s*===\n<<<<<<< SEARCH\n(?P<search>.*?)\n=======\n(?P<replace>.*?)\n>>>>>>> REPLACE",
     re.M | re.S,
 )
+# U109-W: the shape qwen2.5-coder:7b emits on its own (U107-B): `===EDIT: path===`, then a fenced block of whole defs.
+FENCED_EDIT_RE = re.compile(r"^===EDIT:\s*(?P<path>[^\n=]+?)\s*===\n```[\w+-]*\n(?P<code>.*?)\n```", re.M | re.S)
 
 # 이 줄 수를 넘는 파일은 "찾아서 바꾸기" 형식을 쓰게 한다. 벤치에서 483줄 파일 한 줄 교체가
 # 전체 재작성 때문에 118초 걸렸다. 나머지 줄을 다시 쓰는 것은 시간만 들고 틀릴 기회만 늘린다.
 EDIT_MODE_MIN_LINES = int(os.environ.get("OLLAMA_WORKER_EDIT_MIN_LINES", "150"))
+SLICE_WINDOWS = (25, 10, 3)  # lines kept on each side of an anchor; try wider first, shrink until it fits
+ANCHOR_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")  # identifier tokens in backtick spans to anchor slices around
 
 # 7B 모델이 형식 안내의 자리표시자 경로를 그대로 따라 쓰는 일이 있다(U22a 실측: UNKNOWN_DIR:<relative/path>).
 # 그런 블록은 실제 편집이 아니므로 건너뛴다. 하나 때문에 나머지 올바른 편집까지 실패하지 않게 한다.
@@ -84,11 +88,17 @@ Format, repeated once per change:
 Rules:
 - SEARCH must match the current file exactly, including indentation, and appear only once.
 - Keep SEARCH short: just enough lines to be unique.
-- Do not output the rest of the file. Do not add explanations or markdown fences.
+- Do not output the rest of the file. Do not add explanations.
+- For a .py file you may instead write the ===EDIT: line, then one ```python fenced block holding each changed
+  function, class, or constant COMPLETE; each replaces the one with the same name, and new names are added.
 """
 
 
-def _generate(model: str, prompt: str, timeout_s: int, *, fmt: dict | None = None) -> tuple[str, dict[str, int]]:
+REPAIRS = int(os.environ.get("OLLAMA_WORKER_REPAIRS", "1"))  # U109: one free retry with the error fed back; a same-seed retry repeats the reply
+REPEAT_LIMIT = 8  # U109: one line this many times in a row is a loop (U109-S wrote 300+ copies), not code
+
+
+def _generate(model: str, prompt: str, timeout_s: int, *, fmt: dict | None = None, seed: int | None = None) -> tuple[str, dict[str, int]]:
     """`fmt` is an Ollama structured-output JSON schema: the model can only emit JSON of that shape."""
     request_body: dict = {
         "model": model,
@@ -96,7 +106,7 @@ def _generate(model: str, prompt: str, timeout_s: int, *, fmt: dict | None = Non
         "stream": False,
         "keep_alive": KEEP_ALIVE,
         # 낮은 온도. 이 작업자는 창작이 아니라 지시받은 줄을 그대로 옮기는 손이다.
-        "options": {"temperature": 0.1, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "seed": SEED},
+        "options": {"temperature": 0.1, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "seed": SEED if seed is None else seed},
     }
     if fmt is not None:
         request_body["format"] = fmt
@@ -206,6 +216,16 @@ def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
         if rel not in written:
             written.append(rel)
 
+    for match in FENCED_EDIT_RE.finditer(text):
+        from v7_harness.adapters.def_splice import splice_definitions
+        rel, target = _target(workspace, match.group("path"))
+        if target.suffix.lower() != ".py" or not (target in pending or target.is_file()):
+            raise ValueError(f"EDIT_FENCED_NEEDS_EXISTING_PY:{rel}")
+        current = pending[target][1] if target in pending else target.read_text(encoding="utf-8")
+        pending[target] = (rel, splice_definitions(current, match.group("code")))
+        if rel not in written:
+            written.append(rel)
+
     endings = {target: _line_ending(rel, target) for target, (rel, _content) in pending.items()}
     for target, (rel, content) in pending.items():
         _guard(rel, target, content, task)
@@ -280,6 +300,60 @@ def _log(event: str, **fields) -> None:
         pass
 
 
+def task_anchors(task: str) -> list[str]:
+    seen: set[str] = set()
+    anchors: list[str] = []
+    for span in re.findall(r"`([^`\n]+)`", task):
+        if "/" in span or span.endswith((".py", ".md", ".txt", ".json")):
+            continue
+        for m in ANCHOR_RE.findall(span):
+            if m not in seen:
+                seen.add(m)
+                anchors.append(m)
+    return anchors
+
+
+def slice_text(name: str, text: str, anchors: list[str], radius: int) -> str | None:
+    lines = text.splitlines(keepends=True)
+    if not lines or not anchors:
+        return None
+    patterns = [re.compile(rf"\b{re.escape(a)}\b") for a in anchors]
+    hit_lines = [i for i, line in enumerate(lines) if any(p.search(line) for p in patterns)]
+    if not hit_lines:
+        return None
+
+    ranges: list[tuple[int, int]] = []
+    for i in hit_lines:
+        start = max(0, i - radius)
+        end = min(len(lines), i + radius + 1)
+        ranges.append((start, end))
+
+    merged: list[tuple[int, int]] = []
+    for start, end in ranges:
+        if not merged:
+            merged.append((start, end))
+        else:
+            prev_start, prev_end = merged[-1]
+            if start <= prev_end:
+                merged[-1] = (prev_start, max(prev_end, end))
+            else:
+                merged.append((start, end))
+
+    parts = [f"\n===CURRENT FILE: {name} (partial: {len(lines)} lines, only the lines below are shown; the rest is omitted)===\n"]
+    last_end = 0
+    for start, end in merged:
+        if start > last_end:
+            parts.append(f"... lines {last_end + 1}-{start} omitted ...\n")
+        parts.extend(lines[start:end])
+        last_end = end
+    if last_end < len(lines):
+        if parts and not parts[-1].endswith("\n"):
+            parts.append("\n")
+        parts.append(f"... lines {last_end + 1}-{len(lines)} omitted ...\n")
+
+    return "".join(parts)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--prompt", required=True)
@@ -306,22 +380,48 @@ def main(argv: list[str] | None = None) -> int:
         ))
         return 0 if status == "SUCCESS" else 1
 
+    limit = NUM_CTX - NUM_PREDICT
+    # U47-O2: every row names the model and the work, so the ledger can be joined to pilot outcomes and distilled.
+    run = {"model": args.model, "work_id": contract_work_id(args.prompt)}
+
     # 과제가 가리키는 파일의 현재 내용을 함께 준다. 7B 모델은 파일을 스스로 찾지 못한다.
     # U50-R2: the admitted text itself travels on; re-reading workspace / name here let a swapped link leak.
     named = admitted_context(args.prompt, workspace)[:4]
-    context = "".join(f"\n===CURRENT FILE: {name}===\n{text}\n" for name, text in named)
+    whole = "".join(f"\n===CURRENT FILE: {name}===\n{text}\n" for name, text in named)
 
     # 대상 파일 중 하나라도 길면 찾아서 바꾸기 형식을 요구한다. 짧은 파일은 전체 재작성이
     # 더 안정적이다(벤치 6과제 모두 전체 재작성으로 통과).
     longest = max((len(text.splitlines()) for _name, text in named), default=0)
     rules = EDIT_RULES if longest >= EDIT_MODE_MIN_LINES else FORMAT_RULES
-    prompt = f"{rules}\n\nTASK:\n{args.prompt}\n\nCURRENT CONTENTS:{context}\n\nNow output the blocks."
+    prompt = f"{rules}\n\nTASK:\n{args.prompt}\n\nCURRENT CONTENTS:{whole}\n\nNow output the blocks."
     # 문맥을 넘는 프롬프트는 모델을 부르지 않고 바로 실패시킨다. 잘린 입력으로 600초를 기다린 뒤 실패하던 것을
     # 즉시 실패로 바꿔 cascade 가 곧바로 agy 로 넘긴다. 한국어가 1글자 3바이트·약 1토큰이라 바이트/3 으로 어림한다.
     estimated = len(prompt.encode("utf-8")) // 3
-    limit = NUM_CTX - NUM_PREDICT
-    # U47-O2: every row names the model and the work, so the ledger can be joined to pilot outcomes and distilled.
-    run = {"model": args.model, "work_id": contract_work_id(args.prompt)}
+
+    if estimated > limit:
+        anchors = task_anchors(args.prompt)
+        if anchors:
+            whole_est = estimated
+            for radius in SLICE_WINDOWS:
+                blocks: list[str] = []
+                for name, text in named:
+                    file_block = f"\n===CURRENT FILE: {name}===\n{text}\n"
+                    if len(file_block.encode("utf-8")) // 3 > limit // 4:
+                        sliced = slice_text(name, text, anchors, radius)
+                        blocks.append(sliced if sliced is not None else file_block)
+                    else:
+                        blocks.append(file_block)
+                cand_context = "".join(blocks)
+                cand_rules = EDIT_RULES
+                cand_prompt = f"{cand_rules}\n\nTASK:\n{args.prompt}\n\nCURRENT CONTENTS:{cand_context}\n\nNow output the blocks."
+                cand_est = len(cand_prompt.encode("utf-8")) // 3
+                if cand_est <= limit:
+                    rules = cand_rules
+                    prompt = cand_prompt
+                    estimated = cand_est
+                    _log("context_sliced", work_id=run["work_id"], radius=radius, before=whole_est, after=estimated)
+                    break
+
     if estimated > limit:
         _log("pilot_local", status="PROMPT_TOO_LARGE", elapsed_s=0.0, estimated_tokens=estimated, **run)
         return envelope("ERROR", "", {"input_tokens": 0, "output_tokens": 0}, f"PROMPT_TOO_LARGE: ~{estimated} tokens > {limit}")
@@ -337,15 +437,51 @@ def main(argv: list[str] | None = None) -> int:
     _log("pilot_local", status="GENERATED", elapsed_s=round(time.monotonic() - started, 1), **run, **usage)
 
     # U102-W: keep the raw reply on every rejection; an empty record hid the U101-L2 cause (constants above __future__).
-    if "===FILE:" not in text and "===EDIT:" not in text:
-        return envelope("ERROR", text, usage, "model returned no file block")
-    try:
-        written = _apply(text, workspace, task=args.prompt)
-    except ValueError as exc:
-        return envelope("ERROR", text, usage, str(exc))
-    if not written:
-        return envelope("ERROR", text, usage, "no file written")
+    written, error = _try_apply(text, workspace, args.prompt)
+    for attempt in range(1, REPAIRS + 1):
+        if not error:
+            break
+        hint = "you repeated one line; write each statement once" if error.startswith("DEGENERATE") else "fix exactly that"
+        repair = (f"{prompt}\n\nYOUR PREVIOUS REPLY:\n{text[:6000]}\n\nIt could not be applied: {error}. "
+                  f"Reply again with the complete blocks; {hint}.")
+        if len(repair.encode("utf-8")) // 3 > limit:
+            break
+        _log("pilot_local_repair", attempt=attempt, error=error[:120], **run)
+        try:
+            with pilot_holds(timeout_s):
+                text, more = _generate(args.model, repair, timeout_s, seed=SEED + attempt)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            break
+        usage = {key: usage[key] + int(more.get(key, 0)) for key in usage}
+        written, error = _try_apply(text, workspace, args.prompt)
+    if error:
+        return envelope("ERROR", text, usage, error)
     return envelope("SUCCESS", f"wrote: {', '.join(written)}", usage)
+
+
+def degenerate(text: str) -> bool:
+    """U109: True when one non-blank line repeats REPEAT_LIMIT times in a row (a 7B decoding loop)."""
+    previous, run = None, 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        run = run + 1 if stripped and stripped == previous else 1
+        previous = stripped
+        if stripped and run >= REPEAT_LIMIT:
+            return True
+    return False
+
+
+def _try_apply(text: str, workspace: Path, task: str) -> tuple[list[str], str]:
+    """(written paths, "") on success, ([], reason) when the reply cannot be used."""
+    if degenerate(text):
+        return [], f"DEGENERATE: one line repeated {REPEAT_LIMIT}+ times in a row"
+    if "===FILE:" not in text and "===EDIT:" not in text:
+        return [], "model returned no file block"
+    try:
+        written = _apply(text, workspace, task=task)
+    except ValueError as exc:
+        return [], str(exc)
+    return (written, "") if written else ([], "no file written")
 
 
 if __name__ == "__main__":

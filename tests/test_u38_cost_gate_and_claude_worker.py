@@ -114,7 +114,9 @@ class RemoteBudgetContractTests(unittest.TestCase):
         (root / "pkg" / "config.py").write_text("TIMEOUT = 30\n", encoding="utf-8")
         values = dict(work_id="U38_T", worker="agy", goal="Replace TIMEOUT = 30 with TIMEOUT = 60 in `pkg/config.py`.",
                       inputs=["pkg/config.py"], allow=["pkg/config.py"], acceptance="python -c \"import pkg.config\"",
-                      judge="codex")
+                      judge="codex",
+                      # U106: a paid worker on code needs a recorded reason; this fixture tests budgets, not routing.
+                      paid_reason="fixture exercises the paid worker budget contract")
         values.update(overrides)
         return new_manual(root, **values)
 
@@ -487,7 +489,8 @@ class U39RouteTests(unittest.TestCase):
             (root / "m.md").write_text(helper._manual(root, work_id="R1", worker="cascade", remote_budget_tokens=120000), encoding="utf-8")
             out = io.StringIO()
             with mock.patch("v7_harness.pilot.run_pilot", fake_run), redirect_stdout(out), redirect_stderr(io.StringIO()):
-                main(["pilot", "run", "--task", "R1", "--source", d, "--manual", str(root / "m.md")])
+                # U110: the paid stage is named on the run; without it the failed local result is held for the judge.
+                main(["pilot", "run", "--task", "R1", "--source", d, "--manual", str(root / "m.md"), "--escalate-to", "agy"])
         self.assertEqual(2, len(calls))
         self.assertTrue(calls[0].endswith("ollama_worker.py"))
         self.assertEqual("agy", calls[1])
