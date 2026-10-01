@@ -623,7 +623,10 @@ def deliver(
     box.publish(message_id, _payload(actor, message, digest, requested_target, card, window))
     if target == "antigravity":
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
-        return DeliverResult(False, "antigravity", "PUBLISHED", (), "", message_id, digest)
+        # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
+        unread = ("UNREAD until a user turn in Antigravity; for a verdict run `pilot review --reviewer agy` "
+                  "(headless, no user)") if _requires_wake(message) else ""
+        return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
     if target is None:
         return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
     guard = box.root / "delivery" / "guards" / f"{message_id}.lock"
