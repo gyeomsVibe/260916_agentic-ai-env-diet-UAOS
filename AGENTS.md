@@ -32,7 +32,7 @@
 
 - 비용 절감 위임의 기본 경로는 `Codex 작업 계약 1회 → 결정적 control layer → Antigravity pilot → Codex 증거 판정 1회`로 한다. 토큰 대리지표와 실제 계정 사용 한도 절감은 구분하고, 후자는 직접 측정 전까지 `UNMEASURED`로 기록한다.
 - **Claude Code는 Codex 활동 중에는 Codex의 지휘를 받는 부관(비서)이고, Codex 부재 중에는 대신 지휘하는 동등한 부지휘자다(사용자 지정, 2026-09-21 / 독립 분리 철회 2026-09-23).** Codex 부재 중(한도·정지·무응답)에는 Codex의 모든 권한(계획·작업자 선택·bundle 승인·PLAN 판정)을 대행한다. 대행 중 만든 변경은 반영하되 Codex 복귀 시 재검토 대상으로 표시한다.
-- **Antigravity 임시 대행(사용자 지정, 2026-09-23)**: Codex와 Claude Code가 둘 다 제한·부재(한도 소진, 정지, 무응답)일 때만 Antigravity가 총괄·계획·수행을 임시로 맡는다. 이때 `PLAN.md`·설계 문서·훅·도구 설정을 갱신하고 프로세스를 마무리할 수 있다. 삭제·원격 push·배포·결제·권한 변경의 한계는 지키고, 모든 근거를 Codex 복귀 시 재검토 목록에 남긴다. 평상시에는 원본을 직접 고치지 않고 읽기 전용 자문·독립 검증·파일럿 실행만 한다.
+- **Antigravity 임시 대행(사용자 지정, 2026-09-23)**: Codex와 Claude Code가 둘 다 제한·부재(한도 소진, 정지, 무응답)일 때만 Antigravity가 총괄·계획·수행을 임시로 맡는다. 이때 `PLAN.md`·설계 문서·훅·도구 설정을 갱신하고 프로세스를 마무리할 수 있다. Safety 사람 전용 목록은 지키고, 모든 근거를 Codex 복귀 시 재검토 목록에 남긴다. 평상시에는 원본을 직접 고치지 않고 읽기 전용 자문·독립 검증·파일럿 실행만 한다.
 - `pilot run` 또는 control layer 실행 중에는 source 원본을 단일 쓰기 소유자에게만 맡기고, relay·상태 점검·자문 메모를 포함한 보조 프로세스는 원본에 쓰지 않는다. 보조 산출물은 `.work/`에 기록하며 원본 변경이 감지되면 `SOURCE_DIVERGED`로 차단하고 작성자를 식별한 뒤 새 실행으로 검증한다.
 - pilot 소유자는 실행 직전에 `.work/QUIET_LOCK`을 원자적으로 만들고 `owner`, `task`, `started_at`, `pid`를 기록한다. 유효한 lock이 있으면 새 실행과 원본 쓰기를 시작하지 않으며, 모든 보조 기록은 `.work/notes/`에 둔다. 소유자는 종료 후 lock을 정리하고, PID가 없거나 60분을 넘긴 고착 lock만 Codex가 해제 사실을 기록한 뒤 정리한다.
 - **`.coord/PLAN.md` 무승인 영구 권한(사용자 부여, 2026-09-19)**: Codex·Antigravity·Claude Code는 `.coord/PLAN.md`(및 `.coord/tasks/*` 카드)를 사용자 승인 없이 읽고 갱신할 수 있다. 권한 부족으로 쓰지 못하면 승인을 묻지 말고 파일 속성·잠금을 확인해 해소하거나 조율자에게 즉시 보고한다. 단, 위 단일 쓰기 소유자 규칙에 따라 pilot·control 실행 중에는 쓰지 않고 실행이 끝난 뒤 갱신한다.
@@ -74,3 +74,4 @@
 - **전 프로젝트 가동(U37)**: `python uaos_everywhere/install_uaos_everywhere.py --apply`가 세 도구 전역 규칙 문단·출석 훅·Claude 예약 도구 차단을 설치한다(미리보기 기본, 백업, `--check`, `--uninstall`). 새 프로젝트는 `coord init`. 세부 docs/39.
 - **복귀 시 권한대행 인계 확인**: 한도·부재 후 다시 구동된 도구(Codex·Claude Code)는 구동과 동시에 `coord inbox`로 권한대행(Antigravity)의 인계 통지를 확인하고, `.coord/tasks/NEXT_MORNING_RESUME.md` 및 `.coord/codex_return_checklist.md`에 명시된 대행 구축 프로세스·프로젝트 검증 목록을 확인한 뒤 지휘·조율을 정상 재개한다.
 - 사용 기록은 개선 제안의 입력일 뿐 승인·판정 권한이 아니다. 10개 유효 표본마다 품질·재작업·토큰·시간을 비교하고, P1·품질 저하·3배 비용 회귀면 개선안을 채택하지 않는다. 자동 수집은 U27 검증 전까지 미구현이다.
+- U121: user gets only the Safety human list; do the rest unasked; copy to .work/backup_<date>/, then revert canon-conflicting edits.
