@@ -177,7 +177,12 @@ def manual_project(manual: Path) -> Path:
     return Path(".")
 
 
-def mandatory_watch_roots(work_dir: Path, source_dir: Path) -> list[Path]:
+# U113: these workers never touch the file system; the harness writes their stage. Watching home and temp for them
+# only caught other apps rewriting their own config (Codex config.toml in U113-D a001, Claude settings in U106-A2-agy).
+HARNESS_ONLY_WORKERS = ("local", "apply")
+
+
+def mandatory_watch_roots(work_dir: Path, source_dir: Path, worker: str = "agy") -> list[Path]:
     """Shallow roots a worker must not write into during a run.
 
     U45-F5: the work dir's parent used to be watched always. When that parent is a shared `.work/` folder, the
@@ -186,6 +191,8 @@ def mandatory_watch_roots(work_dir: Path, source_dir: Path) -> list[Path]:
     stay watched. A worker writing a sibling file inside `.work/` goes unseen, and `.work/` is never committed.
     """
     work = work_dir.resolve()
+    if worker in HARNESS_ONLY_WORKERS:
+        return [(work_dir / "stage").resolve()]
     return list(dict.fromkeys([
         Path.home().resolve(),
         Path(tempfile.gettempdir()).resolve(),
@@ -347,7 +354,7 @@ def cmd_pilot_run(args: argparse.Namespace) -> int:
             return 2
 
     work_dir = Path(args.work_dir) if args.work_dir else Path(".coord")
-    mandatory_roots = mandatory_watch_roots(work_dir, source_dir)
+    mandatory_roots = mandatory_watch_roots(work_dir, source_dir, chosen)
     explicit_roots = [Path(w).resolve() for w in args.watch_root] if args.watch_root else []
     watch_roots = list(dict.fromkeys(mandatory_roots + explicit_roots))
     agy_cmd = resolve_worker_command(chosen, args.agy_command)

@@ -5,10 +5,12 @@ kept beating, and an auto-routed letter then stayed in the mailbox (PUBLISHED, m
 """
 
 import json
+import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from v7_harness.coord import presence
 from v7_harness.coord.deliver import deliver
@@ -30,8 +32,15 @@ class WatcherRoutesTest(unittest.TestCase):
         self.project = Path(self._tmp.name)
         (self.project / ".coord").mkdir()
         (self.project / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
+        # U113: presence.read turns an ACTIVE codex into LIMITED when the PC's real Codex log holds a newer refusal;
+        # on 2026-10-01 a real refusal landed mid-run and failed test_active_codex_still_comes_first once.
+        sessions = self.project / "codex-sessions"
+        sessions.mkdir()
+        self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(sessions)})
+        self._env.start()
 
     def tearDown(self):
+        self._env.stop()
         self._tmp.cleanup()
 
     def _live_watch(self):

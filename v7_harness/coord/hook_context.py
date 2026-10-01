@@ -19,6 +19,8 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
+from v7_harness.coord.presence import desk_label
+
 PLAN = Path(".coord") / "PLAN.md"
 _PAYLOAD_KEYS = ("cwd", "workspacePaths", "workspace_paths", "workspaceRoots", "workspace_roots", "project_dir")
 
@@ -142,7 +144,7 @@ def brief_line(project: Path, presence: dict[str, Any]) -> str:
         inbox = sorted(path.stem for path in box_dir.glob("*.json"))
     wakes = sum(1 for item in inbox if item.startswith("wake_"))
     reviews = sum(1 for item in inbox if item.startswith("rsi_review_"))
-    desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
+    desk = ", ".join(f"{tool}={desk_label(info)}" for tool, info in presence.items())
     from .mode import mode_phrase  # U95-T: every session learns the operating mode from code, not only the rules
 
     return (f"UAOS project {Path(project).name}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
@@ -244,7 +246,7 @@ def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
     if event.get("invocationNum", 0) != 0:
         return ""
     letters = agy_letters(project)
-    desk = ", ".join(f"{tool}={info.get('state')}" for tool, info in presence.items())
+    desk = ", ".join(f"{tool}={desk_label(info)}" for tool, info in presence.items())
     conversation = str(event.get("conversationId") or "")
     from .mode import mode_phrase  # U95-T
 

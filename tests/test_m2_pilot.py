@@ -196,7 +196,9 @@ class PilotCliTests(unittest.TestCase):
                 captured["watch_roots"] = list(config.watch_roots)
                 return {"state": "SUCCEEDED"}
 
-            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run):
+            # U113: local now watches only its stage; these tests keep checking the strict roots of a worker with tools.
+            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run), \
+                    mock.patch("v7_harness.cli.HARNESS_ONLY_WORKERS", ()):
                 args = cli.build_parser().parse_args([
                     "pilot", "run",
                     "--task", "P09",
@@ -231,7 +233,9 @@ class PilotCliTests(unittest.TestCase):
                 captured["watch_roots"] = list(config.watch_roots)
                 return {"state": "SUCCEEDED"}
 
-            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run):
+            # U113: local now watches only its stage; these tests keep checking the strict roots of a worker with tools.
+            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run), \
+                    mock.patch("v7_harness.cli.HARNESS_ONLY_WORKERS", ()):
                 args = cli.build_parser().parse_args([
                     "pilot", "run",
                     "--task", "P09",
@@ -265,7 +269,9 @@ class PilotCliTests(unittest.TestCase):
                 captured["watch_roots"] = list(config.watch_roots)
                 return {"state": "SUCCEEDED"}
 
-            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run):
+            # U113: local now watches only its stage; these tests keep checking the strict roots of a worker with tools.
+            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run), \
+                    mock.patch("v7_harness.cli.HARNESS_ONLY_WORKERS", ()):
                 args = cli.build_parser().parse_args([
                     "pilot", "run",
                     "--task", "P09",
@@ -301,7 +307,9 @@ class PilotCliTests(unittest.TestCase):
                 captured["watch_roots"] = list(config.watch_roots)
                 return {"state": "SUCCEEDED"}
 
-            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run):
+            # U113: local now watches only its stage; these tests keep checking the strict roots of a worker with tools.
+            with mock.patch("v7_harness.pilot.run_pilot", side_effect=fake_run), \
+                    mock.patch("v7_harness.cli.HARNESS_ONLY_WORKERS", ()):
                 args = cli.build_parser().parse_args([
                     "pilot", "run",
                     "--task", "P09",

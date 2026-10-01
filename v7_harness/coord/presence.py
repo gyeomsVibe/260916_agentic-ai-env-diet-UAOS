@@ -193,6 +193,18 @@ def read(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any
     return {"tool": tool, "state": record["state"], "observed_at": record.get("observed_at"), "expires_at": expires_at}
 
 
+# U113: the desk said antigravity=UNKNOWN while Antigravity was open and had answered three hours before. Routing still
+# treats IDLE like UNKNOWN (fail closed); only the word on the desk changes.
+def desk_label(info: dict[str, Any], now: float | None = None) -> str:
+    """The desk word for one tool: an expired heartbeat reads IDLE(<age>), a tool never seen UNKNOWN."""
+    state = str(info.get("state") or "UNKNOWN")
+    seen = _epoch(info.get("observed_at")) if state == "UNKNOWN" else None
+    if seen is None:
+        return state
+    age = (time.time() if now is None else now) - seen
+    return f"IDLE({int(age // 60)}m)" if age < 3600 else f"IDLE({int(age // 3600)}h)"
+
+
 # U57-A (2026-09-27): Codex's UserPromptSubmit hook writes ACTIVE before the turn runs, so a relay prompt that Codex
 # then refused with `usage_limit_exceeded` left the desk saying ACTIVE. `coord route` sent work to Codex and the
 # acting conductor had to write a LIMITED lease by hand. Codex records the refusal in its own rollout log; reading
