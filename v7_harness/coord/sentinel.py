@@ -402,8 +402,14 @@ def run_sentinel_cycle(
         # RSI observe step: a finished window of runs becomes one review message (never P1, never repeated).
         from ..rsi import analyze, load_policy, load_rows, rsi_review_messages
 
+        from .presence import conductor, read_all
+
         policy = load_policy(project_root)
-        for message_id, payload in rsi_review_messages(project_root, analyze(load_rows(project_root), policy), policy):
+        # U125: the review goes to whoever conducts now; an UNKNOWN desk keeps it mailbox-only (fail closed).
+        lead = conductor(read_all(project_root))["conductor"]
+        target = lead if lead in ("codex", "claude", "antigravity") else None
+        analysis = analyze(load_rows(project_root), policy)
+        for message_id, payload in rsi_review_messages(project_root, analysis, policy, target=target):
             if not box.has_message(message_id):
                 box.publish(message_id=message_id, payload=payload)
                 rsi_published.append(message_id)
