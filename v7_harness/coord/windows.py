@@ -29,10 +29,16 @@ RECORD_TRIES = 20
 # U129: a Claude window is a visible desktop session; its id is the Claude Code session UUID that `--resume` takes
 # (CLAUDE_CODE_SESSION_ID inside that session). A banner prefix or a sidebar title is not one.
 SESSION_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-# U129: `claude --bg` sessions never show in the desktop app (docs agent-view), so nothing is launched.
-NO_VISIBLE_SESSION = ("claude card windows open only as visible Claude desktop sessions: the conductor opens one "
-                      "(desktop app: the spawn_task chip) and records it with `uaos coord window --card {card} "
-                      "--tool claude --title <title> --session-id <session uuid>`")
+# U129: `claude --bg` sessions never show in the desktop app (docs agent-view), so nothing is launched; since
+# 2026-10-02 every route is clickless (send_message into an idle visible session, never a task chip).
+NO_VISIBLE_SESSION = ("a Claude card window is an idle visible Claude desktop session: the conductor sends it the "
+                      "card with send_message and records it with `uaos coord window --card {card} --tool claude "
+                      "--title <title> --session-id <session uuid>`; with no idle session `uaos coord window "
+                      "--card {card} --tool auto` routes the card to Codex (ACTIVE) or Antigravity headless")
+# U129: one desktop session works one card at a time, so a session held by another unreleased card is refused.
+SESSION_BUSY = ("Claude desktop session {session} still holds card {holder}; the conductor releases it with "
+                "`uaos coord window --card {holder} --tool claude --title <title> --release` or routes this card "
+                "with `--tool auto`")
 
 
 def window_title(card: str, title: str) -> str:
@@ -180,7 +186,7 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
     if session_id is not None:
         session_id = _claude_session_id(session_id)
     existing = record.get("tools", {}).get(tool)
-    if existing:
+    if existing and not existing.get("released_at"):  # U129: a released window is done, never reused
         return {**existing, "reused": True}
     state = read_presence(project, tool)["state"]
     if state in ("LIMITED", "ABSENT"):  # U113: nothing waits in a limited tool's thread
@@ -192,6 +198,10 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
         if session_id is None:
             return {"refused": "NO_VISIBLE_SESSION", "tool": tool, "card": card,
                     "message": NO_VISIBLE_SESSION.format(card=card)}
+        holder = session_busy(project, session_id, card)
+        if holder:
+            return {"refused": "SESSION_BUSY", "tool": tool, "card": card, "held_by": holder,
+                    "message": SESSION_BUSY.format(session=session_id, holder=holder)}
         window_id = session_id
     else:
         window_id = _open_antigravity(project, prompt, runner)
@@ -210,3 +220,46 @@ def _claude_session_id(session_id: str) -> str:
     if not SESSION_ID_RE.fullmatch(session_id):
         raise ValueError(f"bad claude session id: {session_id!r}")
     return session_id
+
+
+def session_busy(project: Path, session_id: str, card: str) -> str | None:
+    """U129: the other card whose unreleased Claude window is this desktop session, else None."""
+    session_id = _claude_session_id(session_id)
+    for path in sorted((Path(project) / ".coord" / "windows").glob("*.json")):
+        if path.stem == card:
+            continue
+        entry = _load(path).get("tools", {}).get("claude") or {}
+        if entry.get("id") == session_id and not entry.get("released_at"):
+            return path.stem
+    return None
+
+
+def release_window(project: Path, card: str, tool: str, *, now: float | None = None) -> dict[str, Any]:
+    """U129: mark a card's window done so its Claude desktop session can take the next card."""
+    entry = window_entry(project, card, tool)
+    result = {"released": bool(entry), "card": card, "tool": tool}
+    if entry and not entry.get("released_at"):
+        extra = {k: v for k, v in entry.items() if k not in ("id", "opened_at")}
+        record_window(project, card, tool, entry["id"], released_at=time.time() if now is None else now, **extra)
+    return result
+
+
+def route_window(project: Path, card: str, *, session_id: str | None = None) -> dict[str, Any]:
+    """U129: the clickless route for a card: Codex (ACTIVE) -> idle visible Claude session -> Antigravity headless."""
+    _record_path(project, card)
+    if read_presence(project, "codex")["state"] == "ACTIVE":
+        return {"route": "codex", "card": card,
+                "step": "conductor: open the card's Codex app-server thread (`uaos coord window --tool codex`)"}
+    busy = None
+    if session_id is not None:
+        session_id = _claude_session_id(session_id)
+        busy = session_busy(project, session_id, card)
+        if busy is None:
+            return {"route": "claude", "card": card, "session_id": session_id,
+                    "step": f"conductor: send the card manual to Claude desktop session {session_id} with send_message, "
+                            f"then record it (`uaos coord window --tool claude --session-id {session_id}`)"}
+    route = {"route": "antigravity", "card": card,
+             "step": "conductor: send the card to Antigravity headless (`agy -p`) and relay its result"}
+    if busy:
+        route["busy"] = busy
+    return route

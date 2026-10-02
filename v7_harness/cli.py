@@ -907,12 +907,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_win = p_coord_subs.add_parser("window", help="Open (or reuse) the card's dedicated window in one tool")
     p_coord_win.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_win.add_argument("--card", required=True, help="Card id, e.g. U114")
-    p_coord_win.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_win.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity", "auto"],
+                             help="auto (U129): the clickless route, Codex (ACTIVE) -> idle Claude session -> agy -p")
     p_coord_win.add_argument("--title", required=True, help="Window title after [card]")
     p_coord_win.add_argument("--prompt-file", required=False, default=None,
                              help="Manual whose content opens the window (codex, antigravity)")
     p_coord_win.add_argument("--session-id", default=None,
                              help="U129: id of a visible Claude desktop session to record (claude only)")
+    p_coord_win.add_argument("--release", action="store_true",
+                             help="U129: mark the card's window done so its Claude session can take the next card")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
     # rsi: evidence-gated self-improvement (docs/38). observe → propose → try → gate → judge → rollback.
@@ -1241,16 +1244,33 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
 
 
 def cmd_coord_window(args: argparse.Namespace) -> int:
-    """U114: exit 0 with the window id, 2 when the tool is LIMITED/ABSENT or, U129, Claude has no visible session."""
+    """U114: exit 0 with the window id, 2 when the tool is LIMITED/ABSENT or, U129, Claude has no idle visible session.
+
+    U129 (2026-10-02): `--tool auto` takes the clickless route (Codex ACTIVE -> idle visible Claude session -> Antigravity
+    headless); `--release` frees a card's window so its Claude desktop session can take the next card.
+    """
     from .coord import windows
 
-    if args.tool != "claude" and not args.prompt_file:
-        print(json.dumps({"error": f"--prompt-file is required for {args.tool}"}, ensure_ascii=False))
+    project = Path(args.project)
+    if args.release:
+        if args.tool == "auto":
+            print(json.dumps({"error": "--release needs --tool codex, claude or antigravity"}, ensure_ascii=False))
+            return 2
+        result = windows.release_window(project, args.card, args.tool)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result["released"] else 2
+    route = windows.route_window(project, args.card, session_id=args.session_id) if args.tool == "auto" else None
+    tool = route["route"] if route else args.tool
+    if tool != "claude" and not args.prompt_file:
+        print(json.dumps({"error": f"--prompt-file is required for {tool}"}, ensure_ascii=False))
         return 2
     prompt = Path(args.prompt_file).read_text(encoding="utf-8") if args.prompt_file else ""
     # U129: a Claude window is a visible desktop session the caller names; nothing is launched for it.
-    extra = {} if args.session_id is None else {"session_id": args.session_id}
-    result = windows.open_window(Path(args.project), args.card, args.tool, args.title, prompt, **extra)
+    passes_session = args.session_id is not None and (route is None or tool == "claude")
+    extra = {"session_id": args.session_id} if passes_session else {}
+    result = windows.open_window(project, args.card, tool, args.title, prompt, **extra)
+    if route:
+        result = {**result, "route": tool, "step": route["step"]}
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("id") else 2
 
