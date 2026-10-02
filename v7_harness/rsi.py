@@ -228,6 +228,12 @@ def analyze(rows: list[dict[str, Any]], policy: dict[str, Any] | None = None) ->
     for worker, worker_rows in sorted(by_worker.items()):
         recent = worker_rows[-window:]
         causes = Counter(cause for cause in (_cause(row) for row in recent) if cause)
+        # U125: each cause names only the runs that carry it (a PASS run was evidence for UNREQUESTED_DELETION).
+        cause_work_ids: dict[str, list[Any]] = {}
+        for row in recent:
+            cause = _cause(row)
+            if cause:
+                cause_work_ids.setdefault(cause, []).append(row.get("work_id"))
         info = metrics(recent)
         if info["n"] < int(policy["min_samples"]):
             status = "INSUFFICIENT_SAMPLES"
@@ -243,6 +249,7 @@ def analyze(rows: list[dict[str, Any]], policy: dict[str, Any] | None = None) ->
             # docs rule: the same cause twice means change the route, not retry longer.
             "recurring": sorted(cause for cause, count in causes.items() if count >= 2),
             "recent_work_ids": [row.get("work_id") for row in recent][-5:],
+            "cause_work_ids": {cause: ids[-5:] for cause, ids in cause_work_ids.items()},
         }
     total = len(rows)
     return {
@@ -325,6 +332,10 @@ def propose(analysis: dict[str, Any], policy: dict[str, Any] | None = None) -> l
                 "target": target,
                 "action": action,
                 "evidence": info["recent_work_ids"],
+                # U125: the runs that carry this cause, for the review letter. `evidence` stays the window because
+                # candidate_template turns it into the gate's before_work_ids (a failures-only baseline would pass
+                # any candidate).
+                "cause_evidence": info.get("cause_work_ids", {}).get(cause) or info["recent_work_ids"],
             })
         if (
             worker in ("local", "ollama")
@@ -552,7 +563,7 @@ def rollback(project: Path, judge: str, reason: str) -> dict[str, Any]:
 
 
 def rsi_review_messages(
-    project: Path, analysis: dict[str, Any], policy: dict[str, Any] | None = None
+    project: Path, analysis: dict[str, Any], policy: dict[str, Any] | None = None, target: str | None = None
 ) -> list[tuple[str, dict[str, Any]]]:
     """Mailbox messages (not P1), one per worker that completed a new analysis window. The id names the window,
     so the sentinel publishes each window once and never repeats it after it is read."""
@@ -565,5 +576,16 @@ def rsi_review_messages(
         message_id = f"rsi_review_{worker}_{int(policy['window'])}x{window_count}"
         summary = (f"RSI window {window_count} for {worker}: pass {info['pass_rate']}, rework {info['rework_rate']}, "
                    f"recurring {','.join(info['recurring']) or 'none'} — run `rsi propose`")
-        messages.append((message_id, {"kind": "RSI_REVIEW", "step": "RSI", "summary": summary[:200], "actor": "sentinel"}))
+        payload: dict[str, Any] = {"kind": "RSI_REVIEW", "step": "RSI", "summary": summary[:200], "actor": "sentinel"}
+        if target:
+            # U125: addressed to the acting conductor so its `coord watch --wakes-session` wakes and the recurring
+            # causes become a card (15 unaddressed letters were never handled).
+            payload["requested_target"] = target
+            payload["proposals"] = [
+                {**{key: proposal[key] for key in ("id", "cause", "target", "action")},
+                 "evidence": proposal.get("cause_evidence", proposal["evidence"])}
+                for proposal in propose(analysis, policy)
+                if proposal["worker"] == worker and proposal["recurring"]
+            ][:5]
+        messages.append((message_id, payload))
     return messages
