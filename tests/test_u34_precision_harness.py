@@ -391,7 +391,10 @@ class GateTests(unittest.TestCase):
             (pilot / "stage" / "P08" / "v7_harness").mkdir(parents=True)
             (pilot / "stage" / "P08" / "v7_harness" / "x.py").write_text("A = 1\n", encoding="utf-8")
             (pilot / "runs" / "P08" / "summary.json").write_text(
-                json.dumps({"promotion": "APPLIED", "changed_files": ["v7_harness/x.py"]}), encoding="utf-8")
+                json.dumps({"promotion": "APPLIED", "bundle_id": "b" * 64, "changed_files": ["v7_harness/x.py"]}),
+                encoding="utf-8")
+            (pilot / "runs" / "P08" / "review_agy.json").write_text(  # U123: an independent PASS is required
+                json.dumps({"verdict": "PASS", "bundle_id": "b" * 64, "author_worker": "ollama"}), encoding="utf-8")
             self.assertEqual([], check({"v7_harness/x.py": b"A = 1\n"}, "feat", discover(root)))
             self.assertEqual(1, len(check({"v7_harness/x.py": b"A = 2\n"}, "feat", discover(root))))
 

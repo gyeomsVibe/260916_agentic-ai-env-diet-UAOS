@@ -88,9 +88,12 @@ class CalculatorGateTest(unittest.TestCase):
     def _make_run(self, task, promotion, files):
         (self.pd / "runs" / task).mkdir(parents=True, exist_ok=True)
         (self.pd / "runs" / task / "summary.json").write_text(
-            json.dumps({"promotion": promotion, "changed_files": list(files)}),
+            json.dumps({"promotion": promotion, "bundle_id": "b" * 64, "changed_files": list(files)}),
             encoding="utf-8",
         )
+        # U123: a bundle counts only with an independent PASS for the same bundle by an Ollama author.
+        (self.pd / "runs" / task / "review_agy.json").write_text(
+            json.dumps({"verdict": "PASS", "bundle_id": "b" * 64, "author_worker": "ollama"}), encoding="utf-8")
         for p, body in files.items():
             f = self.pd / "stage" / task / p
             f.parent.mkdir(parents=True, exist_ok=True)
@@ -110,10 +113,11 @@ class CalculatorGateTest(unittest.TestCase):
     def test_unapplied_new_file_violates(self):
         self.assertEqual(len(check({"v7_harness/new.py": b"C\n"}, "feat", self.pd)), 1)
 
-    def test_calculator_exempt_reason_passes(self):
+    def test_calculator_exempt_reason_no_longer_passes(self):
+        # U123 (윤겸스 2026-10-02): the exemption line skipped the audit/Ollama/review order; it no longer covers code.
         self.assertEqual(
-            check({"v7_harness/x.py": b"A = 2\n"}, "fix\n\nCalculator-Exempt: pilot down, see PLAN\n", self.pd),
-            [],
+            len(check({"v7_harness/x.py": b"A = 2\n"}, "fix\n\nCalculator-Exempt: pilot down, see PLAN\n", self.pd)),
+            1,
         )
 
     def test_calculator_exempt_empty_reason_fails(self):
