@@ -5,6 +5,7 @@ tools. Smallest proofs on this PC (0 or 1 tiny paid call):
 - Codex 0.159.3: `codex app-server` thread/start + thread/name/set made "[U114] ..." in ~/.codex/session_index.jsonl in
   5 s with no model call; the rollout (and so the sidebar row) appears only after the first turn.
 - Claude Code 2.1.286: `claude --bg --name "[U114] ..."` started a named background session in 3 s (`claude agents`).
+  U129 removed it: the desktop app never shows such a session, so a Claude window is a recorded desktop session id.
 - Antigravity: `agy -p --output-format json` returns conversation_id; `--conversation <id>` continues it.
 A window is a record `.coord/windows/<card>.json` {card, title, tools: {tool: {id, opened_at}}}; a card opened twice in
 the same tool reuses its window. A LIMITED or ABSENT tool gets no window (U113: nothing waits in a limited thread).
@@ -21,6 +22,7 @@ from unittest import mock
 from v7_harness.coord import presence
 from v7_harness.coord import windows
 
+SESSION = "0a1b2c3d-1111-2222-3333-444455556666"
 
 class _Done:
     def __init__(self, stdout=""):
@@ -65,18 +67,13 @@ class WindowsTest(unittest.TestCase):
     def test_title_is_the_card_in_brackets(self):
         self.assertEqual("[U114] 창 분리", windows.window_title("U114", "창 분리"))
 
-    def test_claude_window_is_a_named_background_session_with_the_id_it_prints(self):
-        # Live probe 2026-10-01: `--bg` ignores `--session-id` ("--bg manages the session id"), so the id comes from
-        # the banner it prints; `claude attach|logs|stop <id>` take that id.
-        runner = _Runner(stdout="backgrounded · 41fe6b35 · [U114] 창 분리\n  claude agents             list sessions\n")
-        opened = windows.open_window(self.project, "U114", "claude", "창 분리", "read the manual", runner=runner)
-        command, cwd = runner.calls[0]
-        self.assertIn("--bg", command)
-        self.assertNotIn("--session-id", command)
-        self.assertEqual("[U114] 창 분리", command[command.index("--name") + 1])
-        self.assertEqual("41fe6b35", opened["id"])
-        self.assertEqual("read the manual", command[-1])
-        self.assertEqual(str(self.project), str(cwd))
+    def test_claude_window_is_the_desktop_session_the_caller_names(self):
+        # U129: no `claude --bg` job; the id of a visible desktop session is recorded and nothing is started.
+        runner = _Runner()
+        opened = windows.open_window(self.project, "U114", "claude", "창 분리", "read the manual", runner=runner,
+                                     session_id=SESSION)
+        self.assertEqual([], runner.calls)
+        self.assertEqual(SESSION, opened["id"])
 
     def test_antigravity_window_keeps_the_conversation_id_it_prints(self):
         runner = _Runner(stdout=json.dumps({"conversation_id": "conv-9", "response": "ok"}))
@@ -96,16 +93,16 @@ class WindowsTest(unittest.TestCase):
         self.assertEqual({"threadId": "thread-1", "name": "[U114] 창 분리"}, rpc.calls[2][1])
         self.assertEqual("thread-1", opened["id"])
 
-    def test_a_claude_start_without_an_id_records_nothing(self):
-        with self.assertRaises(RuntimeError):
-            windows.open_window(self.project, "U114", "claude", "x", "go", runner=_Runner(stdout="error: not logged in"))
+    def test_a_claude_open_without_a_session_id_records_nothing(self):
+        opened = windows.open_window(self.project, "U114", "claude", "x", "go", runner=_Runner())
+        self.assertEqual("NO_VISIBLE_SESSION", opened["refused"])
         self.assertIsNone(windows.window_for(self.project, "U114", "claude"))
 
     def test_the_record_is_shared_and_a_second_open_reuses_the_window(self):
-        runner = _Runner(stdout="backgrounded · 0a1b2c3d · [U114] 창 분리\n")
-        first = windows.open_window(self.project, "U114", "claude", "창 분리", "go", runner=runner)
+        runner = _Runner()
+        first = windows.open_window(self.project, "U114", "claude", "창 분리", "go", runner=runner, session_id=SESSION)
         second = windows.open_window(self.project, "U114", "claude", "창 분리", "go again", runner=runner)
-        self.assertEqual(1, len(runner.calls))
+        self.assertEqual(0, len(runner.calls))
         self.assertEqual(first["id"], second["id"])
         self.assertEqual(first["id"], windows.window_for(self.project, "U114", "claude"))
         record = json.loads((self.project / ".coord" / "windows" / "U114.json").read_text(encoding="utf-8"))

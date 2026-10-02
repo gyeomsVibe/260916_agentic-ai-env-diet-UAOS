@@ -909,7 +909,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_win.add_argument("--card", required=True, help="Card id, e.g. U114")
     p_coord_win.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_win.add_argument("--title", required=True, help="Window title after [card]")
-    p_coord_win.add_argument("--prompt-file", required=True, help="Manual whose content opens the window")
+    p_coord_win.add_argument("--prompt-file", required=False, default=None,
+                             help="Manual whose content opens the window (codex, antigravity)")
+    p_coord_win.add_argument("--session-id", default=None,
+                             help="U129: id of a visible Claude desktop session to record (claude only)")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
     # rsi: evidence-gated self-improvement (docs/38). observe → propose → try → gate → judge → rollback.
@@ -1238,11 +1241,16 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
 
 
 def cmd_coord_window(args: argparse.Namespace) -> int:
-    """U114: exit 0 with the window id, 2 when the tool is LIMITED/ABSENT (no window waits there)."""
+    """U114: exit 0 with the window id, 2 when the tool is LIMITED/ABSENT or, U129, Claude has no visible session."""
     from .coord import windows
 
-    prompt = Path(args.prompt_file).read_text(encoding="utf-8")
-    result = windows.open_window(Path(args.project), args.card, args.tool, args.title, prompt)
+    if args.tool != "claude" and not args.prompt_file:
+        print(json.dumps({"error": f"--prompt-file is required for {args.tool}"}, ensure_ascii=False))
+        return 2
+    prompt = Path(args.prompt_file).read_text(encoding="utf-8") if args.prompt_file else ""
+    # U129: a Claude window is a visible desktop session the caller names; nothing is launched for it.
+    extra = {} if args.session_id is None else {"session_id": args.session_id}
+    result = windows.open_window(Path(args.project), args.card, args.tool, args.title, prompt, **extra)
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("id") else 2
 
