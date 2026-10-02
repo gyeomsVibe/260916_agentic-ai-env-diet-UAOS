@@ -630,7 +630,8 @@ def deliver(
             # U120: a headless one-turn answer (U119 live: 27,989 tokens) is mailed back to the sender; a failure,
             # a loop tag or the daily cap keeps the U118 UNREAD route. UAOS_AGY_AUTO=0 opts out.
             from v7_harness.coord.agy_dispatch import dispatch
-            row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run)
+            row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run,
+                           card=card)
             detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
             unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)

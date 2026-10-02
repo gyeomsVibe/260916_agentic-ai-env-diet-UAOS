@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -22,6 +23,9 @@ TOOLS = ("codex", "claude", "antigravity")
 AGY_TIMEOUT_S = 900
 # `claude --bg` returns as soon as the session is started (3 s measured on 2026-10-01).
 CLAUDE_TIMEOUT_S = 120
+# U127: a record read or replace retries with 10 ms, 20 ms, ... back-off (about 2 s over 20 tries) while a parallel
+# writer swaps it; the parallel test (8 threads x 10 writes) hit PermissionError on the first try without it.
+RECORD_TRIES = 20
 
 
 def window_title(card: str, title: str) -> str:
@@ -34,8 +38,19 @@ def _record_path(project: Path, card: str) -> Path:
     return Path(project) / ".coord" / "windows" / f"{card}.json"
 
 
+def _retry(op: Callable[[], Any]) -> Any:
+    """U127: Windows refuses to open or replace a record while a parallel writer swaps it; retry with back-off."""
+    for attempt in range(RECORD_TRIES):
+        try:
+            return op()
+        except PermissionError:
+            if attempt == RECORD_TRIES - 1:
+                raise
+            time.sleep(0.01 * (attempt + 1))
+
+
 def _load(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return _retry(lambda: json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else {}
 
 
 def claude_session(short: str) -> tuple[str, str]:
@@ -60,6 +75,33 @@ def claude_session(short: str) -> tuple[str, str]:
 
 def window_for(project: Path, card: str, tool: str) -> str | None:
     return _load(_record_path(project, card)).get("tools", {}).get(tool, {}).get("id")
+
+
+def window_entry(project: Path, card: str, tool: str) -> dict[str, Any]:
+    """U127: the card's window entry for one tool ({} when there is none)."""
+    return dict(_load(_record_path(project, card)).get("tools", {}).get(tool) or {})
+
+
+def record_window(project: Path, card: str, tool: str, window_id: str, *, now: float | None = None,
+                  **extra: Any) -> dict[str, Any]:
+    """U127: write one tool's window for a card and keep the other tools' windows (the U114 record format)."""
+    path = _record_path(project, card)
+    record = _load(path)
+    entry = {"id": window_id, "opened_at": time.time() if now is None else now, **extra}
+    old = record.get("tools", {}).get(tool) or {}
+    if old.get("id") == window_id and "opened_at" in old:
+        entry["opened_at"] = old["opened_at"]
+    record = {"card": card, "title": record.get("title") or f"[{card}]", "tools": {**record.get("tools", {}), tool: entry}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # U127-A audit: each writer has its own temp file, so two letters for one card never swap a half-written record.
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        _retry(lambda: tmp.replace(path))
+    except PermissionError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return entry
 
 
 def _codex_rpc_session() -> Callable[[str, dict], dict]:
