@@ -80,6 +80,10 @@ REMEDIES: dict[str, tuple[str, str]] = {
     "EDIT_SEARCH_AMBIGUOUS": ("manual_template", "Extend the SEARCH text until it is unique"),
     "PROMPT_TOO_LARGE": ("manual_template", "Split the input or summarise it first (olla read map); keep one file per manual"),
     "NO_CHANGES": ("manual_template", "State one concrete verb and the exact file; read-only tasks need --allow-no-changes"),
+    # U128: Ollama answered but dropped the ===EDIT frame (U125-L2, U125-L2R) or rewrote the dictated code (U126-L);
+    # apply_after fixed all three, and copying known code through Ollama gains nothing over apply (U126 audit).
+    "NO_FILE_BLOCK": ("manual_template", "Known code goes to worker: apply with apply_after this run; give Ollama a spec, not a copy"),
+    "DICTATION_MISMATCH": ("manual_template", "Dictated code goes to worker: apply with apply_after this run; Ollama only rewrites it"),
     "PROVIDER_ERROR": ("environment", "Check that the Ollama service and model are up; do not escalate to a paid worker automatically"),
     "EXECUTION_ERROR": ("environment", "Check the worker command and the Ollama service before retrying"),
     "TIMEOUT": ("manual_template", "Split the task or raise timeout_s in the contract; reconcile the run first"),
@@ -90,6 +94,8 @@ REMEDIES: dict[str, tuple[str, str]] = {
 
 # Classes that say only "the worker failed"; the detail may name the real cause (U81).
 GENERIC_CLASSES = ("PROVIDER_ERROR", "EXECUTION_ERROR")
+# U128: worker phrases that name a cause without its key (the U125-L2 and U125-L2R ledger rows say only this).
+DETAIL_CAUSES = {"model returned no file block": "NO_FILE_BLOCK"}
 
 
 class RsiRefused(Exception):
@@ -195,10 +201,16 @@ def _cause(row: dict[str, Any]) -> str | None:
             for known in REMEDIES:
                 if known not in GENERIC_CLASSES and known in detail:
                     return known
+            for phrase, cause in DETAIL_CAUSES.items():
+                if phrase in detail:
+                    return cause
         return str(error_class)
     for known in REMEDIES:
         if known in detail:
             return known
+    for phrase, cause in DETAIL_CAUSES.items():
+        if phrase in detail:
+            return cause
     return str(row.get("rework_class") or row.get("outcome") or "UNKNOWN")
 
 

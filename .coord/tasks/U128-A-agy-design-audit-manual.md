@@ -1,0 +1,12 @@
+ACTIONABLE_DELTA verdict_requested=yes
+WORK MANUAL U128-A (Antigravity design audit; author Claude, acting conductor while Codex LIMITED)
+receipt: `rsi propose` (2026-10-02) proposal rsi_a097cb04dae9 reads U125-L2, U125-L2R and U126-L as PROVIDER_ERROR and advises "Check that the Ollama service and model are up". Ollama answered all three. Ledger error_detail: U125-L2 and U125-L2R "WorkerExecutionError: UNKNOWN_EFFECT_NEEDS_RECONCILIATION; worker: model returned no file block"; U126-L "...; worker: DICTATION_MISMATCH:v7_harness/adapters/ollama_worker.py:0". All three were fixed by worker: apply with apply_after (U125-L3, U126-L2). So the RSI loop gives the conductor a wrong remedy for its most common recent Ollama failure.
+current code (v7_harness/rsi.py): REMEDIES maps a cause to (target, action). `_cause(row)`: a generic class (PROVIDER_ERROR, EXECUTION_ERROR) becomes a REMEDIES key named in error_detail (U81); otherwise the class stays. Neither "no file block" nor DICTATION_MISMATCH is a REMEDIES key.
+design U128 (3 small edits, rsi.py only):
+D1 REMEDIES gains "NO_FILE_BLOCK" and "DICTATION_MISMATCH", both target manual_template, action "Known/Dictated code goes to worker: apply with apply_after this run; give Ollama a spec, not a copy / Ollama only rewrites it".
+D2 new `DETAIL_CAUSES = {"model returned no file block": "NO_FILE_BLOCK"}`: worker phrases that name a cause without its key, so the existing U125 rows reclassify without rewriting the ledger.
+D3 `_cause` checks DETAIL_CAUSES after the REMEDIES keys, in both the generic-class branch and the no-class branch. A specific class is still never overridden (U81 test).
+not touched: the gate (`rsi gate` recomputes pass/rework from outcomes, not causes), the ledger, the tests of U36/U81/U125.
+judge tests (before the run): tests/test_u128_ollama_format_cause.py, 6 tests (5 fail before). Judge reference passes them with U81, U36 and U125.
+questions: 1. Is `_cause` an evaluator under "evaluators are never improvement targets"? My reading: it labels failures for proposals; the gate decides from outcomes. 2. Should routing.py _FORMAT_MARKERS (already has "no file block") be the single source instead of a second table? 3. Any ledger row whose detail contains "model returned no file block" but whose real cause was the service?
+reply: PASS / REVISE (concrete changes) / FAIL, each point with file:line or a counterexample. Read only.
