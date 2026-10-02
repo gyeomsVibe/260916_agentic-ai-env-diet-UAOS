@@ -1276,6 +1276,19 @@ def cmd_coord_publish_thread(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sentinel_loop_owner(pid_file: Path, interval: float) -> int:
+    """Pid of a live sentinel loop holding pid_file, else 0. U122: Windows reuses pids, so only a file the loop
+    rewrote within three cycles (floor 180 s; one tick took up to 8 s) counts; an older one is stale."""
+    from .coord.sentinel import _is_pid_alive
+    import time
+    try:
+        running = int(pid_file.read_text(encoding="utf-8").strip())
+        age = time.time() - pid_file.stat().st_mtime
+    except (OSError, ValueError):
+        return 0
+    return running if age < max(180.0, 3 * interval) and running != os.getpid() and _is_pid_alive(running) else 0
+
+
 def cmd_coord_sentinel(args: argparse.Namespace) -> int:
     """U23 S4 / U32b: 0-token sentinel (deterministic rules, no model call) — one cycle or a resident loop."""
     import time
@@ -1311,19 +1324,14 @@ def cmd_coord_sentinel(args: argparse.Namespace) -> int:
 
     if args.loop:
         # A logon task and a manual start must not run two operators on one project.
-        from .coord.sentinel import _is_pid_alive
-
         pid_file = project / ".work" / "sentinel" / "loop.pid"
-        try:
-            running = int(pid_file.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            running = 0
-        if running and running != os.getpid() and _is_pid_alive(running):
+        running = _sentinel_loop_owner(pid_file, args.interval)
+        if running:
             _report({"ok": True, "skipped": "ALREADY_RUNNING", "pid": running})
             return 0
         pid_file.parent.mkdir(parents=True, exist_ok=True)
-        pid_file.write_text(str(os.getpid()), encoding="utf-8")
         while True:
+            pid_file.write_text(str(os.getpid()), encoding="utf-8")  # U122: each cycle refreshes the heartbeat
             # A resident operator must outlive one bad cycle (locked file, corrupt line); it reports and goes on.
             try:
                 res = _execute_once()
