@@ -167,10 +167,12 @@ def _open_codex(project: Path, title: str, prompt: str, rpc: Callable[[str, dict
             rpc.proc.kill()
 
 
-def _open_antigravity(project: Path, prompt: str, runner: Callable[..., Any]) -> str:
+def _open_antigravity(project: Path, prompt: str, runner: Callable[..., Any]) -> tuple[str, int | None]:
     done = runner([shutil.which("agy") or "agy", "-p", prompt, "--output-format", "json"], cwd=str(project),
                   capture_output=True, text=True, encoding="utf-8", timeout=AGY_TIMEOUT_S)
-    return str(json.loads(done.stdout)["conversation_id"])
+    envelope = json.loads(done.stdout)
+    tokens = (envelope.get("usage") or {}).get("input_tokens")
+    return str(envelope["conversation_id"]), tokens if type(tokens) is int and tokens >= 0 else None
 
 
 def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
@@ -192,6 +194,7 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
     if state in ("LIMITED", "ABSENT"):  # U113: nothing waits in a limited tool's thread
         return {"refused": state, "tool": tool, "card": card}
     name = window_title(card, title)
+    extra: dict[str, Any] = {}
     if tool == "codex":
         window_id = _open_codex(project, name, prompt, rpc)
     elif tool == "claude":
@@ -204,8 +207,10 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
                     "message": SESSION_BUSY.format(session=session_id, holder=holder)}
         window_id = session_id
     else:
-        window_id = _open_antigravity(project, prompt, runner)
-    entry = {"id": window_id, "opened_at": time.time() if now is None else now}
+        window_id, tokens = _open_antigravity(project, prompt, runner)
+        if tokens is not None:  # U131: the opening turn's size, so the U127 resume cap can read it
+            extra["last_input_tokens"] = tokens
+    entry = {"id": window_id, "opened_at": time.time() if now is None else now, **extra}
     record = {"card": card, "title": name, "tools": {**record.get("tools", {}), tool: entry}}
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
