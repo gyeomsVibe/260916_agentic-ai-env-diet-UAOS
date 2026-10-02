@@ -1331,9 +1331,9 @@ def cmd_coord_sentinel(args: argparse.Namespace) -> int:
             return 0
         pid_file.parent.mkdir(parents=True, exist_ok=True)
         while True:
-            pid_file.write_text(str(os.getpid()), encoding="utf-8")  # U122: each cycle refreshes the heartbeat
             # A resident operator must outlive one bad cycle (locked file, corrupt line); it reports and goes on.
             try:
+                pid_file.write_text(str(os.getpid()), encoding="utf-8")  # U122: each cycle refreshes the heartbeat
                 res = _execute_once()
             except Exception as exc:  # noqa: BLE001
                 res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
