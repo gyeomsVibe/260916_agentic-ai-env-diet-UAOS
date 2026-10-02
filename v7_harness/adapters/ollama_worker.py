@@ -536,12 +536,32 @@ def degenerate(text: str) -> bool:
     return False
 
 
+def _reframe_dictation(text: str, task: str) -> str | None:
+    """U126: the dictated EDIT blocks when the reply gives exactly their REPLACE lines without the frame, else None.
+
+    U125-L2 and U125-L2R replied to a one-block dictation with only the REPLACE text, fenced under `===FILE / path===`
+    (a 363-token probe without file context did the same). Fence and `===` lines are dropped; every other non-blank
+    line must equal the dictated REPLACE lines in order, indentation included. A dictated FILE block is never reframed.
+    """
+    task = task.replace("\r\n", "\n")
+    if any(m.group("path").strip() != TEMPLATE_PATH for m in BLOCK_RE.finditer(task)):
+        return None
+    blocks = [m for m in EDIT_RE.finditer(task) if m.group("path").strip() != TEMPLATE_PATH]
+    want = [line for m in blocks for line in m.group("replace").split("\n") if line.strip()]
+    got = [line for line in text.replace("\r\n", "\n").split("\n")
+           if line.strip() and not line.lstrip().startswith(("```", "==="))]
+    return "\n\n".join(m.group(0) for m in blocks) + "\n" if blocks and want == got else None
+
+
 def _try_apply(text: str, workspace: Path, task: str) -> tuple[list[str], str]:
     """(written paths, "") on success, ([], reason) when the reply cannot be used."""
     if degenerate(text):
         return [], f"DEGENERATE: one line repeated {REPEAT_LIMIT}+ times in a row"
     if "===FILE:" not in text and "===EDIT:" not in text:
-        return [], "model returned no file block"
+        reframed = _reframe_dictation(text, task)
+        if reframed is None:
+            return [], "model returned no file block"
+        text = reframed
     try:
         written = _apply(text, workspace, task=task)
     except ValueError as exc:
