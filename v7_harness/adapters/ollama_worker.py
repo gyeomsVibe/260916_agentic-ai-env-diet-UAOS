@@ -93,6 +93,19 @@ Rules:
   function, class, or constant COMPLETE; each replaces the one with the same name, and new names are added.
 """
 
+# U124: the TASK already holds the exact blocks (Antigravity's U23 way) and the model only copies them. No fenced
+# format here: U124-L re-emitted a whole function that way and dropped three of its lines.
+DICTATION_RULES = """
+You are copying edits into files. The TASK below already contains the exact edit blocks.
+
+Reply with nothing but those same blocks, copied character for character, in the same order and the same format.
+
+Rules:
+- Do not change, shorten, merge, reorder, or add blocks.
+- Do not rewrite whole functions or whole files the TASK did not write that way.
+- Do not add explanations or markdown fences.
+"""
+
 
 REPAIRS = int(os.environ.get("OLLAMA_WORKER_REPAIRS", "1"))  # U109: one free retry with the error fed back; a same-seed retry repeats the reply
 REPEAT_LIMIT = 8  # U109: one line this many times in a row is a loop (U109-S wrote 300+ copies), not code
@@ -151,6 +164,17 @@ def dictated_paths(text: str) -> list[str]:
     return sorted({path for path in found if path != TEMPLATE_PATH})
 
 
+def _rules_for(named: list[tuple[str, str]], task: str = "") -> str:
+    """U124: dictated blocks are copied (DICTATION_RULES). An existing .py file always gets find-and-replace, since a
+    whole-file rewrite let the 7B model drop untouched functions (U123-L, U123-L2). Other files keep the length rule."""
+    if dictated_paths(task):
+        return DICTATION_RULES
+    if any(name.endswith(".py") for name, _text in named):
+        return EDIT_RULES
+    longest = max((len(text.splitlines()) for _name, text in named), default=0)
+    return EDIT_RULES if longest >= EDIT_MODE_MIN_LINES else FORMAT_RULES
+
+
 def _guard(rel: str, target: Path, content: str, task: str) -> None:
     """Deterministic checks on a worker's new file before anything is written.
 
@@ -171,8 +195,8 @@ def _guard(rel: str, target: Path, content: str, task: str) -> None:
         raise ValueError(f"UNREQUESTED_DELETION:{rel}:{','.join(unrequested[:5])}")
 
 
-def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
-    """모델이 돌려준 블록을 작업공간에 쓴다. 작업공간 밖 경로는 거부한다.
+def _plan(text: str, workspace: Path, fenced: bool = True) -> tuple[dict[Path, tuple[str, str]], list[str]]:
+    """블록을 메모리에서 새 파일 내용으로 바꾼다(쓰지 않는다). 작업공간 밖 경로는 거부한다. U124: _apply 와 받아쓰기 검사가 함께 쓴다.
 
     두 형식을 받는다. `===FILE:`는 파일 전체, `===EDIT:`는 찾아서 바꾸기다.
     찾아서 바꾸기는 SEARCH가 정확히 한 번 나올 때만 적용한다. 0번이면 모델이 원문을
@@ -216,7 +240,7 @@ def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
         if rel not in written:
             written.append(rel)
 
-    for match in FENCED_EDIT_RE.finditer(text):
+    for match in (FENCED_EDIT_RE.finditer(text) if fenced else ()):
         from v7_harness.adapters.def_splice import splice_definitions
         rel, target = _target(workspace, match.group("path"))
         if target.suffix.lower() != ".py" or not (target in pending or target.is_file()):
@@ -226,6 +250,21 @@ def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
         if rel not in written:
             written.append(rel)
 
+    return pending, written
+
+
+def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
+    """모델이 돌려준 블록을 작업공간에 쓴다.
+
+    U124: when the task itself holds ===EDIT or ===FILE blocks (dictation, Antigravity's U23 way), the model only
+    copies them. The task's blocks are planned first, so a SEARCH that does not apply, or FILE and EDIT for one path,
+    fails fast (relay_37ea8879). The reply must then give exactly the same files and contents, else DICTATION_MISMATCH
+    and nothing is written (U124-L dropped three lines of a function it re-emitted).
+    """
+    expected = _dictation_plan(task, workspace)
+    pending, written = _plan(text, workspace, fenced=expected is None)
+    if expected is not None:
+        _check_dictation(expected, pending)
     endings = {target: _line_ending(rel, target) for target, (rel, _content) in pending.items()}
     for target, (rel, content) in pending.items():
         _guard(rel, target, content, task)
@@ -235,6 +274,33 @@ def _apply(text: str, workspace: Path, task: str = "") -> list[str]:
         # acceptance failed on a correct edit. Keep the line ending the file already uses; a new file gets LF.
         target.write_bytes(content.replace("\r\n", "\n").replace("\n", endings[target]).encode("utf-8"))
     return written
+
+
+def _dictation_plan(task: str, workspace: Path) -> dict[Path, tuple[str, str]] | None:
+    """Expected contents of the files the task dictates, or None when the task dictates nothing."""
+    task = task.replace("\r\n", "\n")
+    if not dictated_paths(task):
+        return None
+    files = {m.group("path").strip() for m in BLOCK_RE.finditer(task)}
+    edits = {m.group("path").strip() for m in EDIT_RE.finditer(task)}
+    for rel in sorted((files & edits) - {TEMPLATE_PATH}):
+        raise ValueError(f"DICTATION_BLOCK_CONFLICT:{rel}")
+    try:
+        return _plan(task, workspace, fenced=False)[0]
+    except ValueError as exc:
+        raise ValueError(f"DICTATION_{exc}") from exc
+
+
+def _check_dictation(expected: dict[Path, tuple[str, str]], pending: dict[Path, tuple[str, str]]) -> None:
+    """The reply must change exactly the dictated files, each to exactly the dictated content (line endings aside)."""
+    for target in sorted(set(expected) | set(pending)):
+        rel = (expected.get(target) or pending[target])[0]
+        want = expected[target][1].replace("\r\n", "\n").split("\n") if target in expected else None
+        got = pending[target][1].replace("\r\n", "\n").split("\n") if target in pending else None
+        if want != got:
+            line = 0 if want is None or got is None else next(
+                (i + 1 for i, (a, b) in enumerate(zip(want, got)) if a != b), min(len(want), len(got)) + 1)
+            raise ValueError(f"DICTATION_MISMATCH:{rel}:{line}")
 
 
 def _line_ending(rel: str, target: Path) -> str:
@@ -391,8 +457,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 대상 파일 중 하나라도 길면 찾아서 바꾸기 형식을 요구한다. 짧은 파일은 전체 재작성이
     # 더 안정적이다(벤치 6과제 모두 전체 재작성으로 통과).
-    longest = max((len(text.splitlines()) for _name, text in named), default=0)
-    rules = EDIT_RULES if longest >= EDIT_MODE_MIN_LINES else FORMAT_RULES
+    rules = _rules_for(named, args.prompt)
     prompt = f"{rules}\n\nTASK:\n{args.prompt}\n\nCURRENT CONTENTS:{whole}\n\nNow output the blocks."
     # 문맥을 넘는 프롬프트는 모델을 부르지 않고 바로 실패시킨다. 잘린 입력으로 600초를 기다린 뒤 실패하던 것을
     # 즉시 실패로 바꿔 cascade 가 곧바로 agy 로 넘긴다. 한국어가 1글자 3바이트·약 1토큰이라 바이트/3 으로 어림한다.
@@ -412,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
                     else:
                         blocks.append(file_block)
                 cand_context = "".join(blocks)
-                cand_rules = EDIT_RULES
+                cand_rules = DICTATION_RULES if rules is DICTATION_RULES else EDIT_RULES
                 cand_prompt = f"{cand_rules}\n\nTASK:\n{args.prompt}\n\nCURRENT CONTENTS:{cand_context}\n\nNow output the blocks."
                 cand_est = len(cand_prompt.encode("utf-8")) // 3
                 if cand_est <= limit:
