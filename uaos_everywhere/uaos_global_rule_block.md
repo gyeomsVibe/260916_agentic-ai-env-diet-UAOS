@@ -5,6 +5,7 @@
 - UAOS 프로젝트가 아니고 둘 이상의 도구가 협업할 일이면 `uaos coord init --project <루트>`로 준비한다. 기존 파일은 덮어쓰지 않는다.
 - 프로젝트 시작 전에 `.coord/PROJECT_MANUAL.md`, 모든 위임 전에 해시 고정 계약 매뉴얼을 발행·lint하고 그 내용 전체를 호출에 전달한다. 유료 작업자는 token/USD/time 상한을 따로 두며 초과 결과는 승인하지 않는다.
 - 권한대행은 `Codex ACTIVE → Codex`, 아니면 `Claude ACTIVE → Claude`, 둘 다 LIMITED/ABSENT일 때만 `Antigravity ACTIVE → Antigravity`다. UNKNOWN은 대행 근거가 아니며 `uaos coord route`가 fail-closed 한다. 잔여율·리셋 창을 토큰으로 환산하지 않는다.
+- 기본 카드 파이프라인(U130): 모든 카드는 `uaos card new --card U## --title <제목>`의 4단계 틀(조사 → MIA → 실행 → 검증)로 시작하고, 각 단계의 기본 작업자는 Ollama 먼저(조사 요약·지도·초안, 코드 명세 `worker: local`), 다음 Antigravity(출처·설계 감사, `pilot review --reviewer agy`, Ollama 실패·다파일 작업), 그다음 Claude Code·`worker: apply`(U98-D)다. Ollama 호출은 `uaos card claim`, 건너뛴 칸은 `uaos card skip`(OLLAMA_DOWN·AGY_LIMITED는 실측 확인, TASK_CLASS는 코드 변경 카드에 무효)으로 장부에 남긴다. `uaos card audit --card U##`가 0이 아니면 커밋 관문과 `rsi ship`이 거부하고, `coord window`는 단계 칸이 빠진 매뉴얼을 거부한다.
 - Ollama는 계산기다. 요약·추출·정확한 치환만 하고 설계·승인·판정은 하지 않는다. 같은 원인으로 두 번 실패하면 경로를 바꾼다. 유료 모델로 기다림 폴링이나 예약 호출을 하지 않는다. 기다림은 우편함과 교환원(sentinel)이 맡는다.
 - 건설적 자율 릴레이: 생존 확인·동일 상태·빈 출력은 `ACK_ONLY`로 조용히 기록한다. 실제 변화·실패 관문·P1·판정/승인 필요만 `ACTIONABLE_DELTA`이며, 중복·소유권 확인 뒤 가장 작은 `READY`를 고정 인수와 카드 기록까지 끝낸다.
 - 요구·증거·설계·소유권 또는 `coord route`가 확인한 경로가 바뀌면(`UNKNOWN`은 변화 아님) 영향받은 가정·카드와 설계·고정 인수·계약 매뉴얼을 갱신한 뒤 실행·독립 비판·검증을 반복한다. 같은 카드는 최대 2회 재계획한 뒤 경로를 한 번 바꾸며 3배 비용 회귀는 실패다. 도구 검토·테스트·PR 준비·다음 카드는 내부 의존성이지 사용자 일이 아니지만, 이 분류는 사람 확인 목록을 바꾸지 않는다. 사용자에게 다시 시작이나 계속 명령을 요구하지 않는다.

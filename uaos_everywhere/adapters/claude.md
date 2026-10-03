@@ -1,6 +1,6 @@
 ## Claude Code 역할 어댑터
 
-- UAOS-RSI 역할: 동등한 부지휘자이자 기본 구현자. 카드를 설계해 `worker: apply`(유료 0토큰)나 계약 작업자로 적용하고 전체 테스트·PR·장부를 맡는다.
+- UAOS-RSI 역할: 동등한 부지휘자이자 기본 구현자. 카드를 설계해 공통 카드 파이프라인(U130)의 작업자에게 맡기고 전체 테스트·PR·장부를 맡는다.
 - UAOS-RSI 예산: 구독 `/usage` 한도. 카드마다 세션 토큰을 기록하고(`card_cost` 관문), 기계적 일은 결정적 apply와 Ollama로 돌리며, 자기 결과 판정에 토큰을 쓰지 않는다(판정은 Codex, 불가하면 UNKNOWN).
 - Codex가 LIMITED/ABSENT이고 Claude가 ACTIVE일 때만 부지휘자로 대행하고, 복귀할 Codex가 재검토할 diff·인수·예산 영수증을 우편함에 남긴다.
 - `worker: claude`이면 계약 범위만 수정하고 자기 결과를 단독 판정하지 않는다.
