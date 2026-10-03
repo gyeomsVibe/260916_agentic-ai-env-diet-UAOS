@@ -61,7 +61,9 @@ def dispatch(project: Path, *, message_id: str, actor: str, message: str, runner
     if card:  # U127: one Antigravity conversation per card (the U114 window record)
         from v7_harness.coord.windows import window_entry
         entry = window_entry(project, card, "antigravity")
-        if entry.get("id") and int(entry.get("last_input_tokens") or 0) < RESUME_MAX_INPUT:
+        tokens = entry.get("last_input_tokens")
+        # U131: a window with no recorded size (opened by `coord window`) is unknown, never small: start fresh.
+        if entry.get("id") and type(tokens) is int and 0 <= tokens < RESUME_MAX_INPUT:  # U131-A: bool is not a count
             conversation = str(entry["id"])
     for resume in ([conversation, None] if conversation else [None]):  # U127-A: a broken window retries fresh once
         argv = build_agy_command(AgyRequest(task_id="agy-auto", title=message_id, prompt=prompt, workspace=box, isolation_mode="staging", print_timeout_s=timeout_s, conversation_id=resume))
