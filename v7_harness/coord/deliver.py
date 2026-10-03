@@ -36,6 +36,12 @@ from v7_harness.coord.stream import SECRET_PATTERNS, _try_lock, _unlock
 from v7_harness.coord.mailbox import Mailbox
 
 
+AGY_APP_HOME_ENV = "UAOS_AGY_APP_HOME"  # tests point this at a fixture; default ~/.gemini/antigravity
+
+
+REPLACE_TRIES = 20  # Windows refuses os.replace while another process replaces the same file; 20 x 50 ms = 1 s
+
+
 @dataclass(frozen=True)
 class DeliverResult:
     delivered: bool
@@ -732,7 +738,7 @@ def _verify_thread(desk: Path, root: Path, thread: str) -> str:
 #   written by temp file + os.replace, so a reader sees the old or the new record, never half of one.
 # - verified at every delivery (`_verify_thread`); a stale desk (rollout gone, other project) fails closed as
 #   USER_DESK_STALE and the letter stays in the mailbox until the next human prompt registers a live desk.
-USER_DESK_TOOLS = ("codex", "claude")
+USER_DESK_TOOLS = ("codex", "claude", "antigravity")
 
 
 def user_desk_path(project: Path, tool: str) -> Path:
@@ -777,8 +783,14 @@ def register_user_desk(project: Path, tool: str, thread: str, *, source: str) ->
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     temp.write_text(json.dumps({"thread": thread, "at": time.time(), "source": source}), encoding="utf-8")
-    os.replace(temp, path)
-    return True
+    for _attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(temp, path)
+            return True
+        except PermissionError:
+            time.sleep(0.05)
+    temp.unlink(missing_ok=True)
+    return False
 
 
 def _queue_dir(project: Path, tool: str) -> Path:
@@ -1255,3 +1267,10 @@ def deliver(
                                  card=card, window=window or "")
     finally:
         _release_guard(guard, owner)
+
+
+def agy_desktop_conversation(conversation: object) -> bool:
+    if not isinstance(conversation, str) or not UUID_RE.fullmatch(conversation):
+        return False
+    home = Path(os.environ.get(AGY_APP_HOME_ENV) or (Path.home() / ".gemini" / "antigravity"))
+    return (home / "conversations" / f"{conversation}.db").is_file() or (home / "brain" / conversation).is_dir()

@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,15 @@ MAX_REPLY_CHARS = 1500
 # U127: a resumed turn re-reads the conversation (probe: 53,072 input tokens against about 25,000 fresh, +28,000 a
 # turn). Past this the card starts fresh, so the next turn still fits the 100,000 review budget (U127-A audit).
 RESUME_MAX_INPUT = 70_000
+
+# U148: every daily count names one day for all 3 tools, the user's: Asia/Seoul, a fixed UTC+9 because Korea has had
+# no daylight saving since 1988 and Windows Python has no tz database without the tzdata package.
+SEOUL = timezone(timedelta(hours=9))
+
+
+def seoul_day(ts: float) -> str:
+    """U148: the Asia/Seoul calendar day of a Unix time, as YYYY-MM-DD."""
+    return datetime.fromtimestamp(ts, SEOUL).strftime("%Y-%m-%d")
 
 def _ledger(project: Path) -> Path:
     return Path(project) / ".coord" / "mailbox" / "delivery" / "agy_auto.jsonl"
@@ -92,3 +102,29 @@ def dispatch(project: Path, *, message_id: str, actor: str, message: str, runner
     row = {"ts": now, "message_id": message_id, "state": "ANSWERED", "reply_id": sent.message_id, "usage": dict(outcome.usage), "conversation_id": outcome.conversation_id}
     _record(project, row)
     return row
+
+
+def answered_today(project: Path, now: float) -> list[str]:
+    """U148: message ids Antigravity answered headless on the Asia/Seoul day of `now`, newest first, each id once
+    (a letter answered twice is one answer). FAILED rows are not answers. The board line and the desk conversation's
+    hook line both read this one ledger."""
+    ledger = _ledger(project)
+    try:
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    day = seoul_day(now)
+    kept: list[str] = []
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("state") != "ANSWERED":
+            continue
+        ts, message_id = row.get("ts"), row.get("message_id")
+        if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not isinstance(message_id, str):
+            continue
+        if seoul_day(ts) == day and message_id not in kept:
+            kept.append(message_id)
+    return kept

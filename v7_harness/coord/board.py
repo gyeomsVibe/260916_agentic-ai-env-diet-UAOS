@@ -28,6 +28,13 @@ from v7_harness.coord.presence import CODEX_SESSIONS_ENV
 
 CLAUDE_PROJECTS_ENV = "UAOS_CLAUDE_PROJECTS"  # tests point these at fixtures
 AGY_BRAIN_ENV = "UAOS_AGY_BRAIN"
+OLLA_USAGE_ENV = "OLLA_USAGE"  # the override olla.py reads; default ~/.cache/olla/usage.jsonl, shared by all 3 tools
+# U148: olla usage events that are real local-model calls (hints, plans and turn shapes are not calls). Each row is
+# one call; olla writes no call id, so rows are not deduplicated. A failed call (status ERROR) still ran and counts.
+OLLAMA_CALLS = ("ask", "edit", "digest", "find", "pilot_local", "pilot_local_repair")
+# A preflight refusal never reached the model (Codex: a zero-input preflight is not a call), so it does not count.
+OLLAMA_PREFLIGHT = ("PROMPT_TOO_LARGE",)
+OLLAMA_STEP = 10  # the line shows tens past 10, so the remembered state changes once per 10 calls, not every call
 # A transcript written in the last 120 s counts as a running turn: Claude Code and Antigravity write one line per
 # message or tool call, and a single model call rarely thinks longer than two minutes without a line.
 WORKING_WINDOW_S = 120
@@ -181,6 +188,32 @@ STATUS_ROLLOUTS = 3  # the in-app line reads only the newest Codex rollouts: a h
 NAMES = {"codex": "Codex", "claude": "Claude", "antigravity": "Antigravity"}
 
 
+def ollama_calls_today(now: float) -> int:
+    """U148: local-model calls on the Asia/Seoul day of `now`, from the usage log every tool's olla writes.
+    olla stamps rows in the machine's local time without a zone; that time is the user's, Asia/Seoul."""
+    from v7_harness.coord.agy_dispatch import seoul_day
+
+    path = Path(os.environ.get(OLLA_USAGE_ENV) or (Path.home() / ".cache" / "olla" / "usage.jsonl"))
+    day = seoul_day(now)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    count = 0
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        # A row may be a JSON list or number, and a ts may be a number, so both are checked before use.
+        if not isinstance(row, dict) or not isinstance(row.get("ts"), str):
+            continue
+        if row.get("event") in OLLAMA_CALLS and row.get("status") not in OLLAMA_PREFLIGHT \
+                and row["ts"].startswith(day):
+            count += 1
+    return count
+
+
 def status_line(project: Path, tool: str, letters: list[str], now: float | None = None) -> str:
     """U147: one line for the user inside `tool`'s own app: new letters, and whether the other two work right now.
 
@@ -203,7 +236,11 @@ def status_line(project: Path, tool: str, letters: list[str], now: float | None 
              "antigravity": _recent_word(working["antigravity"], everywhere=True)}
     others = " · ".join(f"{NAMES[name]} {words[name]}" for name in working if name != tool)
     mail = f"📬 새 편지 {len(letters)}통: {letters[0][:50]} | " if letters else ""
-    return f"[UAOS] {mail}{others}"
+    from v7_harness.coord.agy_dispatch import answered_today
+
+    calls = ollama_calls_today(moment)
+    ollama = f"올라마 오늘 {calls}회" if calls < OLLAMA_STEP else f"올라마 오늘 {calls - calls % OLLAMA_STEP}회 이상"
+    return f"[UAOS] {mail}{others} · {ollama} · Antigravity 답장 {len(answered_today(project, moment))}통"
 
 
 def line_is_new(project: Path, tool: str, line: str) -> bool:
