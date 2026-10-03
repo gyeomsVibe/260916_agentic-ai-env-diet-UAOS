@@ -23,7 +23,7 @@ def normalized(path: Path) -> str:
 class BriefKoCopyTests(unittest.TestCase):
     def test_copy_has_the_current_report_shape(self) -> None:
         text = normalized(COPY)
-        # U131 (2026-10-02, 윤겸스): the five-field shape gave 20-line reports; the style now caps a report at 3 lines.
+        # U132 (2026-10-02, 윤겸스): the five-field shape gave 20-line reports; the style now caps a report at 3 lines.
         for line in ("**결과**:", "at most 3 lines", "no nested bullets"):
             self.assertIn(line, text)
         self.assertNotIn("- 근거:", text)
