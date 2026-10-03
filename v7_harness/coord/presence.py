@@ -32,6 +32,10 @@ EVENTS_FILE = "events.jsonl"
 # U134: a hook must return in milliseconds, so queued letters are sent by a detached process that outlives it.
 QUEUE_SPAWN_CODE = ("import sys; from v7_harness.coord.deliver import dispatch_queued; "
                     "dispatch_queued(sys.argv[1], sys.argv[2])")
+# U134-R F3 (Codex REWORK relay_a868ed76): a turn start proves app activity, not recovered provider quota. A lease
+# names who wrote it: `manual` (coord presence --lease) may be cleared by a turn start, `provider` (judge.py from a 429
+# answer) may not, and "" is a lease written before U134-R, kept like a provider one (fail closed).
+LEASE_SOURCES = ("", "manual", "provider")
 
 
 class PresenceRejected(ValueError):
@@ -46,7 +50,7 @@ def _path(project: Path, tool: str) -> Path:
 
 def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, now: float | None = None,
          lease: bool = False, session: str | None = None, turn_start: bool = False, dispatch: bool = False,
-         runner: Any = None) -> Path:
+         runner: Any = None, lease_source: str = "") -> Path:
     """Write one heartbeat. `lease=True` records a capability fact (e.g. a provider's quota answer) that a session
     heartbeat of another state cannot overwrite before it expires.
 
@@ -62,6 +66,8 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
         raise PresenceRejected(f"unknown state: {state}")
     if ttl_s <= 0:
         raise PresenceRejected("ttl_s must be positive")
+    if lease_source not in LEASE_SOURCES:
+        raise PresenceRejected(f"unknown lease_source: {lease_source}")
     moment = time.time() if now is None else now
     target = _path(project, tool)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -73,15 +79,23 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
     }
     if lease:
         record["lease"] = True
+        if lease_source:
+            record["lease_source"] = lease_source
     held = ""
     cleared = ""
+    kept: dict[str, Any] = {}
     # U47-RW1c: Codex's race (2026-09-27) let a heartbeat pass the lease check, a lease land, and the heartbeat then
     # replace it. The check and the replace now happen under one lock shared by threads and processes.
     with _tool_lock(target):
+        held_record: dict[str, Any] = {}
         if not lease and _live_lease(target, moment, state):
-            held = _lease_state(target)
+            held_record = _lease_record(target)
+            held = str(held_record.get("state") or "")
         if held and turn_start and state == "ACTIVE" and held in ("LIMITED", "ABSENT"):
-            cleared = held
+            if held_record.get("lease_source") == "manual":
+                cleared = held
+            else:
+                kept = held_record
         if not held or cleared:
             if session and not lease:
                 record = _merge_session(target, record, session, state, moment, ttl_s)
@@ -91,6 +105,12 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
     if cleared:
         _log_event(target.parent, {"kind": "LEASE_CLEARED_BY_TURN", "tool": tool, "cleared_state": cleared,
                                    "at": record["observed_at"], "session": session or ""})
+    if kept:
+        _log_event(target.parent, {"kind": "LEASE_KEPT_PROVIDER", "tool": tool, "kept_state": kept.get("state", ""),
+                                   "lease_source": kept.get("lease_source") or "legacy",
+                                   "lease_observed_at": kept.get("observed_at", ""), "at": record["observed_at"],
+                                   "session": session or ""},
+                   once_by=("kind", "tool", "lease_observed_at"))
     # An ACTIVE lease also means the desk reads ACTIVE, so its queued letters may go too.
     if dispatch and state == "ACTIVE" and (not held or cleared or held == "ACTIVE"):
         _dispatch_queued(project, tool, runner)
@@ -388,11 +408,32 @@ def _lease_state(target: Path) -> str:
     return str(record.get("state") or "") if isinstance(record, dict) else ""
 
 
-def _log_event(presence_dir: Path, event: dict[str, Any]) -> None:
+def _lease_record(target: Path) -> dict[str, Any]:
+    """U134: the live lease record (state, lease_source, observed_at); read under the tool lock right after
+    `_live_lease` answered True. An unreadable file holds nothing."""
+    try:
+        record = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _log_event(presence_dir: Path, event: dict[str, Any], *, once_by: tuple[str, ...] = ()) -> None:
     """U134: append one desk event line. Two tools can clear their leases at once and Windows loses concurrent
-    appends, so the events file has its own lock (taken after the heartbeat lock is released: it is not reentrant)."""
+    appends, so the events file has its own lock (taken after the heartbeat lock is released: it is not reentrant).
+    U134-R: with `once_by`, the line is skipped when an earlier line has the same values for those keys; the check
+    runs under the same lock, so two parallel heartbeats still write it once."""
     path = presence_dir / EVENTS_FILE
     with _tool_lock(path):
+        if once_by and path.is_file():
+            key = tuple(event.get(name) for name in once_by)
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    earlier = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(earlier, dict) and tuple(earlier.get(name) for name in once_by) == key:
+                    return
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 

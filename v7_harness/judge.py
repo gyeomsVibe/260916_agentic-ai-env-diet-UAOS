@@ -295,7 +295,8 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
 
                     marked_at = time.time()
                     mark(Path(project or source).resolve(), JUDGE_TOOL[judge], "LIMITED",
-                         ttl_s=quota_ttl(provider_message), now=marked_at, lease=True)  # U47-A1b
+                         ttl_s=quota_ttl(provider_message), now=marked_at, lease=True,  # U47-A1b
+                         lease_source="provider")  # U134-R F3: a provider's 429 answer outlives a turn start
                     presence_marked = "LIMITED"
     except subprocess.TimeoutExpired:
         error = f"JUDGE_TIMEOUT:{timeout_s}s"

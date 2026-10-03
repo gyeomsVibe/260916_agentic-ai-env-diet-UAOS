@@ -43,13 +43,14 @@ class DispatchOnActiveTest(unittest.TestCase):
         day.mkdir(parents=True)
         # A live Codex thread of this project, so the given thread id is kept (U134-D falls back only otherwise).
         (day / f"rollout-2026-10-03T06-24-00-{THREAD}.jsonl").write_text(
-            json.dumps({"type": "session_meta", "payload": {"session_id": THREAD, "cwd": str(self.project)}}) + "\n",
+            json.dumps({"type": "session_meta", "payload": {"id": THREAD, "session_id": THREAD,
+                                                            "cwd": str(self.project)}}) + "\n",
             encoding="utf-8")
         self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(self.sessions)})
         self._env.start()
         self._which = mock.patch("v7_harness.coord.deliver.shutil.which", return_value="codex")
         self._which.start()
-        presence.mark(self.project, "codex", "LIMITED", ttl_s=86400, lease=True)
+        presence.mark(self.project, "codex", "LIMITED", ttl_s=86400, lease=True, lease_source="manual")
 
     def tearDown(self):
         self._which.stop()

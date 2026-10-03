@@ -50,7 +50,28 @@ Codex는 데스크톱 앱에서 대답하고 있었는데(스레드 `01a1006f-�
 - U134-L4 정확 적용(`worker: apply`, `apply_after: U134-L2`) deliver.py·presence.py·cli.py: 인수 82개 통과, Antigravity 코드 검토 PASS(입력 30,366·출력 6,027), 승인 적용.
 - 설계 감사: Antigravity relay_fa9c73db PASS(입력 23,956·출력 2,446).
 
-## 8. 확인 명령
+## 8. U134-R 재작업 1블록: 임대 출처(F3, 2026-10-03)
+
+Codex 검토(relay_a868ed76)에서 이런 지적이 나왔다. "SessionStart·UserPromptSubmit은 앱이 움직인다는 증거일 뿐, 제공자(provider) 한도가 풀렸다는 증거가 아니다." 그래서 목표 A를 다음과 같이 고쳤다.
+
+- 임대(lease)에 `lease_source`를 적는다.
+  - `coord presence --lease`(사람이 손으로 쓴 것)는 `manual`이다.
+  - `judge.py`가 Antigravity의 429 답을 보고 쓴 것은 `provider`다.
+  - 그 밖의 값을 넣으면 `PresenceRejected`가 난다.
+- 턴 시작 ACTIVE 박동이 지우는 것은 `manual` LIMITED/ABSENT 임대뿐이다.
+- `provider` 임대와 출처가 없는 옛 임대(U134-R 이전에 쓴 것)는 만료될 때까지 그대로 둔다(fail closed). 이 경우 `events.jsonl`에 `LEASE_KEPT_PROVIDER`를 임대마다 한 번만 남긴다.
+  - 중복 판단 기준은 임대의 `observed_at`이다.
+  - 같은 잠금 안에서 확인하고 쓰므로, 박동 두 개가 동시에 와도 한 줄만 남는다.
+- Codex 롤아웃 거절 덮어쓰기(U57-A)는 그대로다. manual 임대를 지운 뒤 그 턴이 `usage_limit_exceeded`로 거절되면, 책상(desk)은 여전히 LIMITED로 읽힌다.
+
+위임 기록은 다음과 같다.
+- U134-L6 Ollama는 실패했다. `===EDIT` 머리말과 SEARCH 표지를 빼고 코드만 돌려주었다(입력 14,085·출력 2,188).
+- U134-L9 정확 적용은 판정자 매뉴얼의 결함으로 막혔다. 매뉴얼이 쓰지 않는 함수 `_lease_state`를 지우는 블록을 담고 있어, 요청 밖 삭제로 자동 거부되었다. 그래서 함수를 남기는 쪽으로 매뉴얼을 고쳤다.
+- U134-L10 정확 적용(`apply_after: U134-L6`)은 인수 시험을 통과했다. Antigravity 검토도 PASS였다(입력 27,917·출력 3,741).
+
+F1(스레드 신원)과 F2(대기열 점유)는 Codex가 더 작은 직렬 명세로 바꾸라고 판정했다(PIVOT). 그래서 다음 블록으로 넘긴다.
+
+## 9. 확인 명령
 
 ```bash
 python -m unittest tests.test_u134_lease_cleared_by_turn tests.test_u134_dispatch_on_active tests.test_u134_thread_fallback -v
