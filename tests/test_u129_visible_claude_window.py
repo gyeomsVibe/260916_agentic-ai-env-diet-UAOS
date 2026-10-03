@@ -61,7 +61,8 @@ class VisibleClaudeWindowTest(unittest.TestCase):
         self.assertEqual("NO_VISIBLE_SESSION", opened["refused"])
         self.assertEqual(("claude", "U129"), (opened["tool"], opened["card"]))
         self.assertIn("--session-id", opened["message"])
-        self.assertIn("spawn_task", opened["message"])
+        self.assertIn("send_message", opened["message"])  # 2026-10-02 scope: a clickless route, no task chip
+        self.assertNotIn("spawn_task", opened["message"])
         self.assertIsNone(windows.window_for(self.project, "U129", "claude"))
         self.assertFalse((self.project / ".coord" / "windows" / "U129.json").exists())
 
