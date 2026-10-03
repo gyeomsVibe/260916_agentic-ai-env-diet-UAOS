@@ -132,5 +132,9 @@ def apply(project: Path, *, tool: str, remaining_percent: float, current_card: s
             return {"status":"ACK_ONLY",**record}
         root = project / ".coord" / "mailbox"; root.mkdir(parents=True, exist_ok=True); box = Mailbox(root)
         message_id = f"thrift_{tool}_{sequence}_{fingerprint[:16]}"
-        box.publish(message_id,{"kind":event,"from":tool,"to":target,"packet_path":record["packet_path"],"packet_sha256":packet_hash})
+        # U141-A rev 6: a thrift event is a real delta, so it carries the structured wake fields the structured
+        # watcher (the CLI default) needs; an untagged letter would be LEGACY and never wake the successor.
+        box.publish(message_id,{"kind":event,"from":tool,"to":target,"packet_path":record["packet_path"],"packet_sha256":packet_hash,
+                                "actor":tool,"requested_target":target,"wake_class":"ACTIONABLE",
+                                "delta":f"{event} {tool}->{target} packet {packet_hash or 'none'}"})
         return {"status":"ACTIONABLE_DELTA",**record,"message_id":message_id}

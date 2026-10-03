@@ -318,12 +318,19 @@ RELEASE_WAIT_S = 5.0
 
 
 def _payload(actor: str, message: str, digest: str, target: str | None, card: str = "",
-             window: str | None = None) -> dict[str, Any]:
+             window: str | None = None, *, wake_class: str | None = None, verdict_requested: bool | None = None,
+             verdict: str | None = None, delta: str | None = None) -> dict[str, Any]:
     """The one published body: the same bytes from every caller, so publish stays idempotent."""
     body = {"kind": "HANDOFF", "actor": actor, "message": message, "digest": digest,
             "requested_target": target or "auto"}
     if card:  # U115: only a card letter carries these keys, so a letter without --card keeps today's bytes
         body.update(card=card, window=window)
+    # U141-A: the structured wake fields the watcher classifies. They are written only when given, so an untagged
+    # letter keeps today's bytes and stays LEGACY.
+    for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested), ("verdict", verdict),
+                       ("delta", delta)):
+        if value is not None:
+            body[key] = value
     return body
 
 
@@ -1007,6 +1014,10 @@ def deliver(
     thread: str = "",
     runner: Any = None,
     card: str = "",
+    wake_class: str | None = None,
+    verdict_requested: bool | None = None,
+    verdict: str | None = None,
+    delta: str | None = None,
 ) -> DeliverResult:
     """Serialize the complete publish-to-dispatch transaction per message.
 
@@ -1053,7 +1064,8 @@ def deliver(
             pass
     # U48-D0 re-review (Claude, 2026-09-27): publish before the guard. A guard left by a crashed dispatcher used to
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
-    box.publish(message_id, _payload(actor, message, digest, requested_target, card, window))
+    box.publish(message_id, _payload(actor, message, digest, requested_target, card, window, wake_class=wake_class,
+                                     verdict_requested=verdict_requested, verdict=verdict, delta=delta))
     if target == "antigravity":
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).

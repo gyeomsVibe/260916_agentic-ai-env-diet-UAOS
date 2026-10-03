@@ -106,7 +106,10 @@ class ThreeToolContinuityE2E(unittest.TestCase):
             self.assertEqual(0, code)
 
     def _watch(self, timeout_s: int) -> subprocess.Popen:
-        proc = self._start("watch", "--target", "claude", "--timeout", str(timeout_s), "--interval", WATCH_INTERVAL_S)
+        # U141-A rev 6: this cycle pins the U57-U74 delivery races, which wake on untagged letters; the structured CLI
+        # default is proven in tests/test_u141a_wake_policy.py.
+        proc = self._start("watch", "--target", "claude", "--timeout", str(timeout_s), "--interval", WATCH_INTERVAL_S,
+                           "--policy", "legacy")
         self._watchers.append(proc)
         deadline = time.monotonic() + 30
         while not watcher_live(self.desk, "claude"):
