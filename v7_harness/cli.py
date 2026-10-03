@@ -1508,14 +1508,27 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
 
     say = getattr(args, "say", "json")
 
+    shown = {"user": "", "event": ""}  # U147: the in-app line for 윤겸스 and the hook event that carries it
+
     def _emit(data: dict[str, Any], line: str = "") -> None:
+        user = shown["user"]
         if getattr(args, "post_tool", False):
             # U105: plain stdout on PostToolUse never reaches the model; only this JSON does
+            out: dict[str, Any] = {"systemMessage": user} if user else {}
             if line:
-                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}},
-                                 ensure_ascii=False))
+                out["hookSpecificOutput"] = {"hookEventName": "PostToolUse", "additionalContext": line}
+            if out:
+                print(json.dumps(out, ensure_ascii=False))
             return
-        if say == "json":
+        if user and say in ("brief", "p1", "none"):
+            # U147: Claude Code and Codex show `systemMessage` to the user, not the model (0 tokens); the model's
+            # line moves into additionalContext, which these hooks read like plain stdout.
+            out = {"systemMessage": user}
+            if line:
+                out["hookSpecificOutput"] = {"hookEventName": shown["event"] or "UserPromptSubmit",
+                                             "additionalContext": line}
+            print(json.dumps(out, ensure_ascii=False))
+        elif say == "json":
             print(json.dumps(data, ensure_ascii=False))
         elif say in ("brief", "p1", "none") and line:
             print(line)
@@ -1549,6 +1562,20 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             if project is None:
                 _emit({"ok": True, "skipped": "NOT_A_UAOS_PROJECT"})
                 return 0
+            if args.tool:
+                # U147-D: a human-typed prompt designates this window as the user's desk for letters. It runs before
+                # mark(dispatch=True) so letters queued for the old desk go to the window the user just typed in
+                # (Codex relay_48fb8d38).
+                try:
+                    from .coord.deliver import is_human_prompt, register_user_desk
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    if isinstance(event, dict) and event.get("hook_event_name") == "UserPromptSubmit" \
+                            and is_human_prompt(event.get("prompt")):
+                        register_user_desk(project, args.tool, hook_session(stdin_text) or "",
+                                           source="UserPromptSubmit")
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    pass
             if args.tool and args.state:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
                 # U134: a turn start clears a stale LIMITED/ABSENT lease; an ACTIVE beat sends queued letters.
@@ -1574,7 +1601,17 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 event = event if isinstance(event, dict) else {}
                 # U105: removed first-call limit (invocationNum 0) so a letter arriving mid-turn is heard at next call
                 session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
-                line = "\n".join(part for part in (line, delta_text(project, args.tool, session)) if part)
+                delta = delta_text(project, args.tool, session)
+                line = "\n".join(part for part in (line, delta) if part)
+                if say != "agy":  # Antigravity's user-visible hook field is UNKNOWN; its line stays model-facing
+                    from .coord.board import letters_in, line_is_new, status_line
+
+                    try:  # the in-app line must never cost the model its desk delta
+                        user = status_line(project, args.tool, letters_in(delta))
+                        if line_is_new(project, args.tool, user):
+                            shown["user"], shown["event"] = user, str(event.get("hook_event_name") or "")
+                    except Exception:  # noqa: BLE001
+                        pass
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
         except Exception as exc:  # noqa: BLE001
             _emit({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]})
