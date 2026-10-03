@@ -19,7 +19,7 @@
 
 - 모델 출력이 실행 파일·셸 명령이 되는 곳(명령 주입): **0곳**
 - 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **11곳** (U120 `coord/agy_dispatch.py` 추가)
-- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **12곳** (U103 `coord/desk_delta.py`, U134 `coord/presence.py` 추가)
+- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **14곳** (U103 `coord/desk_delta.py`, U134 `coord/presence.py`, U146-A `coord/next_card.py`·`coord/stop_gate.py` 추가)
 - 사람 운영자(operator)가 명령을 직접 넘기는 도구(OPERATOR_COMMAND): **3곳**
 - 따라서 U54-S2 결론: 지금 코드에는 POLICY_DENIED 관문을 새로 끼울 **실행 지점이 없다**. 새 CALLER_INPUT 지점이 생기면 `tests/test_u54_s2_caller_review.py`가 실패해서 이 검토를 다시 하게 만든다.
 
@@ -41,6 +41,8 @@
 | `coord/agy_dispatch.py:58` | DATA_ARG | U120 자동 응답. `build_agy_command()`가 `agy` 실행 파일과 고정 옵션(`--dangerously-skip-permissions` 없음)을 만들고, 편지는 동료 데이터라고 감싼 프롬프트로 `-p` 값 한 칸에만 들어간다. 작업 폴더는 빈 `agy_box`, 셸 없음, 시간 제한 300초. `[agy-auto]` 꼬리표 편지는 다시 보내지 않고(왕복 고리 차단) 하루 20회 상한이 있다. |
 | `coord/desk_delta.py:35` | FIXED_PLAN | U103 변경 알림의 `_git()`. 실행 파일은 `git`, 하위 명령은 `log --all --no-merges --since=@<정수> --format=%h %s`(도구별 서명 줄 `--grep` 상수 포함)·`status --porcelain --untracked-files=no`·`ls-files -- .coord/tasks .coord/notes`로 모두 코드에 고정돼 있다. 프로젝트 경로는 `-C` 값 한 칸, `shell=False`, 10초 제한의 읽기 전용 조회다. 편지·모델 글은 인자로 들어가지 않는다. |
 | `coord/presence.py:415` | FIXED_PLAN | U134 대기 편지 발송. `python -c QUEUE_SPAWN_CODE <프로젝트> <도구>`: 실행 파일은 지금 파이썬(`sys.executable`), 스크립트는 코드 상수이고, 프로젝트 경로와 도구 이름(TOOLS 셋 중 하나, `_path`가 먼저 검사)은 `sys.argv` 값으로만 간다. 편지 본문은 argv에 없다(대기 파일에서 읽음). 셸 없음. |
+| `coord/next_card.py:28` | FIXED_PLAN | U146-A 일정 정본 위치. `git -C <프로젝트> rev-parse --path-format=absolute --git-common-dir`: 실행 파일·하위 명령·옵션이 모두 코드 상수이고 프로젝트 경로는 `-C` 값 한 칸이다. 셸 없음, 10초 제한, 읽기 전용. 일정·편지 내용은 인자로 들어가지 않는다. |
+| `coord/stop_gate.py:32` | FIXED_PLAN | U146-A 진척 서명. `git -C <프로젝트> rev-parse HEAD`: 고정 명령에 프로젝트 경로 한 칸만 들어간다. 셸 없음, 10초 제한, 읽기 전용. |
 | `coord/thrift.py:58` | FIXED_PLAN | 실행 파일은 `git`, 하위 명령은 `rev-parse`·`branch --show-current`·`status --short --untracked-files=all`로 코드에 고정돼 있다. 프로젝트 경로는 `-C` 값 한 칸이고 `shell=False`, `GIT_OPTIONAL_LOCKS=0`인 읽기 전용 스냅샷이다. |
 | `deploy_pc.py:219` | FIXED_PLAN | 배포 계획의 `git add -- <영수증 경로>`. 경로는 코드가 정한 영수증 파일이다. |
 | `deploy_pc.py:237` | FIXED_PLAN | 배포 단계 목록(`steps`)은 `deploy_pc`가 코드로 만든다. push 단계에만 ALLOW_PUSH를 준다. 원격 쓰기는 사람 승인 경계다. |
