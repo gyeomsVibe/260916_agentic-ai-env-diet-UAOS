@@ -69,6 +69,12 @@ Gate: uaos card audit --card {card} exits 0 before the PR
 ## Pass command
 
 ## Stop conditions
+
+## Result relay (last step)
+`uaos card result --card {card} --pr <url> --mergeable yes|no --tests <run>/<fail> --blocker none` writes
+.coord/results/{card}.md in this checkout (a card worktree too) and prints one RESULT line; send that line to the user
+window (Claude: send_message; Codex/Antigravity: `uaos coord deliver --target claude --card {card} --message "<line>"`).
+The user window runs `uaos card results` to collect every checkout's result and batches the merges into one report.
 """
 
 
@@ -124,6 +130,64 @@ def missing_slots(text: str) -> list[str]:
             if not re.search(r"^Workers:\s*\S", section, re.MULTILINE):
                 missing.append(f"Stage {n} {name}: Workers line")
     return missing
+
+
+# U135: a RESULT field is one line without the "|" separator, so the user window can split the line back into fields.
+FIELD_RE = re.compile(r"[^|\r\n]+")
+# Tests are "<run>/<fail>" counts.
+TESTS_RE = re.compile(r"\d+/\d+")
+MERGEABLE = ("yes", "no")
+
+
+def result_line(card, pr, mergeable, tests, blocker) -> str:
+    _check(card)
+    if mergeable not in MERGEABLE:
+        raise ValueError(f"mergeable must be yes or no, got {mergeable!r}")
+    if TESTS_RE.fullmatch(tests or "") is None:
+        raise ValueError(f"tests must be <run>/<fail>, got {tests!r}")
+    for name, value in (("pr", pr), ("blocker", blocker)):
+        if FIELD_RE.fullmatch(value or "") is None or not value.strip():
+            raise ValueError(f"{name} must be one non-empty line without '|', got {value!r}")
+    return f"RESULT {card} | PR {pr.strip()} | MERGEABLE {mergeable} | tests {tests} | blocker {blocker.strip()}"
+
+
+def write_result(checkout, card, pr, mergeable, tests, blocker) -> dict[str, Any]:
+    """U135: the result goes in the card's own checkout; a card worktree may not write the base checkout."""
+    line = result_line(card, pr, mergeable, tests, blocker)
+    path = Path(checkout) / ".coord" / "results" / f"{card}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# {card} result ({datetime.date.today().isoformat()})\n\n{line}\n", encoding="utf-8")
+    return {"ok": True, "path": str(path), "line": line}
+
+
+def _checkouts(project) -> list[Path]:
+    """The main checkout and every live worktree, read from .git on disk (no git subprocess)."""
+    root = Path(project)
+    dot = root / ".git"
+    if dot.is_file():
+        meta = Path(dot.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())
+        root = meta.parent.parent.parent  # <main>/.git/worktrees/<name> sits three levels below the main checkout
+    found = [root]
+    for gitdir in sorted((root / ".git" / "worktrees").glob("*/gitdir")):
+        checkout = Path(gitdir.read_text(encoding="utf-8").strip()).resolve().parent
+        if checkout.is_dir():
+            found.append(checkout)
+    return found
+
+
+def collect_results(project) -> list[dict[str, Any]]:
+    """U135: the user window's view of every card result; the newest file wins when a card wrote twice."""
+    newest: dict[str, tuple[float, dict]] = {}
+    for checkout in _checkouts(project):
+        for path in sorted((checkout / ".coord" / "results").glob("U*.md")):
+            line = next((text for text in path.read_text(encoding="utf-8").splitlines() if text.startswith("RESULT ")),
+                        None)
+            if line is None or not CARD_RE.fullmatch(path.stem):  # agy audit: only card ids are reported
+                continue
+            stamp = path.stat().st_mtime
+            if path.stem not in newest or stamp > newest[path.stem][0]:
+                newest[path.stem] = (stamp, {"card": path.stem, "line": line, "path": str(path)})
+    return [row for _, row in sorted(newest.values(), key=lambda item: item[1]["card"])]
 
 
 def started_at(desk, card) -> float | None:

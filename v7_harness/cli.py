@@ -943,6 +943,20 @@ def build_parser() -> argparse.ArgumentParser:
     for p_card_cmd in (p_card_new, p_card_claim, p_card_skip, p_card_audit):
         p_card_cmd.add_argument("--project", default=".", help="Project root (default: .)")
         p_card_cmd.add_argument("--card", required=True, help="Card id, e.g. U130")
+    # U135: the card's last step writes its RESULT line in its own checkout; the user window collects them all.
+    p_card_result = p_card_subs.add_parser(
+        "result", help="Write .coord/results/<card>.md in this checkout and print the RESULT line for the user window")
+    p_card_result.add_argument("--project", default=".", help="This card's checkout (a worktree too; default: .)")
+    p_card_result.add_argument("--card", required=True, help="Card id, e.g. U135")
+    p_card_result.add_argument("--pr", required=True, help="Pull request URL")
+    p_card_result.add_argument("--mergeable", required=True, choices=["yes", "no"])
+    p_card_result.add_argument("--tests", required=True, help="<run>/<fail>, e.g. 1590/0")
+    p_card_result.add_argument("--blocker", default="none", help="none, or one line naming the blocker")
+    p_card_result.set_defaults(func=cmd_card_result)
+    p_card_results = p_card_subs.add_parser(
+        "results", help="List the RESULT lines of the main checkout and every worktree (newest per card)")
+    p_card_results.add_argument("--project", default=".", help="Any checkout of the project (default: .)")
+    p_card_results.set_defaults(func=cmd_card_results)
 
     # rsi: evidence-gated self-improvement (docs/38). observe → propose → try → gate → judge → rollback.
     p_rsi = subparsers.add_parser("rsi", help="Evidence-gated self-improvement: report, propose, gate, adopt, rollback")
@@ -1365,6 +1379,27 @@ def cmd_card_audit(args: argparse.Namespace) -> int:
         return 2
     _print_json(result)
     return 0 if result["ok"] else 1
+
+
+def cmd_card_result(args: argparse.Namespace) -> int:
+    """U135: written in this checkout, never the shared desk, because a card worktree may not write the base."""
+    from . import card_pipeline
+
+    try:
+        result = card_pipeline.write_result(Path(args.project), args.card, args.pr, args.mergeable, args.tests,
+                                            args.blocker)
+    except ValueError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    _print_json(result)
+    return 0
+
+
+def cmd_card_results(args: argparse.Namespace) -> int:
+    from . import card_pipeline
+
+    _print_json({"ok": True, "results": card_pipeline.collect_results(Path(args.project))})
+    return 0
 
 
 def cmd_coord_publish_thread(args: argparse.Namespace) -> int:
