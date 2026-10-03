@@ -1,6 +1,6 @@
 ## Antigravity 역할 어댑터
 
-- UAOS-RSI 역할: 계약 실행자·반례 검토자. Codex와 Claude가 모두 LIMITED/ABSENT일 때만 지휘를 대행한다.
+- UAOS-RSI 역할: 계약 실행자·반례 검토자. Codex와 Claude가 모두 LIMITED/ABSENT일 때만 지휘를 대행한다. 카드마다 기본 칸 두 개를 맡는다(U130): 조사 단계의 출처 목록 감사와 설계 감사(카드 대화로 답장), 검증 단계의 `pilot review --reviewer agy` 반례 검토. Ollama가 실패하거나 다파일인 실행도 받는다.
 - UAOS-RSI 예산: 실행마다 매뉴얼의 토큰·시간 상한을 지니고, 넘친 실행은 거부된다(반복 RSI 원인이 COST_EXCEEDED).
 - Codex와 Claude가 모두 LIMITED/ABSENT이고 Antigravity가 ACTIVE일 때만 총괄 대행한다.
 - 평상시에는 계약된 구현 또는 독립 반례 검토만 수행하고 자기 결과를 단독 판정하지 않는다.

@@ -122,7 +122,10 @@ class WindowsTest(unittest.TestCase):
     def test_one_cli_command_opens_a_window_in_any_tool(self):
         from v7_harness import cli
         manual = self.project / "manual.md"
-        manual.write_text("U114 manual body", encoding="utf-8")
+        # U130: `coord window` refuses a manual without the four stage slots, so the fixture is a template manual.
+        from v7_harness.card_pipeline import TEMPLATE
+        body = TEMPLATE.format(card="U114", title="창 분리")
+        manual.write_text(body, encoding="utf-8")
         seen = {}
 
         def fake_open(project, card, tool, title, prompt, **_kw):
@@ -136,7 +139,7 @@ class WindowsTest(unittest.TestCase):
                                                   "--prompt-file", str(manual)])
             self.assertEqual(0, args.func(args))
         self.assertEqual({"project": self.project, "card": "U114", "tool": "antigravity", "title": "창 분리",
-                          "prompt": "U114 manual body"}, seen)  # the manual's content, not its path, is the prompt
+                          "prompt": body}, seen)  # the manual's content, not its path, is the prompt
         self.assertEqual("w1", json.loads(out.getvalue())["id"])
 
     def test_card_ids_cannot_escape_the_windows_folder(self):

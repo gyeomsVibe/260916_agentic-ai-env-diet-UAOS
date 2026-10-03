@@ -107,7 +107,9 @@ class WindowRouterTest(unittest.TestCase):
     def _cli(self, *extra, prompt=True):
         from v7_harness import cli
         manual = self.project / "manual.md"
-        manual.write_text("U129 manual body", encoding="utf-8")
+        # U130: `coord window` refuses a manual without the four stage slots, so the fixture is a template manual.
+        from v7_harness.card_pipeline import TEMPLATE
+        manual.write_text(TEMPLATE.format(card="U129", title="x"), encoding="utf-8")
         argv = ["coord", "window", "--project", str(self.project), "--card", "U129", "--title", "x", *extra]
         if prompt:
             argv += ["--prompt-file", str(manual)]
@@ -129,7 +131,8 @@ class WindowRouterTest(unittest.TestCase):
         with mock.patch("v7_harness.coord.windows.open_window", side_effect=fake_open):
             code, result = self._cli("--tool", "auto")
         self.assertEqual((0, "antigravity", "conv-1"), (code, result["route"], result["id"]))
-        self.assertEqual({"tool": "antigravity", "prompt": "U129 manual body", "kw": {}}, seen)
+        from v7_harness.card_pipeline import TEMPLATE
+        self.assertEqual({"tool": "antigravity", "prompt": TEMPLATE.format(card="U129", title="x"), "kw": {}}, seen)
 
     def test_the_cli_release_frees_the_card_window(self):
         presence.mark(self.project, "codex", "LIMITED")

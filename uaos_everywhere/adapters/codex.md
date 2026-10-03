@@ -1,6 +1,6 @@
 ## Codex 역할 어댑터
 
-- UAOS-RSI 역할: 지휘자이자 최종 독립 판정자. 구현은 Claude Code·`worker: apply`·Ollama·Antigravity에 맡긴다.
+- UAOS-RSI 역할: 지휘자이자 최종 독립 판정자. 구현은 Ollama(`worker: local`) → Antigravity → Claude Code → `worker: apply`(U98-D) 순서로 맡기고, 계획은 `uaos card new` 틀로 연다(U130).
 - UAOS-RSI 예산: 가장 부족한 유료 한도라 계획과 판정에만 쓴다. 부족하면 동시성·보안·전역 규칙 변경의 판정에만 코드만 담은 패킷으로 쓴다(판정 1회 36~46k 토큰, 2026-09-29 실측).
 - Codex가 ACTIVE면 단일 계획·작업 순서·최종 판정을 소유한다. LIMITED/ABSENT 뒤 복귀하면 `uaos coord inbox`와 복귀 체크리스트를 재검토한 뒤 지휘를 재개한다.
 - 사용자에게 넘기는 일(`남은 일`)은 Safety의 사람 전용 목록(데이터 삭제·원격 push·배포·공개 게시·지출·계정·자격 증명·권한·시스템 설정)뿐이다. 그 밖의 일은 승인 없이 직접 끝내거나 작업자에게 맡긴다: 다른 도구나 사용자가 남긴 미커밋 변경이 정본 규칙과 충돌하면 `.work/backup_<날짜>/`에 복사한 뒤 되돌리고 `근거`에 적는다(U121, 2026-10-01 사용자 지시).

@@ -17,6 +17,8 @@ LOCAL_AUTHORS = frozenset({"ollama", "local", "cascade"})  # U123: the free Olla
 REVIEWERS = ("agy", "codex")  # U123: independent reviewers; the conductor and the author never approve alone
 FAILED_OUTCOMES = frozenset({"FAIL", "FAILED", "BLOCKED", "UNUSABLE", "REWORK", "REJECTED"})  # same set as delegation.py
 AUDIT_RE = re.compile(r"^Audit:\s*(relay_[0-9a-f]+)\s*$", re.MULTILINE)  # U123: the Antigravity audit reply id
+# U130 (agy audit relay_92fa8200): new runtime code under these prefixes needs a card whose `card audit` passes.
+CARD_GATED = ("v7_harness/", "uaos_everywhere/")
 
 
 def _review_ok(task_dir: Path, bundle_id, ledger_rows) -> bool:
@@ -134,6 +136,26 @@ def audit_errors(message: str, gated_paths: list[str], agy_auto_path: Path) -> l
     return [f"AUDIT_FIRST: {match.group(1)} is not an answered Antigravity reply"]
 
 
+def _current_branch() -> str:
+    """U130: the checked-out branch names the card when the message has no `Card:` line (fixed argv, no input)."""
+    return subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+
+
+def card_errors(message: str, new_paths: list[str], desk: Path, run_dirs, branch: str | None = None) -> list[str]:
+    """U130: new runtime code belongs to a card (`Card: U##` line, else a `u<digits>` branch) whose `card audit`
+    shows a real Ollama call and an Antigravity audit or review, or a verified skip row."""
+    if not new_paths:
+        return []
+    from v7_harness import card_pipeline
+
+    card = card_pipeline.card_of(message, _current_branch() if branch is None else branch)
+    if card is None:
+        return ["CARD_AUDIT: name the card with a `Card: U##` line (or commit on a u<digits> branch)"]
+    result = card_pipeline.audit(desk, card, code_paths=new_paths, run_dirs=run_dirs)
+    return [f"CARD_AUDIT: {card} has no {slot} evidence; use it, then `uaos card claim`, or `uaos card skip --card "
+            f"{card} --slot {slot}`" for slot in result["missing"]]
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Calculator gate check")
     parser.add_argument("--commit-msg", type=Path)
@@ -185,6 +207,11 @@ def main(argv=None) -> int:
     violations = check(staged, message, pilot_dirs, parents, ledger_rows=rows)
     new_code = [p for p, body in staged.items() if _digest(body) not in parents.get(p, set())]
     violations += audit_errors(message, new_code, desk / ".coord" / "mailbox" / "delivery" / "agy_auto.jsonl")
+    card_paths = [p for p in staged_paths if p.endswith(".py") and p.startswith(CARD_GATED)]
+    card_parents = parent_digests(card_paths)
+    new_card_code = [p for p in card_paths
+                     if _digest(subprocess.check_output(["git", "show", f":{p}"])) not in card_parents.get(p, set())]
+    violations += card_errors(message, new_card_code, desk, pilot_dirs)
 
     for v in violations:
         print(v, file=sys.stderr)
@@ -192,7 +219,7 @@ def main(argv=None) -> int:
     if violations:
         print(
             'order: Antigravity audit letter (ACTIONABLE_DELTA) -> pilot run --worker local -> pilot review '
-            '--reviewer agy -> --approve; commit with "Audit: relay_<reply id>"',
+            '--reviewer agy -> --approve -> uaos card audit; commit with "Audit: relay_<reply id>"',
             file=sys.stderr,
         )
         return 1

@@ -918,6 +918,32 @@ def build_parser() -> argparse.ArgumentParser:
                              help="U129: mark the card's window done so its Claude session can take the next card")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
+    # U130: one card template (four stage slots with default workers) and an audit of the card's Ollama/Antigravity use.
+    p_card = subparsers.add_parser("card", help="U130 default card pipeline: new, claim, skip, audit")
+    p_card_subs = p_card.add_subparsers(dest="card_subcommand", required=True)
+    p_card_new = p_card_subs.add_parser(
+        "new", help="Write the card manual from the four-stage template (never overwrites)")
+    p_card_new.add_argument("--title", required=True)
+    p_card_new.set_defaults(func=cmd_card_new)
+    p_card_claim = p_card_subs.add_parser(
+        "claim", help="Copy this session's real Ollama MCP calls since the card opened into the ledger")
+    p_card_claim.add_argument("--session", required=True, help="Session id in the Ollama usage log")
+    p_card_claim.add_argument("--olla-log", default=None, help="Ollama MCP usage log (default ~/.cache/olla/usage.jsonl)")
+    p_card_claim.set_defaults(func=cmd_card_claim)
+    p_card_skip = p_card_subs.add_parser(
+        "skip", help="Record a skipped ollama/agy slot with its checked reason and evidence")
+    p_card_skip.add_argument("--slot", required=True, choices=["ollama", "agy"])
+    p_card_skip.add_argument("--reason", required=True, choices=["OLLAMA_DOWN", "AGY_LIMITED", "TASK_CLASS"])
+    p_card_skip.add_argument("--evidence", required=True)
+    p_card_skip.set_defaults(func=cmd_card_skip)
+    p_card_audit = p_card_subs.add_parser("audit", help="Exit 1 unless the card shows Ollama and Antigravity evidence")
+    p_card_audit.add_argument("--code-path", action="append", default=None,
+                              help="Changed file; a .py path voids a TASK_CLASS skip of the ollama slot")
+    p_card_audit.set_defaults(func=cmd_card_audit)
+    for p_card_cmd in (p_card_new, p_card_claim, p_card_skip, p_card_audit):
+        p_card_cmd.add_argument("--project", default=".", help="Project root (default: .)")
+        p_card_cmd.add_argument("--card", required=True, help="Card id, e.g. U130")
+
     # rsi: evidence-gated self-improvement (docs/38). observe → propose → try → gate → judge → rollback.
     p_rsi = subparsers.add_parser("rsi", help="Evidence-gated self-improvement: report, propose, gate, adopt, rollback")
     p_rsi_subs = p_rsi.add_subparsers(dest="rsi_subcommand", required=True)
@@ -1265,6 +1291,14 @@ def cmd_coord_window(args: argparse.Namespace) -> int:
         print(json.dumps({"error": f"--prompt-file is required for {tool}"}, ensure_ascii=False))
         return 2
     prompt = Path(args.prompt_file).read_text(encoding="utf-8") if args.prompt_file else ""
+    if args.prompt_file:
+        from .card_pipeline import missing_slots
+
+        gaps = missing_slots(prompt)
+        if gaps:  # U130: a free-form manual skips the research/MIA/execute/verify slots and their default workers
+            print(json.dumps({"error": "MANUAL_MISSING_SLOTS", "missing_slots": gaps,
+                              "fix": f"uaos card new --card {args.card} --title <title>"}, ensure_ascii=False))
+            return 2
     # U129: a Claude window is a visible desktop session the caller names; nothing is launched for it.
     passes_session = args.session_id is not None and (route is None or tool == "claude")
     extra = {"session_id": args.session_id} if passes_session else {}
@@ -1273,6 +1307,64 @@ def cmd_coord_window(args: argparse.Namespace) -> int:
         result = {**result, "route": tool, "step": route["step"]}
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("id") else 2
+
+
+def _card_desk(args: argparse.Namespace) -> Path:
+    """U130: card records and the ledger live on the shared desk (the main checkout), like `coord presence`."""
+    from .coord.hook_context import shared_desk
+
+    return Path(shared_desk(args.project))
+
+
+def cmd_card_new(args: argparse.Namespace) -> int:
+    from . import card_pipeline
+
+    try:
+        result = card_pipeline.new_manual(_card_desk(args), args.card, args.title)
+    except ValueError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    _print_json({"ok": True, **result})
+    return 0
+
+
+def cmd_card_claim(args: argparse.Namespace) -> int:
+    from . import card_pipeline
+
+    olla_log = Path(args.olla_log) if args.olla_log else Path.home() / ".cache" / "olla" / "usage.jsonl"
+    try:
+        result = card_pipeline.claim(_card_desk(args), args.card, args.session, olla_log)
+    except ValueError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    _print_json(result)
+    return 0 if result.get("ok") else 1
+
+
+def cmd_card_skip(args: argparse.Namespace) -> int:
+    from . import card_pipeline
+
+    try:
+        result = card_pipeline.skip(_card_desk(args), args.card, args.slot, args.reason, args.evidence)
+    except ValueError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    _print_json(result)
+    return 0 if result.get("ok") else 1
+
+
+def cmd_card_audit(args: argparse.Namespace) -> int:
+    from . import card_pipeline
+    from .pilot_dirs import discover
+
+    try:
+        result = card_pipeline.audit(_card_desk(args), args.card, code_paths=args.code_path or (),
+                                     run_dirs=discover(Path(args.project)))
+    except ValueError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    _print_json(result)
+    return 0 if result["ok"] else 1
 
 
 def cmd_coord_publish_thread(args: argparse.Namespace) -> int:
@@ -1888,6 +1980,21 @@ def cmd_rsi_ship(args: argparse.Namespace) -> int:
     project = Path(args.project)
     packet = json.loads(Path(args.packet).read_text(encoding="utf-8"))
     approval = json.loads(Path(args.approval).read_text(encoding="utf-8"))
+    # U130: a release ships only for a card whose `card audit` shows Ollama and Antigravity evidence.
+    from . import card_pipeline
+    from .coord.hook_context import shared_desk
+    from .pilot_dirs import discover
+
+    card = str(packet.get("card") or str(packet.get("work_id", "")).split("-")[0])
+    if not card_pipeline.CARD_RE.fullmatch(card):
+        _print_json({"ok": False, "error": 'CARD_AUDIT: name the card in the packet ("card": "U##")'})
+        return 1
+    audit = card_pipeline.audit(Path(shared_desk(project)), card, code_paths=packet.get("changed_files", []),
+                                run_dirs=discover(project))
+    if not audit["ok"]:
+        _print_json({"ok": False, "error": f"CARD_AUDIT: {card} has no {', '.join(audit['missing'])} evidence",
+                     "audit": audit})
+        return 1
     try:
         res = ship_release(project, packet, approval, execute=args.execute)
     except (ReleaseRefused, ValueError) as exc:
