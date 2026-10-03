@@ -66,6 +66,17 @@ uaos card audit --card U130
 - relay_92fa8200(카드 대화, REVISE): 가져가기 시각 제한, 코드 카드의 TASK_CLASS 무효, `uaos_everywhere/` 포함, 검토 파일은 종결 판정(PASS/REVISE/FAIL)만 인정 — 모두 반영.
 - relay_25e176ee(Antigravity 앱, PASS+강화): 시각 제한 반영. 50자+판정자 서명, `.coord/tasks/*.md` 관문, "자율 작업 당김" 제안은 근거(실사용 실패 영수증)가 없어 U131 후보로 보류.
 
+## 6-1. 카드 결과 전달 (U135, 2026-10-03)
+
+왜: 카드 창마다 오가며 병합하기 어렵다는 윤겸스의 요청으로, 카드 결과를 사용자 대화창 한 곳에 모은다. U132는 카드 작업 트리에서 기준 체크아웃의 `.coord/results/U132.md`를 쓰려다 데스크톱 앱의 작업 트리 훅에 막혔다. 이 훅은 플랫폼 권한이라 풀지 않고, 결과를 카드 자기 체크아웃에 쓰게 바꿨다.
+
+- 카드 매뉴얼 맨 끝 "Result relay (last step)": `uaos card result --card U## --pr <주소> --mergeable yes|no --tests <실행>/<실패> --blocker none`
+- 이 명령은 지금 체크아웃(작업 트리여도 됨)의 `.coord/results/<카드>.md`에 `RESULT <카드> | PR <주소> | MERGEABLE yes/no | tests <실행>/<실패> | blocker <none|내용>` 한 줄을 쓰고 출력한다. 칸에 `|`나 줄바꿈이 있으면 거부한다(사용자 창이 `|`로 다시 나누기 때문).
+- 보내기: Claude는 send_message로 사용자 대화창에, Codex·Antigravity는 `uaos coord deliver --target claude --card U## --message "<줄>"`.
+- 모으기: 사용자 대화창에서 `uaos card results` — 기준 체크아웃과 `.git/worktrees/*/gitdir`에 적힌 모든 작업 트리를 디스크에서 읽는다(git 하위 프로세스 없음). 같은 카드가 두 번 쓰면 더 새 파일이 이긴다. 카드 번호 모양이 아닌 파일 이름은 무시한다.
+- Antigravity 설계 감사 relay_6a94044c(REVISE): 카드 번호 검사·gitdir `.resolve()`·사라진 작업 트리 건너뛰기·막힘 칸 검사는 반영. 반대 의견 기록: ① "기준 체크아웃 우선"은 기준에 더 오래된 결과가 남을 수 있어 받지 않음(행마다 경로가 있어 사용자 창이 확인), ② 받는 곳을 지휘 도구로 바꾸자는 제안은 결과가 지휘자가 아니라 사용자 대화창(Claude 창)으로 가야 해서 받지 않음, ③ GEMINI 13,500자 시험은 정본에 이미 있음.
+- 정본 규칙: v7.5.1 core «Windows» 줄.
+
 ## 7. 출처
 
 - S1 FrugalGPT: https://arxiv.org/abs/2305.05176
