@@ -446,6 +446,102 @@ def _dispatch_count(attempts: Path, message_id: str) -> int:
     return count
 
 
+def _codex_sessions() -> Path:
+    """U134-D: where Codex writes its rollouts; UAOS_CODEX_SESSIONS (presence.CODEX_SESSIONS_ENV) isolates tests."""
+    from v7_harness.coord.presence import CODEX_SESSIONS_ENV
+    return Path(os.environ.get(CODEX_SESSIONS_ENV) or (Path.home() / ".codex" / "sessions"))
+
+
+def _codex_thread(desk: Path, thread: str) -> tuple[str, dict[str, str]]:
+    """U134-D (2026-10-03): `--thread handoff-20261003`, a free-text name, failed `No active session found`.
+
+    A thread is live when a Codex rollout file carries its id; otherwise the newest rollout of this project is used
+    and the fallback is returned for the receipt. With no project thread the given value is kept (no worse than
+    before). An empty thread resolves exactly as before, now from the same sessions folder.
+    """
+    from v7_harness.coord.notify import resolve_thread
+    root = _codex_sessions()
+    # Codex thread ids are UUIDs; the bound keeps any other text out of the glob pattern.
+    if thread and re.fullmatch(r"[0-9A-Za-z-]{8,64}", thread) and any(root.glob(f"*/*/*/rollout-*-{thread}.jsonl")):
+        return thread, {}
+    newest = resolve_thread(desk, sessions_dir=root)
+    if not thread:
+        return newest, {}
+    if newest and newest != thread:
+        return newest, {"given": thread, "used": newest}
+    return thread, {}
+
+
+def _queue_dir(project: Path, tool: str) -> Path:
+    """U134: letters waiting for `tool` to turn ACTIVE live beside the mailbox's other delivery records."""
+    return _project_mailbox(Path(project).resolve()).root / "delivery" / "queued" / tool
+
+
+def _queue_until_active(project: Path, tool: str, *, message_id: str, digest: str, actor: str, message: str,
+                        card: str, thread: str) -> DeliverResult:
+    """U134-C (2026-10-03): a letter to a LIMITED/ABSENT codex/claude came back `mailbox_only` PUBLISHED with ok=true
+    and nothing re-sent it when the tool returned (relay_18758c37 never reached Codex). It is now queued, and the
+    tool's next ACTIVE heartbeat with dispatch (presence.mark -> dispatch_queued) sends it."""
+    marker = _queue_dir(project, tool) / f"{message_id}.json"
+    try:
+        _write_receipt(marker, {"message_id": message_id, "actor": actor, "message": message, "card": card,
+                                "thread": thread, "attempts": 0})
+    except FileExistsError:
+        pass  # the same letter sent again stays one queued letter
+    return DeliverResult(False, tool, "QUEUED_UNTIL_ACTIVE", (), "", message_id, digest, str(marker))
+
+
+def queued_letters(project: Path, tool: str) -> list[Path]:
+    """U134-B: letters waiting for `tool`, oldest name first; a missing queue is empty (the hook's cheap check)."""
+    folder = _queue_dir(project, tool)
+    return sorted(folder.glob("relay_*.json")) if folder.is_dir() else []
+
+
+def dispatch_queued(project: Path, tool: str, *, runner: Any = None) -> list[dict[str, str]]:
+    """U134-B: send each letter queued for `tool` once.
+
+    A heartbeat takes a letter by renaming it (atomic; a racing heartbeat gets OSError and skips it), so two
+    heartbeats in parallel send it once. The send reuses `_deliver_unlocked` with the queued message id (an empty
+    window digests like the None the queue was written with), so the accepted and ack receipts keep it idempotent.
+    An unsettled send goes back to the queue; after the last try it is parked as `<message_id>.failed`.
+    """
+    # Reasons that end a queued letter's trip: sent, already acknowledged, or held for the interactive session.
+    settled = ("DISPATCHED", "ACKED", "QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY")
+    # One try per hook kind (SessionStart, UserPromptSubmit, PostToolUse) before parking: a letter that keeps failing
+    # (no thread, CLI error) must not fire `codex queue` on every heartbeat forever.
+    tries = 3
+    project = Path(project).resolve()
+    desk = _project_mailbox(project).root.parent.parent
+    sent: list[dict[str, str]] = []
+    for marker in queued_letters(project, tool):
+        taking = marker.with_name(f"{marker.stem}.{uuid.uuid4().hex}.taking")
+        try:
+            os.rename(marker, taking)
+        except OSError:
+            continue
+        try:
+            letter = json.loads(taking.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            os.replace(taking, marker.with_suffix(".failed"))
+            continue
+        card = str(letter.get("card") or "")
+        thread = str(letter.get("thread") or "")
+        if card:
+            from v7_harness.coord.windows import window_for
+            thread = window_for(desk, card, tool) or thread  # U115: the card's own window of the now-ACTIVE tool
+        result = _deliver_unlocked(project, message=str(letter.get("message") or ""),
+                                   actor=str(letter.get("actor") or ""), target=tool, thread=thread,
+                                   runner=runner, card=card, window="")
+        sent.append({"message_id": str(letter.get("message_id") or marker.stem), "reason": result.reason})
+        if result.reason in settled:
+            taking.unlink(missing_ok=True)
+            continue
+        letter["attempts"] = int(letter.get("attempts") or 0) + 1
+        taking.write_text(json.dumps(letter, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        os.replace(taking, marker if letter["attempts"] < tries else marker.with_suffix(".failed"))
+    return sent
+
+
 def _deliver_unlocked(
     project: Path,
     *,
@@ -525,12 +621,11 @@ def _deliver_unlocked(
         if target != "claude":
             envelope += (f"\nAfter processing, run coord ack --id {message_id} for this project. "
                          "The sender keeps this message in the inbox until ACK.")
+        fallback: dict[str, str] = {}
         if target == "codex":
             if window:  # U115: the card's own Codex thread replaces the default thread
                 thread = window
-            if not thread:
-                from v7_harness.coord.notify import resolve_thread
-                thread = resolve_thread(desk)
+            thread, fallback = _codex_thread(desk, thread)  # U134-D: a dead or free-text thread falls back
             result = (_deliver_to_codex(envelope, thread, runner=runner) if thread else
                       DeliverResult(False, "codex", "NO_THREAD", (), ""))
         elif target == "claude":
@@ -544,7 +639,7 @@ def _deliver_unlocked(
         receipt = {"message_id": message_id, "digest": digest, "target": target,
                    "state": "DISPATCHED" if result.delivered else "FAILED", "reason": result.reason,
                    "attempt": _dispatch_count(attempts, message_id) + 1, "timestamp_ns": time.time_ns(),
-                   "output": result.output}
+                   "output": result.output, **({"thread_fallback": fallback} if fallback else {})}
         attempt_path = attempts / f"{message_id}_{uuid.uuid4().hex}.json"
         _write_receipt(attempt_path, receipt)
         if result.delivered:
@@ -589,6 +684,7 @@ def deliver(
     box = _project_mailbox(project)
     desk = box.root.parent.parent
     requested_target = target
+    queued_for = ""
     if target is None:
         from v7_harness.coord.presence import read as read_presence
         from v7_harness.coord.watch import watcher_live
@@ -601,9 +697,9 @@ def deliver(
     elif target in ("codex", "claude"):
         from v7_harness.coord.presence import read as read_presence
         if read_presence(desk, target)["state"] in ("LIMITED", "ABSENT"):
-            target = None
+            queued_for, target = target, None  # U134-C: queued below until the tool's next ACTIVE turn
     # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
-    # was resolved to None above, so it gets no window and stays mailbox-only (U113).
+    # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = None
     if card:
         from v7_harness.coord.windows import window_for
@@ -635,6 +731,9 @@ def deliver(
             detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
             unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
+    if target is None and queued_for:
+        return _queue_until_active(project, queued_for, message_id=message_id, digest=digest, actor=actor,
+                                   message=message, card=card, thread=thread)
     if target is None:
         return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
     guard = box.root / "delivery" / "guards" / f"{message_id}.lock"

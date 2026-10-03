@@ -1262,7 +1262,9 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
                      target=args.target, thread=args.thread, card=args.card)
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
-    ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY")
+    # U134-C: QUEUED_UNTIL_ACTIVE waits for the target's next ACTIVE turn; also not a failure.
+    ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY",
+                           "QUEUED_UNTIL_ACTIVE")
     print(json.dumps({"ok": ok, "target": result.target, "reason": result.reason,
                       "message_id": result.message_id, "digest": result.digest,
                       "receipt": result.receipt, "output": result.output[:500]}, ensure_ascii=False))
@@ -1467,7 +1469,7 @@ def cmd_coord_sentinel(args: argparse.Namespace) -> int:
 
 def cmd_coord_presence(args: argparse.Namespace) -> int:
     """U32b: record one tool's heartbeat, or show all three. Called from each tool's session hooks."""
-    from .coord.presence import conductor, mark, read_all
+    from .coord.presence import conductor, hook_turn_start, mark, read_all
 
     say = getattr(args, "say", "json")
 
@@ -1514,7 +1516,9 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 return 0
             if args.tool and args.state:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
-                mark(project, args.tool, args.state, ttl_s=args.ttl, session=hook_session(stdin_text))
+                # U134: a turn start clears a stale LIMITED/ABSENT lease; an ACTIVE beat sends queued letters.
+                mark(project, args.tool, args.state, ttl_s=args.ttl, session=hook_session(stdin_text),
+                     turn_start=hook_turn_start(stdin_text) and not getattr(args, "post_tool", False), dispatch=True)
             presence = read_all(project)
             if say == "agy":
                 line = agy_line(project, presence, stdin_text)

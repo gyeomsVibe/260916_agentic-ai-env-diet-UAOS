@@ -143,7 +143,8 @@ class LimitedTargetIgnoresTheWindow(_Isolated):
                 runner = _Runner()
                 result = deliver(self.project, message=f"U115 {tool} {state} ACTIONABLE_DELTA", actor="claude",
                                  target=tool, runner=runner, card="U115")
-                self.assertEqual(("mailbox_only", "PUBLISHED"), (result.target, result.reason), (tool, state))
+                # U134-C: queued for the tool's next ACTIVE turn instead of a bare mailbox_only; still no dispatch.
+                self.assertEqual((tool, "QUEUED_UNTIL_ACTIVE"), (result.target, result.reason), (tool, state))
                 self.assertEqual([], runner.calls, (tool, state))
                 payload = self._payload(result)
                 self.assertEqual("U115", payload["card"])
