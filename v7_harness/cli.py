@@ -1589,7 +1589,9 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
         if not (args.tool and args.state):
             print(json.dumps({"ok": False, "error": "--tool and --state go together"}, ensure_ascii=False))
             return 2
-        mark(project, args.tool, args.state, ttl_s=args.ttl, lease=getattr(args, "lease", False))
+        # U134-R F3: a hand-written lease is `manual`, so the tool's next real turn start may clear it.
+        lease = getattr(args, "lease", False)
+        mark(project, args.tool, args.state, ttl_s=args.ttl, lease=lease, lease_source="manual" if lease else "")
     presence = read_all(project)
     _emit({"ok": True, "presence": presence, "conductor": conductor(presence)})
     return 0
