@@ -55,7 +55,8 @@ class NoLetterWaitsInALimitedThread(_Isolated):
             with mock.patch("v7_harness.coord.deliver.shutil.which", return_value="codex"):
                 result = deliver(self.project, message=f"U113 {state}", actor="claude", target="codex",
                                  runner=runner, thread="t1")
-            self.assertEqual(("mailbox_only", "PUBLISHED"), (result.target, result.reason), state)
+            # U134-C: still no dispatch while LIMITED/ABSENT, but the letter is queued for the next ACTIVE turn.
+            self.assertEqual(("codex", "QUEUED_UNTIL_ACTIVE"), (result.target, result.reason), state)
             self.assertEqual([], runner.calls, state)
             self.assertTrue((self.project / ".coord" / "mailbox" / "inbox" / f"{result.message_id}.json").is_file())
 

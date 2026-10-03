@@ -11,9 +11,9 @@
 
 ## 요약
 
-- 전체 지점: 44
+- 전체 지점: 45
 - GAP: 0
-- CALLER_INPUT: 25
+- CALLER_INPUT: 26
 - GUARDED: 2
 - FIXED: 13
 - PASS_THROUGH: 4
@@ -31,13 +31,14 @@
 | `v7_harness/calculator_gate.py:176` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/calculator_gate.py:185` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/calculator_gate.py:213` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
-| `v7_harness/coord/agy_dispatch.py:68` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/agy_dispatch.py:70` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:105` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:239` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:35` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/notify.py:219` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/presence.py:415` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/thrift.py:63` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/windows.py:116` | DIRECT | `subprocess.Popen` | FIXED | no | no | FIXED |
+| `v7_harness/coord/windows.py:122` | DIRECT | `subprocess.Popen` | FIXED | no | no | FIXED |
 | `v7_harness/deploy_pc.py:222` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/deploy_pc.py:240` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/execution/agy_launcher.py:85` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
@@ -76,11 +77,12 @@
 - `v7_harness/adapters/claude_worker.py:173` DIRECT `subprocess.run`
 - `v7_harness/adapters/lane_worker.py:79` DIRECT `subprocess.run`
 - `v7_harness/calculator_gate.py:96` DIRECT `subprocess.run`
-- `v7_harness/coord/agy_dispatch.py:68` INDIRECT `runner -> subprocess.run`
+- `v7_harness/coord/agy_dispatch.py:70` INDIRECT `runner -> subprocess.run`
 - `v7_harness/coord/deliver.py:105` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/deliver.py:239` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/desk_delta.py:35` DIRECT `subprocess.run`
 - `v7_harness/coord/notify.py:219` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/presence.py:415` DIRECT `subprocess.Popen`
 - `v7_harness/coord/thrift.py:63` DIRECT `subprocess.run`
 - `v7_harness/deploy_pc.py:222` INDIRECT `runner -> subprocess.run`
 - `v7_harness/deploy_pc.py:240` INDIRECT `runner -> subprocess.run`

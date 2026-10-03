@@ -24,6 +24,16 @@ STATES = ("ACTIVE", "LIMITED", "ABSENT")
 DEFAULT_TTL_S = 3600
 
 
+# U134: a SessionStart or UserPromptSubmit hook runs only when a turn really starts, so it proves the tool has
+# capacity now; PostToolUse runs mid-turn and Stop/SessionEnd prove nothing new.
+TURN_START_EVENTS = ("SessionStart", "UserPromptSubmit")
+# U134: one append-only log of desk events beside the heartbeats (LEASE_CLEARED_BY_TURN), read by people and tests.
+EVENTS_FILE = "events.jsonl"
+# U134: a hook must return in milliseconds, so queued letters are sent by a detached process that outlives it.
+QUEUE_SPAWN_CODE = ("import sys; from v7_harness.coord.deliver import dispatch_queued; "
+                    "dispatch_queued(sys.argv[1], sys.argv[2])")
+
+
 class PresenceRejected(ValueError):
     pass
 
@@ -35,13 +45,18 @@ def _path(project: Path, tool: str) -> Path:
 
 
 def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, now: float | None = None,
-         lease: bool = False, session: str | None = None) -> Path:
+         lease: bool = False, session: str | None = None, turn_start: bool = False, dispatch: bool = False,
+         runner: Any = None) -> Path:
     """Write one heartbeat. `lease=True` records a capability fact (e.g. a provider's quota answer) that a session
     heartbeat of another state cannot overwrite before it expires.
 
     U47-A1b: Codex's re-review (2026-09-27) found that the next ACTIVE session hook replaced the LIMITED state
     `pilot judge` had recorded from agy's 429 answer, so routing again sent verdict requests to a tool that could not
     answer. A live lease is kept and the heartbeat is dropped; another lease replaces it.
+
+    U134 (2026-10-03): a manual LIMITED lease from 2026-09-30 dropped every Codex turn for 3 days. An ACTIVE heartbeat
+    from a real turn start (`turn_start=True`) proves capacity, so it replaces a LIMITED/ABSENT lease and logs
+    LEASE_CLEARED_BY_TURN. `dispatch=True` (the hook path) then sends the letters queued while the tool was away.
     """
     if state not in STATES:
         raise PresenceRejected(f"unknown state: {state}")
@@ -58,16 +73,27 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
     }
     if lease:
         record["lease"] = True
+    held = ""
+    cleared = ""
     # U47-RW1c: Codex's race (2026-09-27) let a heartbeat pass the lease check, a lease land, and the heartbeat then
     # replace it. The check and the replace now happen under one lock shared by threads and processes.
     with _tool_lock(target):
         if not lease and _live_lease(target, moment, state):
-            return target
-        if session and not lease:
-            record = _merge_session(target, record, session, state, moment, ttl_s)
-        tmp = target.with_name(f".{tool}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-        tmp.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-        replace_with_retry(tmp, target)
+            held = _lease_state(target)
+        if held and turn_start and state == "ACTIVE" and held in ("LIMITED", "ABSENT"):
+            cleared = held
+        if not held or cleared:
+            if session and not lease:
+                record = _merge_session(target, record, session, state, moment, ttl_s)
+            tmp = target.with_name(f".{tool}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+            tmp.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+            replace_with_retry(tmp, target)
+    if cleared:
+        _log_event(target.parent, {"kind": "LEASE_CLEARED_BY_TURN", "tool": tool, "cleared_state": cleared,
+                                   "at": record["observed_at"], "session": session or ""})
+    # An ACTIVE lease also means the desk reads ACTIVE, so its queued letters may go too.
+    if dispatch and state == "ACTIVE" and (not held or cleared or held == "ACTIVE"):
+        _dispatch_queued(project, tool, runner)
     return target
 
 
@@ -342,3 +368,50 @@ def conductor(desk: dict[str, dict[str, Any]]) -> dict[str, Any]:
             # An expired heartbeat is not absence: stop here instead of handing authority to the next tool.
             return {"conductor": "UNKNOWN", "acting": False, "reason": f"{tool} {state}: heartbeat not current"}
     return {"conductor": "none", "acting": False, "reason": "all three tools LIMITED or ABSENT"}
+
+
+def hook_turn_start(stdin_text: str) -> bool:
+    """U134: True when the hook payload names a real turn start (SessionStart or UserPromptSubmit)."""
+    try:
+        payload = json.loads(stdin_text or "")
+    except (TypeError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("hook_event_name") in TURN_START_EVENTS
+
+
+def _lease_state(target: Path) -> str:
+    """U134: the state a live lease holds; read under the tool lock right after `_live_lease` answered True."""
+    try:
+        record = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    return str(record.get("state") or "") if isinstance(record, dict) else ""
+
+
+def _log_event(presence_dir: Path, event: dict[str, Any]) -> None:
+    """U134: append one desk event line. Two tools can clear their leases at once and Windows loses concurrent
+    appends, so the events file has its own lock (taken after the heartbeat lock is released: it is not reentrant)."""
+    path = presence_dir / EVENTS_FILE
+    with _tool_lock(path):
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _dispatch_queued(project: Path, tool: str, runner: Any) -> None:
+    """U134-B: send the letters queued while `tool` was LIMITED/ABSENT. A test passes a stub runner and dispatches
+    in-process; a hook starts a detached process so the session never waits for `codex queue` or a paid turn."""
+    import subprocess
+    import sys
+
+    from v7_harness.coord.deliver import dispatch_queued, queued_letters
+
+    if not queued_letters(project, tool):
+        return
+    if runner is not None:
+        dispatch_queued(project, tool, runner=runner)
+        return
+    flags: dict[str, Any] = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+                             if os.name == "nt" else {"start_new_session": True})
+    subprocess.Popen([sys.executable, "-c", QUEUE_SPAWN_CODE, str(project), tool],
+                     cwd=str(Path(__file__).resolve().parents[2]), stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **flags)

@@ -17,6 +17,7 @@ REVIEW_DOC = ROOT / "docs" / "51_u54-s2-caller-input-review.md"
 # U75 added calculator_gate.py (git show of a merge parent, reviewed as DATA_ARG).
 # U103 added coord/desk_delta.py (fixed read-only git log/status/ls-files, reviewed as FIXED_PLAN).
 # U120 added coord/agy_dispatch.py (fixed agy argv, the letter is one -p value, reviewed as DATA_ARG).
+# U134 added coord/presence.py (detached `python -c <constant>` queue dispatcher, reviewed as FIXED_PLAN).
 REVIEWED = {
     "v7_harness/adapters/claude_worker.py": 1,
     "v7_harness/adapters/lane_worker.py": 1,
@@ -25,6 +26,7 @@ REVIEWED = {
     "v7_harness/coord/deliver.py": 2,
     "v7_harness/coord/desk_delta.py": 1,
     "v7_harness/coord/notify.py": 1,
+    "v7_harness/coord/presence.py": 1,
     "v7_harness/coord/thrift.py": 1,
     "v7_harness/deploy_pc.py": 2,
     "v7_harness/execution/agy_launcher.py": 1,
@@ -51,7 +53,7 @@ class CallerInputReviewTest(unittest.TestCase):
                 if ln.startswith("| `") and any(f"| {v} |" in ln for v in VERDICTS)]
         per_file = Counter("v7_harness/" + ln.split("`")[1].rsplit(":", 1)[0] for ln in rows)
         self.assertEqual(REVIEWED, dict(per_file))
-        self.assertEqual({"DATA_ARG": 11, "FIXED_PLAN": 11, "OPERATOR_COMMAND": 3},
+        self.assertEqual({"DATA_ARG": 11, "FIXED_PLAN": 12, "OPERATOR_COMMAND": 3},
                          dict(Counter(v for ln in rows for v in VERDICTS if f"| {v} |" in ln)))
 
     def test_no_command_injection_verdict_and_no_gap(self):
