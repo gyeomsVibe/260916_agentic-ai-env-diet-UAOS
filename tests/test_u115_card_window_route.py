@@ -39,9 +39,9 @@ class _Isolated(unittest.TestCase):
         self.project = Path(self._tmp.name) / "proj"
         (self.project / ".coord").mkdir(parents=True)
         (self.project / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
-        sessions = Path(self._tmp.name) / "codex-sessions"  # never the PC's real Codex logs
-        sessions.mkdir()
-        self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(sessions)})
+        self.sessions = Path(self._tmp.name) / "codex-sessions"  # never the PC's real Codex logs
+        self.sessions.mkdir()
+        self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(self.sessions)})
         self._env.start()
         self._which = mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name)
         self._which.start()
@@ -69,24 +69,42 @@ class _Isolated(unittest.TestCase):
 class CodexWindow(_Isolated):
     def test_card_with_a_codex_window_queues_into_that_thread(self):
         presence.mark(self.project, "codex", "ACTIVE")
-        self._window("U115", codex="thr-window")
+        win_thread = "0199aaaa-0000-7000-8000-000000000001"
+        def_thread = "0199bbbb-0000-7000-8000-000000000002"
+        day = self.sessions / "2026" / "10" / "03"
+        day.mkdir(parents=True, exist_ok=True)
+        for tid in (win_thread, def_thread):
+            (day / f"rollout-2026-10-03T06-00-00-{tid}.jsonl").write_text(
+                json.dumps({"type": "session_meta", "payload": {"id": tid, "session_id": tid, "cwd": str(self.project)}}) + "\n",
+                encoding="utf-8",
+            )
+        self._window("U115", codex=win_thread)
         runner = _Runner()
         result = deliver(self.project, message="U115 codex window", actor="claude", target="codex",
-                         thread="thr-default", runner=runner, card="U115")
+                         thread=def_thread, runner=runner, card="U115")
         self.assertEqual(1, len(runner.calls))
         self.assertIn("queue", runner.calls[0])
-        self.assertEqual("thr-window", self._after(runner.calls[0], "--thread"))
+        self.assertEqual(win_thread, self._after(runner.calls[0], "--thread"))
         payload = self._payload(result)
-        self.assertEqual(("U115", "thr-window"), (payload["card"], payload["window"]))
+        self.assertEqual(("U115", win_thread), (payload["card"], payload["window"]))
 
     def test_without_card_or_without_a_window_the_default_thread_is_used(self):
         presence.mark(self.project, "codex", "ACTIVE")
-        self._window("U115", codex="thr-window")
+        win_thread = "0199aaaa-0000-7000-8000-000000000001"
+        def_thread = "0199bbbb-0000-7000-8000-000000000002"
+        day = self.sessions / "2026" / "10" / "03"
+        day.mkdir(parents=True, exist_ok=True)
+        for tid in (win_thread, def_thread):
+            (day / f"rollout-2026-10-03T06-00-00-{tid}.jsonl").write_text(
+                json.dumps({"type": "session_meta", "payload": {"id": tid, "session_id": tid, "cwd": str(self.project)}}) + "\n",
+                encoding="utf-8",
+            )
+        self._window("U115", codex=win_thread)
         for n, card in enumerate(("", "U999")):
             runner = _Runner()
             result = deliver(self.project, message=f"U115 default {n}", actor="claude", target="codex",
-                             thread="thr-default", runner=runner, card=card)
-            self.assertEqual("thr-default", self._after(runner.calls[0], "--thread"), card)
+                             thread=def_thread, runner=runner, card=card)
+            self.assertEqual(def_thread, self._after(runner.calls[0], "--thread"), card)
             payload = self._payload(result)
             if card:
                 self.assertEqual(("U999", None), (payload["card"], payload.get("window")))

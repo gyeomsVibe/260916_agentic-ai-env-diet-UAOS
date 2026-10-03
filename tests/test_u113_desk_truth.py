@@ -10,6 +10,7 @@ Receipts (2026-10-01):
 Fixed acceptance written by the judge (claude) first.
 """
 
+import json
 import os
 import tempfile
 import time
@@ -37,9 +38,9 @@ class _Isolated(unittest.TestCase):
         self.project = Path(self._tmp.name) / "proj"
         (self.project / ".coord").mkdir(parents=True)
         (self.project / ".coord" / "PLAN.md").write_text("# plan\n", encoding="utf-8")
-        sessions = Path(self._tmp.name) / "codex-sessions"  # never the PC's real Codex logs
-        sessions.mkdir()
-        self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(sessions)})
+        self.sessions = Path(self._tmp.name) / "codex-sessions"  # never the PC's real Codex logs
+        self.sessions.mkdir()
+        self._env = mock.patch.dict(os.environ, {presence.CODEX_SESSIONS_ENV: str(self.sessions)})
         self._env.start()
 
     def tearDown(self):
@@ -63,8 +64,13 @@ class NoLetterWaitsInALimitedThread(_Isolated):
     def test_active_codex_is_still_dispatched(self):
         presence.mark(self.project, "codex", "ACTIVE")
         runner = _Recorder()
+        thread_id = "0199cccc-0000-7000-8000-000000000003"
+        day = self.sessions / "2026" / "10" / "03"
+        day.mkdir(parents=True, exist_ok=True)
+        path = day / f"rollout-2026-10-03T06-00-00-{thread_id}.jsonl"
+        path.write_text(json.dumps({"type": "session_meta", "payload": {"id": thread_id, "session_id": thread_id, "cwd": str(self.project)}}) + "\n", encoding="utf-8")
         with mock.patch("v7_harness.coord.deliver.shutil.which", return_value="codex"):
-            deliver(self.project, message="U113 active", actor="claude", target="codex", runner=runner, thread="t1")
+            deliver(self.project, message="U113 active", actor="claude", target="codex", runner=runner, thread=thread_id)
         self.assertEqual(1, len(runner.calls))
         self.assertIn("queue", runner.calls[0])
 

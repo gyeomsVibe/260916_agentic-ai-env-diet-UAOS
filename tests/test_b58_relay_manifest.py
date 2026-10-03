@@ -63,6 +63,27 @@ class B58RelayManifestTests(unittest.TestCase):
     def test_claude_tree_is_not_broadly_excluded(self) -> None:
         self.assertNotIn(".claude", DEFAULT_EXCLUDES)
 
+    def test_claude_worktrees_are_excluded_while_other_claude_files_remain(self) -> None:
+        self.assertIn(".claude/worktrees", DEFAULT_EXCLUDES)
+        manifest_before = build_manifest(self.root)
+        hash_before = manifest_before.manifest_hash
+
+        wt_file = self.root / ".claude" / "worktrees" / "wt1" / "file.py"
+        wt_file.parent.mkdir(parents=True, exist_ok=True)
+        wt_file.write_text("print('worktree')\n", encoding="utf-8")
+
+        manifest_after = build_manifest(self.root)
+        self.assertEqual(hash_before, manifest_after.manifest_hash)
+        self.assertIsNone(manifest_after.get_entry(".claude/worktrees/wt1/file.py"))
+
+        wt_file.write_text("print('modified worktree')\n", encoding="utf-8")
+        self.assertEqual(hash_before, build_manifest(self.root).manifest_hash)
+
+        normal_claude = self.root / ".claude" / "settings.json"
+        self.assertIsNotNone(manifest_after.get_entry(".claude/settings.json"))
+        normal_claude.write_text("{\"updated\": true}\n", encoding="utf-8")
+        self.assertNotEqual(hash_before, build_manifest(self.root).manifest_hash)
+
 
 if __name__ == "__main__":
     unittest.main()

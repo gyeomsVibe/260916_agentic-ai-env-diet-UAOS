@@ -50,6 +50,7 @@ DEFAULT_EXCLUDES = {
     ".coord/coord.sqlite3-journal",
     ".coord/coord.sqlite3.writer.lock",
     ".coord/stage",
+    ".claude/worktrees",
 }
 
 # A broker writer lock anywhere in the source (a --work-dir nested elsewhere) is held with a byte lock while the pilot
