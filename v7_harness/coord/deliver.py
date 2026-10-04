@@ -61,18 +61,35 @@ _ACK_RE = re.compile(_TOKEN.format("ACK_ONLY"))
 _NEGATED_RE = re.compile(r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+ACTIONABLE_DELTA\b")
 _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
     "ACTIONABLE_DELTA", "VERDICT_REQUESTED=YES", "APPROVAL_REQUIRED", r"(?:PRIORITY|SEVERITY|P1)=(?:P1|YES|1)"))
+# U141-B: quoted data is never an instruction. Fenced blocks (``` or ~~~, an unclosed fence runs to the end) go first,
+# then "...", curly quotes, 'single' quotes, `code` and "> " reply lines are blanked before the token scan. A single
+# quote counts only with no word character outside it, so apostrophes (it's, tools') never open a span (U141-B2 REWORK).
+_FENCE_RE = re.compile(r"^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)", re.MULTILINE | re.DOTALL)
+_QUOTED_RE = re.compile(r'"[^"\n]*"|“[^”\n]*”|(?<![\w\'])\'[^\'\n]*\'(?!\w)|`[^`\n]*`|^[ \t]*>.*$', re.MULTILINE)
+DELTA_LIMIT = 200  # an inferred delta is the hook's one-line summary; the full text stays in `message`
 
 
-def _digest(actor: str, message: str, card: str = "", window: str | None = None) -> str:
+def _digest(actor: str, message: str, card: str = "", window: str | None = None,
+            target: str | None = None, fields: dict[str, Any] | None = None) -> str:
     # U115: a card letter's id also covers its card and window, so the same text routed to another window is a new
     # letter instead of a mailbox collision; without a card the id is exactly today's.
     key = actor + "\0" + message + (f"\0{card}\0{window or ''}" if card else "")
+    # U141-B: every structured field stored in the payload, explicit or inferred, joins the id (v3). A letter stored
+    # before inference existed (v2, no fields) and its inferred retry are then two ids, never a collision or a shared
+    # ACK (U141-B2 REWORK). Without fields the v2/legacy ids stay exactly as published.
+    if fields:
+        key = json.dumps(["uaos-relay-v3", actor, message, card, window or "" if card else "", target, fields],
+                         ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    # Explicit destination is payload identity; None preserves legacy auto IDs.
+    elif target is not None:
+        key = json.dumps(["uaos-relay-v2", actor, message, card, window or "" if card else "", target],
+                         ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
 def _requires_wake(message: str) -> bool:
-    """Only a real delta may spend a paid turn; ACK_ONLY, negated or incidental tokens never do."""
-    upper = message.upper()
+    """Only a real delta may spend a paid turn; ACK_ONLY, negated, incidental or quoted tokens never do."""
+    upper = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()
     if _ACK_RE.search(upper):
         return False
     upper = _NEGATED_RE.sub(" ", upper)
@@ -325,12 +342,19 @@ RELEASE_WAIT_S = 5.0
 
 
 def _payload(actor: str, message: str, digest: str, target: str | None, card: str = "",
-             window: str | None = None) -> dict[str, Any]:
+             window: str | None = None, *, wake_class: str | None = None, verdict_requested: bool | None = None,
+             verdict: str | None = None, delta: str | None = None) -> dict[str, Any]:
     """The one published body: the same bytes from every caller, so publish stays idempotent."""
     body = {"kind": "HANDOFF", "actor": actor, "message": message, "digest": digest,
             "requested_target": target or "auto"}
     if card:  # U115: only a card letter carries these keys, so a letter without --card keeps today's bytes
         body.update(card=card, window=window)
+    # U141-A: the structured wake fields the watcher classifies. They are written only when given, so an untagged
+    # letter keeps today's bytes and stays LEGACY.
+    for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested), ("verdict", verdict),
+                       ("delta", delta)):
+        if value is not None:
+            body[key] = value
     return body
 
 
@@ -806,7 +830,7 @@ def _queue_until_active(project: Path, tool: str, *, message_id: str, digest: st
     marker = _queue_dir(project, tool) / f"{message_id}.json"
     try:
         _write_receipt(marker, {"message_id": message_id, "actor": actor, "message": message, "card": card,
-                                "thread": thread, "attempts": 0})
+                                "thread": thread, "attempts": 0, "digest": digest})
     except FileExistsError:
         pass  # the same letter sent again stays one queued letter
     return DeliverResult(False, tool, "QUEUED_UNTIL_ACTIVE", (), "", message_id, digest, str(marker))
@@ -938,7 +962,8 @@ def dispatch_queued(project: Path, tool: str, *, runner: Any = None) -> list[dic
 
             message = str(letter.get("message") or "")
             actor = str(letter.get("actor") or "")
-            digest = _digest(actor, message, card, "")
+            # Keep the published identity, including destination and legacy queued IDs.
+            digest = str(letter.get("digest") or _digest(actor, message, card, ""))
 
             # Decision: acquire per-message dispatch guard following U83 age rule (_acquire_guard, GUARD_STALE_S)
             guard = box.root / "delivery" / "guards" / f"{message_id}.lock"
@@ -996,6 +1021,7 @@ def dispatch_queued(project: Path, tool: str, *, runner: Any = None) -> list[dic
                         pending_owner=pending_owner,
                         card=card,
                         window="",
+                        identity_digest=digest,
                     )
                 finally:
                     _release_guard(guard, guard_owner)
@@ -1044,6 +1070,7 @@ def _deliver_unlocked(
     pending_owner: str | None = None,
     card: str = "",
     window: str = "",
+    identity_digest: str | None = None,
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -1058,7 +1085,7 @@ def _deliver_unlocked(
     box = _project_mailbox(project)
     desk = box.root.parent.parent
     # Stable id makes repeated calls with the same sender and bytes idempotent.
-    digest = _digest(actor, message, card, window)
+    digest = identity_digest or _digest(actor, message, card, window)
     message_id = "relay_" + digest[:32]
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
     ack_file = box.ack_dir / f"{message_id}.json"
@@ -1175,6 +1202,10 @@ def deliver(
     thread: str = "",
     runner: Any = None,
     card: str = "",
+    wake_class: str | None = None,
+    verdict_requested: bool | None = None,
+    verdict: str | None = None,
+    delta: str | None = None,
 ) -> DeliverResult:
     """Serialize the complete publish-to-dispatch transaction per message.
 
@@ -1209,8 +1240,16 @@ def deliver(
     if card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
-        digest = _digest(actor, message, card, window)
-        message_id = "relay_" + digest[:32]
+    explicit = {key: value for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested),
+                                              ("verdict", verdict), ("delta", delta)) if value is not None}
+    if not explicit and requested_target and _requires_wake(message):
+        # U141-B: an ordinary letter whose text asks for a turn becomes a structured ACTIONABLE envelope, so the
+        # structured watcher (which never reads text) wakes its receiver. Explicit fields, even NOTICE, always win.
+        first = next((line.strip() for line in message.splitlines() if line.strip()), "")
+        wake_class, delta = "ACTIONABLE", first[:DELTA_LIMIT]
+        explicit = {"wake_class": wake_class, "delta": delta}  # stored fields, so the id is v3 (see _digest)
+    digest = _digest(actor, message, card, window, requested_target, explicit)
+    message_id = "relay_" + digest[:32]
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
@@ -1221,7 +1260,8 @@ def deliver(
             pass
     # U48-D0 re-review (Claude, 2026-09-27): publish before the guard. A guard left by a crashed dispatcher used to
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
-    box.publish(message_id, _payload(actor, message, digest, requested_target, card, window))
+    box.publish(message_id, _payload(actor, message, digest, requested_target, card, window, wake_class=wake_class,
+                                     verdict_requested=verdict_requested, verdict=verdict, delta=delta))
     if target == "antigravity":
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
@@ -1264,7 +1304,7 @@ def deliver(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "")
+                                 card=card, window=window or "", identity_digest=digest)
     finally:
         _release_guard(guard, owner)
 

@@ -795,6 +795,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_deliver.add_argument("--thread", default="")
     # U115: a card id routes the letter into that card's window (`.coord/windows/<card>.json`, U114).
     p_coord_deliver.add_argument("--card", default="")
+    # U141-A: structured wake fields. Only these decide a paid wake; the message text is never read for it.
+    p_coord_deliver.add_argument("--wake-class", default=None, choices=["ACTIONABLE", "NOTICE"])
+    p_coord_deliver.add_argument("--verdict-requested", action="store_true", default=None)
+    p_coord_deliver.add_argument("--verdict", default=None,
+                                 choices=["PASS", "REVISE", "FAIL", "APPROVE", "PIVOT", "REWORK"])
+    p_coord_deliver.add_argument("--delta", default=None, help="U141-A: what changed; an ACTIONABLE letter needs one")
     p_coord_deliver.set_defaults(func=cmd_coord_deliver)
 
     p_coord_sentinel = p_coord_subs.add_parser("sentinel")
@@ -849,6 +855,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_watch.add_argument("--interval", type=float, default=30.0, help="Seconds between inbox scans (default: 30)")
     p_coord_watch.add_argument("--wakes-session", action="store_true",
                                help="U117: this watch runs as a background task whose exit wakes its session")
+    # U141-A: structured (default) wakes only on an ACTIONABLE letter, once per letter, one watcher per target.
+    p_coord_watch.add_argument("--policy", default="structured", choices=["structured", "legacy"])
     p_coord_watch.set_defaults(func=cmd_coord_watch)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
@@ -1276,7 +1284,10 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     from .coord.deliver import deliver
 
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
-                     target=args.target, thread=args.thread, card=args.card)
+                     target=args.target, thread=args.thread, card=args.card,
+                     wake_class=getattr(args, "wake_class", None),
+                     verdict_requested=getattr(args, "verdict_requested", None),
+                     verdict=getattr(args, "verdict", None), delta=getattr(args, "delta", None))
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
     # U134-C: QUEUED_UNTIL_ACTIVE waits for the target's next ACTIVE turn; also not a failure.
@@ -1640,26 +1651,33 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 line = ""  # U46-P1: an unchanged P1 set is ACK_ONLY; it was repeated on every prompt
             if say == "none":
                 line = ""  # `none` prints nothing of its own; only a U103 desk delta may speak
+            ack = None
             if getattr(args, "delta", False) and args.tool:
-                from .coord.desk_delta import delta_text
+                from .coord.desk_delta import prepare_delta
 
                 event = json.loads(stdin_text) if stdin_text.strip() else {}
                 event = event if isinstance(event, dict) else {}
                 # U105: removed first-call limit (invocationNum 0) so a letter arriving mid-turn is heard at next call
                 session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
-                delta = delta_text(project, args.tool, session)
-                line = "\n".join(part for part in (line, delta) if part)
+                # U141-A: the cursor and the wake receipts advance only after the output below was written.
+                text, ack = prepare_delta(project, args.tool, session)
+                line = "\n".join(part for part in (line, text) if part)
                 if say != "agy":  # Antigravity's user-visible hook field is UNKNOWN; its line stays model-facing
                     from .coord.board import letters_in, line_is_new, status_line
 
                     try:  # the in-app line must never cost the model its desk delta
-                        user = status_line(project, args.tool, letters_in(delta))
+                        user = status_line(project, args.tool, letters_in(text))
                         if line_is_new(project, args.tool, user):
                             shown["user"], shown["event"] = user, str(event.get("hook_event_name") or "")
                     except Exception:  # noqa: BLE001
                         pass
             line = "\n".join(part for part in (window_line, line) if part)
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
+            if ack is not None:
+                try:
+                    ack()
+                except Exception:  # noqa: BLE001 - a failed ack shows the same letters again next time; never a crash
+                    pass
         except Exception as exc:  # noqa: BLE001
             _emit({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]})
         return 0
@@ -1686,7 +1704,11 @@ def cmd_coord_watch(args: argparse.Namespace) -> int:
     from .coord.watch import watch
 
     found = watch(Path(args.project), tuple(args.target), timeout_s=args.timeout, interval_s=args.interval,
-                  wakes_session=args.wakes_session)
+                  wakes_session=args.wakes_session, policy=getattr(args, "policy", "structured"))
+    if found is not None and found.get("state") == "ALREADY_WATCHING":
+        # U141-A: one watcher per target; a second one exits instead of waking the session a second time.
+        print(json.dumps({"ok": False, "reason": "ALREADY_WATCHING", **found}, ensure_ascii=False))
+        return 4
     if found is None:
         print(json.dumps({"ok": False, "reason": "TIMEOUT", "targets": args.target}, ensure_ascii=False))
         return 3
