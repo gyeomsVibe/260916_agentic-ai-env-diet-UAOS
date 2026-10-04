@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from v7_harness import pilot_dirs
 from v7_harness.coord import next_card
 
 # Each block is a full-context paid turn, so one re-entry without progress, then fail closed (audit relay_5d1e13d0).
@@ -36,8 +37,10 @@ def progress_signature(project: Path) -> list:
         head = None
     schedule = next_card.schedule_path(project)
     schedule_mtime = schedule.stat().st_mtime if schedule.is_file() else None
-    runs = project / ".coord" / "pilot" / "runs"
-    mtimes = [p.stat().st_mtime for p in runs.rglob("*")] if runs.is_dir() else []
+    # U146a-R: runs live in every pilot dir (pilot_dirs.discover: .coord/pilot, .coord, .work/<x>), of this worktree and
+    # of the main checkout; one summary.json per run, so a missing dir simply adds nothing.
+    roots = {Path(d).resolve() for base in (project, next_card.coord_root(project)) for d in pilot_dirs.discover(base)}
+    mtimes = [s.stat().st_mtime for root in sorted(roots) for s in (root / "runs").glob("*/summary.json")]
     return [head, schedule_mtime, max(mtimes) if mtimes else None, len(mtimes)]
 
 
@@ -48,9 +51,11 @@ def _write_atomic(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def gate(project: Path, tool: str, now: float | None = None) -> dict[str, Any] | None:
+def gate(project: Path, tool: str, session: str | None = None, now: float | None = None) -> dict[str, Any] | None:
     project = Path(project)
-    step = next_card.next_step(project, tool, claim=True)
+    if not session:
+        return None  # U146a-R: no session id, no claim and no block (UNKNOWN is no ground for acting)
+    step = next_card.next_step(project, tool, claim=True, session=session, now=now)
     if step.get("state") != "NEXT":
         return None
     card = step["card"]
@@ -80,11 +85,19 @@ def gate(project: Path, tool: str, now: float | None = None) -> dict[str, Any] |
 
 
 def push_check(project: Path, branch: str, force: bool = False) -> dict[str, str]:
-    """R2: ALLOW only a branch the committed grant names. Every missing or doubtful case is DENY."""
-    path = next_card.coord_root(Path(project)) / ".coord" / "grants" / "push.json"
+    """R2 + U146a-R: ALLOW only a branch the grant on origin/main names. A working-tree edit or a local commit is
+    agent-writable, so only the blob a human merged counts. Every missing or doubtful case is DENY."""
+    root = next_card.coord_root(Path(project))
     try:
-        grant = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        done = subprocess.run(["git", "-C", str(root), "show", "refs/remotes/origin/main:.coord/grants/push.json"],
+                              capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"decision": "DENY", "reason": f"git unavailable: {exc}"}
+    if done.returncode != 0:
+        return {"decision": "DENY", "reason": "no push grant committed on origin/main"}
+    try:
+        grant = json.loads(done.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
         return {"decision": "DENY", "reason": f"no readable push grant: {exc}"}
     if not isinstance(grant, dict) or grant.get("enabled") is not True:
         return {"decision": "DENY", "reason": "push grant not enabled"}

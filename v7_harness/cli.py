@@ -862,6 +862,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_next.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_next.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_next.add_argument("--claim", action="store_true", help="Claim the own NEXT card so no other session runs it")
+    p_coord_next.add_argument("--session", default=None, help="Session id that owns the claim (U146a-R: required to claim)")
     p_coord_next.set_defaults(func=cmd_coord_next)
     p_coord_stop = p_coord_subs.add_parser("stop-gate", help="Stop hook: block a turn end while an own NEXT card is ready")
     p_coord_stop.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1680,7 +1681,8 @@ def cmd_coord_usage_session(args: argparse.Namespace) -> int:
 def cmd_coord_next(args: argparse.Namespace) -> int:
     """U146-A: print the next card for a tool from the master schedule (read-only unless --claim)."""
     from .coord.next_card import next_step
-    print(json.dumps(next_step(Path(args.project), args.tool, claim=args.claim), ensure_ascii=False))
+    print(json.dumps(next_step(Path(args.project), args.tool, claim=args.claim, session=args.session),
+                     ensure_ascii=False))
     return 0
 
 
@@ -1688,11 +1690,13 @@ def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
     """U146-A: the Claude Stop hook. A broken gate never breaks the session, so every failure exits 0 silently."""
     try:
         try:
-            json.loads(sys.stdin.read() or "{}")
+            hook = json.loads(sys.stdin.read() or "{}")
         except ValueError:
-            pass  # the hook input is informational; the schedule decides
+            hook = {}
+        # U146a-R: the hook input's session_id owns the claim; without one the gate claims nothing and allows the stop.
+        session = hook.get("session_id") if isinstance(hook, dict) else None
         from .coord.stop_gate import gate
-        result = gate(Path(args.project), args.tool)
+        result = gate(Path(args.project), args.tool, session=session if isinstance(session, str) else None)
         if isinstance(result, dict):
             print(json.dumps(result, ensure_ascii=False))
     except Exception:  # noqa: BLE001 - fail open: the stop is allowed

@@ -20,6 +20,9 @@ SATISFIED = ("DONE", "REVIEW")
 CANDIDATE = ("READY", "PLANNED")
 # R4: one rejected base reworks every stacked child; 3 matches the three-failure stop rule.
 MAX_REVIEW_STACK = 3
+# U146a-R: a claim belongs to a session id and lapses after this long without renewal. 7200 s is the longest background
+# `coord watch` (7,200,000 ms cap); a session silent for longer is gone, so its card may be taken.
+CLAIM_TTL_S = 7200
 
 
 def coord_root(project: Path) -> Path:
@@ -49,43 +52,45 @@ def _review_depth(pid: str, by_id: dict[str, dict], seen: frozenset = frozenset(
     return best
 
 
-def _claim(claims: Path, card: str, tool: str, pid: int) -> bool:
-    """R3: take `card` for this process. False only when a different live process holds it."""
-    from v7_harness.coord.watch import process_identity
+def _claim(claims: Path, card: str, tool: str, session: str, now: float) -> bool:
+    """U146a-R: take `card` for this session. A hook process exits right after it claims, so a PID never owned
+    anything (PR112 counterexample); the session id does, until CLAIM_TTL_S passes without renewal.
+
+    U146a-R2: read, decide and write happen under one OS file lock (Codex U146-R4: replace plus re-read gave two
+    parallel winners). False when another session holds a live claim, or when the claim cannot be decided safely (lock
+    busy past its timeout, the file held open outside the lock): fail closed, a later turn or another card goes on.
+    """
+    from v7_harness.coord.stream import StreamBusy, _exclusive
 
     path = claims / f"{card}.json"
-    record = {"pid": pid, "process_created": process_identity(pid), "tool": tool, "at": time.time()}
+    record = {"session": session, "tool": tool, "at": now}
     claims.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        pass
-    else:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(record, f)
-        return True
-    try:
-        held = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        held = None
-    if isinstance(held, dict):
-        if held.get("pid") == pid:
+        with _exclusive(claims / ".lock"):
+            try:
+                held = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                held = None  # missing, truncated by a dead writer, or still empty: nobody owns it
+            if isinstance(held, dict) and held.get("session") != session:
+                holder, at = held.get("session"), held.get("at")
+                if isinstance(holder, str) and holder and isinstance(at, (int, float)) and now - at < CLAIM_TTL_S:
+                    return False
+            # The own session renews; a lapsed, PID-only or unreadable claim is replaced. Readers never see a half
+            # record because the write lands by replace.
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(record), encoding="utf-8")
+            try:
+                os.replace(tmp, path)
+            except OSError:
+                tmp.unlink(missing_ok=True)  # Windows: another handle holds the claim file open
+                return False
             return True
-        holder = held.get("pid")
-        created = held.get("process_created")
-        if isinstance(holder, int) and created is not None and process_identity(holder) == created:
-            return False
-    # A dead or unreadable claim is replaced atomically, then re-read so a concurrent replacer wins at most once.
-    tmp = path.with_name(f"{path.name}.{pid}.tmp")
-    tmp.write_text(json.dumps(record), encoding="utf-8")
-    os.replace(tmp, path)
-    try:
-        return json.loads(path.read_text(encoding="utf-8")).get("pid") == pid
-    except (OSError, ValueError):
+    except StreamBusy:
         return False
 
 
-def next_step(project: Path, tool: str, claim: bool = False, pid: int | None = None) -> dict[str, Any]:
+def next_step(project: Path, tool: str, claim: bool = False, session: str | None = None,
+              now: float | None = None) -> dict[str, Any]:
     project = Path(project)
     path = schedule_path(project)
     if not path.is_file():
@@ -114,9 +119,12 @@ def next_step(project: Path, tool: str, claim: bool = False, pid: int | None = N
     for p in own:
         card = str(p.get("phase_id"))
         if claim:
+            if not session:
+                # U146a-R: PID-only ownership is refused; an unknown session claims nothing (a plain read still names it).
+                return {"state": "WAIT", "reason": "a claim needs a session id (U146a-R)", "card": card}
             # The claim lives beside the schedule, so every worktree sees the same claims (R5).
             claims = path.parent / "next" / "claims"
-            if not _claim(claims, card, tool, os.getpid() if pid is None else pid):
+            if not _claim(claims, card, tool, session, time.time() if now is None else now):
                 claimed_out = True
                 continue
             return {"state": "NEXT", "card": card, "owner": p.get("owner_tool"), "claimed": True}

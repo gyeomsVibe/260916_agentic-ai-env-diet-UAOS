@@ -113,20 +113,23 @@ class RedTeam(Base):
     def test_claim_is_exclusive_and_skips_to_the_next_candidate(self):
         # R3: two sessions read the same NEXT; only one may run it.
         self.schedule(phase("A", "READY", owner="all"), phase("B", "READY", owner="all"))
-        first = N.next_step(self.root, "claude", claim=True)
+        # U146a-R: ownership is the session id, not a PID (the Stop hook process exits right after each call).
+        first = N.next_step(self.root, "claude", claim=True, session="s1")
         self.assertEqual(("NEXT", "A", True), (first["state"], first["card"], first["claimed"]))
         claim = json.loads((self.root / ".coord" / "next" / "claims" / "A.json").read_text(encoding="utf-8"))
-        self.assertEqual(os.getpid(), claim["pid"])
-        # A live foreign claim (this test process stands in for another live session) moves the reader on.
-        other = N.next_step(self.root, "codex", claim=True, pid=os.getppid())
+        self.assertEqual("s1", claim["session"])
+        # A live foreign session's claim moves the reader on.
+        other = N.next_step(self.root, "codex", claim=True, session="s2")
         self.assertEqual("B", other["card"])
 
     def test_dead_claim_is_reclaimed(self):
+        # U146a-R: a claim not renewed within CLAIM_TTL_S belongs to a gone session.
         self.schedule(phase("A", "READY"))
         claims = self.root / ".coord" / "next" / "claims"
         claims.mkdir(parents=True)
-        (claims / "A.json").write_text(json.dumps({"pid": 2 ** 22 + 12345, "process_created": 1.0}), encoding="utf-8")
-        self.assertEqual("A", N.next_step(self.root, "claude", claim=True)["card"])
+        (claims / "A.json").write_text(json.dumps({"session": "gone", "at": time.time() - N.CLAIM_TTL_S - 60}),
+                                       encoding="utf-8")
+        self.assertEqual("A", N.next_step(self.root, "claude", claim=True, session="s1")["card"])
 
     def test_schedule_is_read_from_the_main_checkout_of_a_worktree(self):
         # R5: worktrees must agree on one schedule.
@@ -149,6 +152,14 @@ class PushCheck(Base):
         path = self.root / ".coord" / "grants"
         path.mkdir(parents=True, exist_ok=True)
         (path / "push.json").write_text(json.dumps(data), encoding="utf-8")
+        # U146a-R: only the grant committed on origin/main counts, so the helper publishes it there.
+        git = lambda *a: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=self.root,
+                                        check=True, capture_output=True)
+        if not (self.root / ".git").exists():
+            git("init", "-q")
+        git("add", ".coord/grants/push.json")
+        git("commit", "-q", "--allow-empty", "-m", "grant")
+        git("update-ref", "refs/remotes/origin/main", "HEAD")
 
     def test_deny_by_default_without_a_grant(self):
         self.assertEqual("DENY", G.push_check(self.root, "claude/u146a")["decision"])
@@ -165,15 +176,18 @@ class PushCheck(Base):
         self.assertEqual("DENY", G.push_check(self.root, "claude/x")["decision"])
 
     def test_corrupt_grant_denies(self):
-        (self.root / ".coord" / "grants").mkdir(parents=True)
+        self.grant()
         (self.root / ".coord" / "grants" / "push.json").write_text("{", encoding="utf-8")
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "corrupt"],
+                       cwd=self.root, check=True, capture_output=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/main", "HEAD"], cwd=self.root, check=True)
         self.assertEqual("DENY", G.push_check(self.root, "claude/x")["decision"])
 
 
 class StopGate(Base):
     def test_blocks_when_own_next_card_exists(self):
         self.schedule(phase("A", "READY"))
-        out = G.gate(self.root, "claude")
+        out = G.gate(self.root, "claude", session="s1")
         self.assertEqual("block", out["decision"])
         self.assertIn("A", out["reason"])
 
@@ -183,12 +197,12 @@ class StopGate(Base):
                        [phase("A", "DONE")],
                        [phase("A", "READY", owner="antigravity")]):
             self.schedule(*phases)
-            self.assertIsNone(G.gate(self.root, "claude"), phases)
+            self.assertIsNone(G.gate(self.root, "claude", session="s1"), phases)
 
     def test_loop_guard_releases_after_one_block_without_progress(self):
         # Antigravity audit relay_5d1e13d0 [HIGH]: each block is a full-context paid turn, so allow one re-entry only.
         self.schedule(phase("A", "READY"))
-        decisions = [G.gate(self.root, "claude") for _ in range(2)]
+        decisions = [G.gate(self.root, "claude", session="s1") for _ in range(2)]
         self.assertEqual("block", decisions[0]["decision"])
         self.assertIsNone(decisions[1])
         log = (self.root / ".coord" / "log" / "stop_gate.jsonl").read_text(encoding="utf-8")
@@ -197,24 +211,27 @@ class StopGate(Base):
 
     def test_progress_resets_the_guard(self):
         self.schedule(phase("A", "READY"))
-        G.gate(self.root, "claude")
+        G.gate(self.root, "claude", session="s1")
         # A ledger row alone is not progress (the audit's spin case: a pilot failing repeatedly).
         usage = self.root / ".coord" / "usage"
         usage.mkdir()
         (usage / "ledger.jsonl").write_text("{}\n", encoding="utf-8")
-        self.assertIsNone(G.gate(self.root, "claude"))
+        self.assertIsNone(G.gate(self.root, "claude", session="s1"))
         # A new pilot run is verified advancement and resets the guard.
         run = self.root / ".coord" / "pilot" / "runs" / "A-1"
         run.mkdir(parents=True)
         (run / "summary.json").write_text("{}", encoding="utf-8")
         later = time.time() + 1000
         os.utime(run / "summary.json", (later, later))
-        self.assertEqual("block", G.gate(self.root, "claude")["decision"])
+        self.assertEqual("block", G.gate(self.root, "claude", session="s1")["decision"])
 
     def test_guard_is_per_tool(self):
         self.schedule(phase("A", "READY", owner="all"))
-        G.gate(self.root, "claude")
-        self.assertEqual("block", G.gate(self.root, "codex")["decision"])
+        G.gate(self.root, "claude", session="s1")
+        # U146a-R: s1's claim is live, so codex reaches the same card A only once that claim lapses; claude's spent
+        # guard on A must not release codex's first block.
+        late = time.time() + N.CLAIM_TTL_S + 1
+        self.assertEqual("block", G.gate(self.root, "codex", session="s2", now=late)["decision"])
 
 
 class DefaultProcedure(unittest.TestCase):

@@ -11,9 +11,9 @@
 
 ## 요약
 
-- 전체 지점: 47
+- 전체 지점: 48
 - GAP: 0
-- CALLER_INPUT: 28
+- CALLER_INPUT: 29
 - GUARDED: 2
 - FIXED: 13
 - PASS_THROUGH: 4
@@ -35,10 +35,11 @@
 | `v7_harness/coord/deliver.py:105` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:239` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:38` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/next_card.py:28` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/next_card.py:31` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/notify.py:219` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/presence.py:456` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/stop_gate.py:32` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/stop_gate.py:33` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/stop_gate.py:92` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/thrift.py:63` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/windows.py:122` | DIRECT | `subprocess.Popen` | FIXED | no | no | FIXED |
 | `v7_harness/deploy_pc.py:222` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
@@ -83,10 +84,11 @@
 - `v7_harness/coord/deliver.py:105` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/deliver.py:239` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/desk_delta.py:38` DIRECT `subprocess.run`
-- `v7_harness/coord/next_card.py:28` DIRECT `subprocess.run`
+- `v7_harness/coord/next_card.py:31` DIRECT `subprocess.run`
 - `v7_harness/coord/notify.py:219` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/presence.py:456` DIRECT `subprocess.Popen`
-- `v7_harness/coord/stop_gate.py:32` DIRECT `subprocess.run`
+- `v7_harness/coord/stop_gate.py:33` DIRECT `subprocess.run`
+- `v7_harness/coord/stop_gate.py:92` DIRECT `subprocess.run`
 - `v7_harness/coord/thrift.py:63` DIRECT `subprocess.run`
 - `v7_harness/deploy_pc.py:222` INDIRECT `runner -> subprocess.run`
 - `v7_harness/deploy_pc.py:240` INDIRECT `runner -> subprocess.run`
