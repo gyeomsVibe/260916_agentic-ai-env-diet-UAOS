@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import locale
 import os
 import sys
 import threading
@@ -40,7 +41,16 @@ def read_stdin(timeout_s: float = 2.0) -> str:
 
     def _read() -> None:
         try:
-            box.append(stream.read())
+            # U151: hook runners send UTF-8 JSON, but Windows Python decodes stdin with the ANSI code page (cp949),
+            # which turned every Korean prompt into mojibake; read the bytes and decode them as UTF-8 first.
+            raw = getattr(stream, "buffer", None)
+            data = raw.read() if raw is not None else stream.read()
+            if isinstance(data, bytes):
+                try:
+                    data = data.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    data = data.decode(locale.getpreferredencoding(False), errors="replace")
+            box.append(data)
         except (OSError, ValueError, UnicodeDecodeError):
             box.append("")
 
