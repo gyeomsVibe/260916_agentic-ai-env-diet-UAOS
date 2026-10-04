@@ -1597,6 +1597,31 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                         keys.write_text(json.dumps(sorted(event)), encoding="utf-8")
                 except Exception:  # noqa: BLE001 - a hook never fails the session
                     pass
+            window_line = ""
+            if args.tool:
+                # U150-C: a declared user window gets `[사용자 대화창구-YYMMDD-N]` in its own tool's UI. Claude and
+                # Codex hand the typed prompt; Antigravity's first invocation names its transcript instead.
+                try:
+                    from .coord.user_window import on_prompt
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    event = event if isinstance(event, dict) else {}
+                    prompt = event.get("prompt") if event.get("hook_event_name") == "UserPromptSubmit" else None
+                    thread = hook_session(stdin_text) or ""
+                    if args.tool == "antigravity" and event.get("invocationNum", 0) == 0 \
+                            and event.get("transcriptPath"):
+                        from .coord.codex_session_bridge import parse_transcript_to_turns
+
+                        turns = parse_transcript_to_turns(Path(str(event["transcriptPath"])))
+                        prompt = turns[-1][0] if turns else None
+                        thread = str(event.get("conversationId") or "")
+                    window_line = on_prompt(project, args.tool, thread, prompt)
+                    # U150-B: an error report reaches the other two tools; a repeat of it becomes P1.
+                    from .coord.repeat_error import on_prompt as error_lines
+
+                    window_line = "\n".join(p for p in (window_line, error_lines(project, args.tool, prompt)) if p)
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    window_line = ""
             if args.tool and args.state:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
                 # U134: a turn start clears a stale LIMITED/ABSENT lease; an ACTIVE beat sends queued letters.
@@ -1633,6 +1658,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                             shown["user"], shown["event"] = user, str(event.get("hook_event_name") or "")
                     except Exception:  # noqa: BLE001
                         pass
+            line = "\n".join(part for part in (window_line, line) if part)
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
         except Exception as exc:  # noqa: BLE001
             _emit({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]})
