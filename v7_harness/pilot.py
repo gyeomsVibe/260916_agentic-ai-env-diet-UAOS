@@ -87,6 +87,30 @@ def worker_label(command: list[str] | tuple[str, ...]) -> str:
     return "agy" if first in ("agy", "agy.exe", "agy.cmd") else "custom"
 
 
+def circuit_provider(command: list[str] | tuple[str, ...]) -> str:
+    """U165: each worker trips its own circuit breaker; an Ollama refusal must not block Antigravity runs."""
+    label = worker_label(command)
+    return "antigravity" if label == "agy" else label
+
+
+def _canary_due(connection: sqlite3.Connection, provider: str, failure_class: str = "WORKER_CRASH") -> bool:
+    """U165: a circuit whose cooldown ended (or that a refused run left HALF_OPEN) needs a canary run. Without
+    is_canary=True the engine refuses every run with CANARY_REQUIRED_IN_HALF_OPEN and the work dir stays blocked."""
+    try:
+        row = connection.execute(
+            "SELECT state, retry_after FROM circuits WHERE provider=? AND failure_class=?", (provider, failure_class)
+        ).fetchone()
+        if row is None:
+            return False
+        state, retry_after = row
+        if state == "HALF_OPEN":
+            return True
+        return state == "OPEN" and retry_after is not None and bool(
+            connection.execute("SELECT datetime('now') >= datetime(?)", (retry_after,)).fetchone()[0])
+    except sqlite3.OperationalError:
+        return False
+
+
 PAID_WORKERS = ("agy", "claude")
 
 
@@ -442,10 +466,11 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
 
         # 2. set_quota_state
         task_scope_id = f"pilot:{config.task_id}"
+        provider = circuit_provider(config.agy_command)
         set_quota_state(
             core.connection,
             scope_id=task_scope_id,
-            provider="antigravity",
+            provider=provider,
             quota_state="AVAILABLE",
         )
 
@@ -500,7 +525,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
             "operation": "DISPATCH",
             "payload_ref": f"prompt:{config.task_id}",
             "scope_id": task_scope_id,
-            "provider": "antigravity",
+            "provider": provider,
             "resource_id": f"res-{config.task_id}",
             "attempt_id": attempt_id,
             "owner": "antigravity",
@@ -654,6 +679,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         try:
             engine.execute(
                 command,
+                is_canary=_canary_due(core.connection, provider),
                 worker_capability="effectful",
                 timeout_sec=config.print_timeout_s + 60,
             )
