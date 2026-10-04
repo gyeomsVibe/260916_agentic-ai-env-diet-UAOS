@@ -114,6 +114,7 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
     # An ACTIVE lease also means the desk reads ACTIVE, so its queued letters may go too.
     if dispatch and state == "ACTIVE" and (not held or cleared or held == "ACTIVE"):
         _dispatch_queued(project, tool, runner)
+        _drain_agy_backlog(project, runner, now)
     return target
 
 
@@ -438,12 +439,39 @@ def _log_event(presence_dir: Path, event: dict[str, Any], *, once_by: tuple[str,
             handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def _dispatch_queued(project: Path, tool: str, runner: Any) -> None:
-    """U134-B: send the letters queued while `tool` was LIMITED/ABSENT. A test passes a stub runner and dispatches
-    in-process; a hook starts a detached process so the session never waits for `codex queue` or a paid turn."""
+AGY_DRAIN_CODE = ("import sys; from pathlib import Path; from v7_harness.coord.agy_dispatch import drain_backlog; "
+                  "drain_backlog(Path(sys.argv[1]))")
+
+
+def _drain_agy_backlog(project: Path, runner: Any, now: float | None) -> None:
+    """U164: an ACTIVE heartbeat answers Antigravity letters parked at an earlier day's cap. Nothing parked, or a
+    spent cap, starts nothing. A test passes a runner and drains in-process; a hook starts a detached process."""
+    from v7_harness.coord import agy_dispatch
+
+    if not agy_dispatch.backlog_ready(project, now):
+        return
+    if runner is not None:
+        agy_dispatch.drain_backlog(project, now=now, runner=runner)
+        return
+    _spawn_detached(AGY_DRAIN_CODE, str(project))
+
+
+def _spawn_detached(code: str, *args: str) -> None:
+    """U134-B/U164: run a fixed module-level code string in a detached process, so the session never waits for it.
+    `code` is always one of this module's constants; `args` are a project path and a tool name, passed as argv."""
     import subprocess
     import sys
 
+    flags: dict[str, Any] = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+                             if os.name == "nt" else {"start_new_session": True})
+    subprocess.Popen([sys.executable, "-c", code, *args],
+                     cwd=str(Path(__file__).resolve().parents[2]), stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **flags)
+
+
+def _dispatch_queued(project: Path, tool: str, runner: Any) -> None:
+    """U134-B: send the letters queued while `tool` was LIMITED/ABSENT. A test passes a stub runner and dispatches
+    in-process; a hook starts a detached process so the session never waits for `codex queue` or a paid turn."""
     from v7_harness.coord.deliver import dispatch_queued, queued_letters
 
     if not queued_letters(project, tool):
@@ -451,8 +479,4 @@ def _dispatch_queued(project: Path, tool: str, runner: Any) -> None:
     if runner is not None:
         dispatch_queued(project, tool, runner=runner)
         return
-    flags: dict[str, Any] = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
-                             if os.name == "nt" else {"start_new_session": True})
-    subprocess.Popen([sys.executable, "-c", QUEUE_SPAWN_CODE, str(project), tool],
-                     cwd=str(Path(__file__).resolve().parents[2]), stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **flags)
+    _spawn_detached(QUEUE_SPAWN_CODE, str(project), tool)
