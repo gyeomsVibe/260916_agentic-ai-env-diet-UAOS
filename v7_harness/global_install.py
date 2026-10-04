@@ -49,6 +49,8 @@ NOTES = (
     "New sessions pick up rules and hooks; an already open session does not.",
 )
 HOOK_MARK = "coord presence"
+# U146-B: the installer also owns the Stop gate, so a re-apply replaces it instead of adding a second copy.
+HOOK_MARKS = (HOOK_MARK, "coord stop-gate --tool")
 # U103-O: the olla whole-read gates the installer adds when `olla` is on PATH; only these exact commands are ours.
 # U107: hook-plan is the per-prompt split hint Antigravity gets from `olla hook-agy PreInvocation`.
 OLLA_HOOKS = ("olla hook-read", "olla hook-shell", "olla hook-plan")
@@ -106,6 +108,16 @@ def presence_command(python: str, launcher: Path, tool: str, state: str | None, 
                 f"--from-hook --say {say}" + (" --delta" if delta else "") + " --post-tool")
     return (f"{uaos_command(python, launcher)} coord presence --tool {tool} --state {state} --ttl {ttl} "
             f"--from-hook --say {say}" + (" --delta" if delta else ""))
+
+
+def stop_command(python: str, launcher: Path, tool: str) -> str:
+    # U146-B: the nonstop-chain Stop gate for Codex and Antigravity; the project comes from the hook payload.
+    return f"{uaos_command(python, launcher)} coord stop-gate --tool {tool} --from-hook"
+
+
+# The gate runs `git rev-parse` (10 s cap in progress_signature) plus a schedule read, so it gets more than the 10 s
+# of a presence hook.
+STOP_TIMEOUT_S = 30
 
 
 def launcher_text(repo: Path) -> str:
@@ -183,7 +195,8 @@ def _strip_uaos_hooks(groups: list[Any]) -> list[Any]:
         if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
             kept.append(group)
             continue
-        hooks = [h for h in group["hooks"] if not (isinstance(h, dict) and ((HOOK_MARK in str(h.get("command", ""))
+        hooks = [h for h in group["hooks"] if not (isinstance(h, dict) and ((any(mark in str(h.get("command", ""))
+                                                                                 for mark in HOOK_MARKS)
                                                    and "uaos.py" in str(h.get("command", "")))
                                                    or h.get("command") in OLLA_HOOKS))]
         if hooks:
@@ -307,6 +320,9 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                     # U105 mid-turn notice: reaches Claude mid-turn on every tool call via PostToolUse JSON context.
                     "PostToolUse": [{"hooks": [{"type": "command", "timeout": 10, "command": presence_command(
                         python, launcher, "claude", None, 0, "p1", delta=True)}]}],
+                    # U146-B (agy audit relay_45d07985): Claude's nonstop gate in every UAOS project, not only here.
+                    "Stop": [{"hooks": [{"type": "command", "timeout": STOP_TIMEOUT_S,
+                                         "command": stop_command(python, launcher, "claude")}]}],
                 }
                 if shutil.which("olla"):
                     # U108: Claude's Bash gets Codex's shell gate; `cat big.py` used to pass where Read was refused.
@@ -349,6 +365,8 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                     # U105 mid-turn notice: reaches Codex mid-turn on Bash calls via PostToolUse JSON context.
                     "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "timeout": 10, "command":
                         presence_command(python, launcher, "codex", None, 0, "none", delta=True)}]}],
+                    "Stop": [{"hooks": [{"type": "command", "timeout": STOP_TIMEOUT_S,
+                                         "command": stop_command(python, launcher, "codex")}]}],
                 }
                 if shutil.which("olla"):
                     wanted["PreToolUse"] = [{"matcher": "Bash", "hooks": [
@@ -374,7 +392,8 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                     # workspacePaths from stdin instead. It reads a JSON result on stdout: {} or, when its UAOS line
                     # changed, injectSteps with that line (U95-A; before, it always printed {} and learned nothing).
                     after[AGY_GROUP] = {"enabled": True, "PreInvocation": [{"type": "command", "command": presence_command(
-                        python, launcher, "antigravity", "ACTIVE", 3600, "agy", delta=True)}]}
+                        python, launcher, "antigravity", "ACTIVE", 3600, "agy", delta=True)}],
+                        "Stop": [{"type": "command", "command": stop_command(python, launcher, "antigravity")}]}
                 changes.append(_json_change("antigravity hooks", path, data, after, path.exists()))
                 changes[-1].detail = changes[-1].detail or shell_note
 

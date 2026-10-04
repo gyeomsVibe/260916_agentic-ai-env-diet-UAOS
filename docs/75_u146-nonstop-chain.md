@@ -37,10 +37,14 @@
 - **R5 정본 하나:** 작업 트리(worktree)마다 다른 일정을 보지 않도록 git 공통 디렉터리의 부모(메인 체크아웃)에서 읽는다.
 - **진척 없는 반복 차단(Antigravity 감사 relay_5d1e13d0 [HIGH]):** 막기 한 번은 전체 문맥을 다시 읽는 유료 턴이다. 커밋·일정 상태 변경·새 pilot 실행이 없으면 두 번째부터는 `.coord/log/stop_gate.jsonl`에 BLOCKED를 남기고 종료를 허용한다. 장부 줄·결과 파일·로그는 진척으로 치지 않는다.
 
-## 5. 알려진 한계 (U146-B로 넘김)
+## 5. U146-B로 닫은 한계
 
-- 선점은 프로세스 ID로 판단한다. `coord next --claim`을 셸에서 한 번 부르면 그 프로세스가 곧 끝나므로 다음 호출에서는 죽은 선점으로 보인다. 세션 단위 임대(lease, R6)는 U146-B에서 들어온다.
-- Codex·Antigravity에는 아직 자동 관문이 없다. 지금은 규칙 문구(어댑터)로 `coord next`를 부르게 하고, 훅·감시기는 U146-B에서 들어온다.
+- **R6 세션 임대:** U146a-R(PR #112)에서 선점이 Stop 훅의 세션 ID에 묶이고 `CLAIM_TTL_S`(7200초) 뒤 만료된다.
+- **세 도구 자동 관문:** 전역 설치가 Claude(`~/.claude/settings.json`)·Codex(`~/.codex/hooks.json`)·Antigravity(`~/.gemini/config/hooks.json`)의 Stop 훅에 `uaos coord stop-gate --tool <도구> --from-hook`을 넣는다. 이 저장소처럼 프로젝트 `.claude/settings.json`에 자기 관문 훅이 있으면 Claude 전역 훅은 비켜서서 한 번의 종료는 한 번만 막힌다(Antigravity 감사 relay_45d07985). 프로젝트는 훅 입력(`cwd`, `workspacePaths`)에서 찾고, UAOS 프로젝트 밖이나 pilot 작업자(`UAOS_WORKER`) 안에서는 아무것도 출력하지 않는다. 세션은 `session_id`(Claude·Codex) 또는 `conversationId`(Antigravity)다. 붙잡는 답은 Codex `{"decision": "block"}`(https://learn.chatgpt.com/docs/hooks), Antigravity `{"decision": "continue"}`(https://antigravity.google/docs/hooks)이고, Antigravity가 `fullyIdle: false`로 멈추면 붙잡지 않는다.
+- **헤드리스 실행은 세션이 아니다:** pilot agy 작업자·검토·판정·Antigravity 자동 답장·병합 위임은 모두 `UAOS_WORKER=1`로 띄우므로 Stop 관문이 붙잡지 않는다(pilot agy 작업자 누락은 Antigravity 감사 relay_3e404354로 보강).
+- **R7 예산:** 붙잡기 한 번은 전체 문맥을 다시 읽는 유료 턴이다. 자기 책상 상태가 LIMITED인 도구는 선점도 붙잡기도 하지 않는다.
+- **허가 만료:** `.coord/grants/push.json`에 `expires_at`(오프셋 있는 ISO 8601 또는 epoch 초)이 있으면 그 시각부터 DENY다. 오프셋 없는 시각, 참/거짓, 읽을 수 없는 값도 DENY이고, `expires_at`이 없는 허가는 뜻이 그대로다.
+- **남은 위험:** Antigravity IDE 1.107(Windows)에서 Stop 훅이 실행되지 않는다는 보고가 있다(https://discuss.ai.google.dev/t/stop-and-posttooluse-hooks-in-agents-hooks-json-never-fire-antigravity-ide-1-107-0-windows/178288). 설치 뒤 받는 쪽 확인은 `.coord/presence/stop_gate_antigravity.json` 또는 `.coord/log/stop_gate.jsonl`의 antigravity 줄로 한다.
 
 ## 6. 되돌리기
 

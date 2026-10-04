@@ -870,6 +870,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_stop = p_coord_subs.add_parser("stop-gate", help="Stop hook: block a turn end while an own NEXT card is ready")
     p_coord_stop.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_stop.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_stop.add_argument("--from-hook", action="store_true",
+                              help="U146-B: find the project from the hook payload (cwd, workspacePaths); silent "
+                                   "outside a UAOS project and inside a pilot worker")
     p_coord_stop.set_defaults(func=cmd_coord_stop_gate)
     p_coord_push = p_coord_subs.add_parser("push-check", help="ALLOW or DENY a push under .coord/grants/push.json")
     p_coord_push.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1797,16 +1800,30 @@ def cmd_coord_next(args: argparse.Namespace) -> int:
 
 
 def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
-    """U146-A: the Claude Stop hook. A broken gate never breaks the session, so every failure exits 0 silently."""
+    """U146-A: the Stop hook of all three tools (U146-B). A broken gate never breaks the session, so every failure
+    exits 0 silently."""
     try:
+        if args.from_hook and os.environ.get("UAOS_WORKER"):
+            return 0  # a pilot worker's staged copy holds .coord/PLAN.md; its hook must not claim or hold anything
+        from .coord.hook_context import hook_project, read_stdin
+        stdin_text = read_stdin()  # U151: UTF-8 payload, and a runner that never closes stdin cannot hang the hook
         try:
-            hook = json.loads(sys.stdin.read() or "{}")
+            hook = json.loads(stdin_text or "{}")
         except ValueError:
             hook = {}
-        # U146a-R: the hook input's session_id owns the claim; without one the gate claims nothing and allows the stop.
-        session = hook.get("session_id") if isinstance(hook, dict) else None
-        from .coord.stop_gate import gate
-        result = gate(Path(args.project), args.tool, session=session if isinstance(session, str) else None)
+        project = Path(args.project)
+        if args.from_hook:
+            found = hook_project(stdin_text, None)
+            if found is None:
+                return 0  # not a UAOS project
+            project = found
+        from .coord.stop_gate import gate, hook_session, project_owns_gate, should_gate
+        if args.from_hook and project_owns_gate(project, args.tool):
+            return 0  # the project's own Stop hook gates this stop
+        if not should_gate(hook):
+            return 0
+        # U146a-R: the hook's session owns the claim; without one the gate claims nothing and allows the stop.
+        result = gate(project, args.tool, session=hook_session(hook))
         if isinstance(result, dict):
             print(json.dumps(result, ensure_ascii=False))
     except Exception:  # noqa: BLE001 - fail open: the stop is allowed

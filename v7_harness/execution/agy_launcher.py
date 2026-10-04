@@ -82,11 +82,14 @@ class AgyProcessLauncher:
         timeout = float(timeout_sec) if timeout_sec is not None else float(self.request.print_timeout_s + 60)
 
         job = _create_win_job()
+        # U146-B (agy audit relay_3e404354): a headless worker is not a session; UAOS_WORKER keeps its global hooks
+        # (presence, the nonstop Stop gate) from writing a heartbeat or holding it on a new card.
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=os.name != "nt",
+            env={**os.environ, "UAOS_WORKER": "1"},
         )
         if job and not _assign_process_to_job(job, proc):
             _cleanup_job(job)
