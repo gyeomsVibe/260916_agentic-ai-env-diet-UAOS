@@ -612,7 +612,9 @@ def _registered_roots(project: Path) -> set[str]:
 
 # U147: text that a tool, not 윤겸스, puts into a Codex thread as a user turn: injected AGENTS.md, app context blocks
 # (<...>), and UAOS relays and sentinel data (seen in the 2026-10-04 rollouts).
-INJECTED_PREFIXES = ("# AGENTS.md", "<", "[UAOS relay", "[DATA]")
+# U163 (relay_3ce52b3d): the wrappers _deliver_unlocked puts on a relayed letter are injected text too.
+INJECTED_PREFIXES = ("# AGENTS.md", "<", "[UAOS relay", "[DATA]", "[안티그래비티에서 온 대화]", "[코덱스에서 온 대화]",
+                     "[클로드에게서 온 대화]")
 
 
 def last_human_input(path: Path) -> str:

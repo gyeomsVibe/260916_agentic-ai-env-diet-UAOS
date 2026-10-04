@@ -223,6 +223,11 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
     unshown_before = [name for name in cursor.get("unshown", []) if isinstance(name, str)] \
         if isinstance(cursor.get("unshown"), list) else []
     items: list[tuple[str, Path | None]] = []
+    # U163: a peer's user-desk change leads the delta; its cursor advances in ack(), after the text was written.
+    from v7_harness.coord import desk_sync
+
+    notice, notice_ack = desk_sync.prepare_notice(project, tool, session)
+    items.extend((line, None) for line in notice.splitlines())
     corrupt, pending = _receipt_findings(project, tool)
     for name in corrupt:
         items.append((f"CORRUPT_WAKE_RECEIPT {name}: kept; no automatic wake", None))
@@ -274,6 +279,7 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
                        encoding="utf-8")
         os.replace(tmp, path)
         ack_receipts(project, tool, shown + recovered)
+        notice_ack()
 
     return text, ack
 
