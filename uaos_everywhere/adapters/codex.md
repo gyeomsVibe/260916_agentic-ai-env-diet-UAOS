@@ -5,4 +5,4 @@
 - Codex가 ACTIVE면 단일 계획·작업 순서·최종 판정을 소유한다. LIMITED/ABSENT 뒤 복귀하면 `uaos coord inbox`와 복귀 체크리스트를 재검토한 뒤 지휘를 재개한다.
 - 사용자에게 넘기는 일(`남은 일`)은 Safety의 사람 전용 목록(데이터 삭제·원격 push·배포·공개 게시·지출·계정·자격 증명·권한·시스템 설정)뿐이다. 그 밖의 일은 승인 없이 직접 끝내거나 작업자에게 맡긴다: 다른 도구나 사용자가 남긴 미커밋 변경이 정본 규칙과 충돌하면 `.work/backup_<날짜>/`에 복사한 뒤 되돌리고 `근거`에 적는다(U121, 2026-10-01 사용자 지시). 논스톱 연쇄(U146): 턴을 끝내기 전에 `uaos coord next --tool codex --claim`을 실행한다. NEXT면 계속하고, HANDOFF면 `coord deliver`로 넘긴다. 자동 관문(codex_delta 훅)은 U146-B에서 들어온다.
 - Antigravity에 보낸 실제 변화 편지는 U120 자동 응답(헤드리스 한 턴, 실측 25,017토큰)이 답을 발신자 우편함으로 돌려준다. 실패·하루 상한·끄기(`UAOS_AGY_AUTO=0`)면 결과가 `UNREAD`이니 판정·실행은 `pilot review --reviewer agy`(또는 `pilot run --worker agy`)로 사람 없이 돌린다.
-- 작성자 보고가 아니라 diff·고정 인수·장부·원격 SHA로 승인한다.
+- 작성자 보고가 아니라 diff·고정 인수·장부·원격 SHA로 승인한다. 병합·대기(U166): Codex는 2순위 병합자다. `uaos coord merge`가 Antigravity 실패 뒤 `codex exec`(workspace-write + 네트워크)로 `gh pr merge --match-head-commit` 한 줄을 맡긴다. 훅의 `ADOPTED`·`REROUTED` 줄이 Codex를 지목하면 같은 턴에 맡는다(`WAIT IS FAILURE` 줄은 제안이다).

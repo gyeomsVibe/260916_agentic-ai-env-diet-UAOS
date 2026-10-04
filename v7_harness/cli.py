@@ -876,6 +876,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_push.add_argument("--branch", required=True)
     p_coord_push.add_argument("--force", action="store_true", help="The push would be forced (always DENY)")
     p_coord_push.set_defaults(func=cmd_coord_push_check)
+    # U166: a gated PR is merged by Antigravity, else Codex (윤겸스 2026-10-05); a stalled wait is rerouted.
+    p_coord_merge = p_coord_subs.add_parser("merge", help="Merge a gated PR through Antigravity, then Codex")
+    p_coord_merge.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_merge.add_argument("--pr", required=True, type=int)
+    p_coord_merge.add_argument("--head", required=True, help="The 40-character head sha the verdict was given on")
+    p_coord_merge.add_argument("--verdict", required=True,
+                               help="relay_<id> of a judge letter (not the PR author) that passed this head")
+    p_coord_merge.set_defaults(func=cmd_coord_merge)
+    p_coord_stall = p_coord_subs.add_parser("stall", help="List waits past the limit and their agreed reroutes")
+    p_coord_stall.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_stall.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_stall.set_defaults(func=cmd_coord_stall)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1658,6 +1670,14 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                     window_line = "\n".join(p for p in (window_line, error_lines(project, args.tool, prompt)) if p)
                 except Exception:  # noqa: BLE001 - a hook never fails the session
                     window_line = ""
+                # U166: waiting is a failure. A step stalled past MAX_WAIT_S names the tool that takes it, and this
+                # tool's turn records its agreement; all ACTIVE tools agreed puts the reroute on the master schedule.
+                try:
+                    from .coord.stall import hook_lines
+
+                    window_line = "\n".join(p for p in (window_line, hook_lines(project, args.tool)) if p)
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    pass
             if args.tool and args.state:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
                 # U134: a turn start clears a stale LIMITED/ABSENT lease; an ACTIVE beat sends queued letters.
@@ -1792,6 +1812,22 @@ def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
     except Exception:  # noqa: BLE001 - fail open: the stop is allowed
         pass
     return 0
+
+
+def cmd_coord_merge(args: argparse.Namespace) -> int:
+    """U166: exit 0 only when `gh pr view` shows the PR MERGED at the given head."""
+    from .coord.merge_route import merge
+    result = merge(Path(args.project), args.pr, args.head, args.verdict)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result.get("state") == "MERGED" else 1
+
+
+def cmd_coord_stall(args: argparse.Namespace) -> int:
+    """U166: exit 1 when a stalled step has no ACTIVE tool to take it (a real block) or the state is unreadable."""
+    from .coord.stall import scan
+    result = scan(Path(args.project), args.tool)
+    print(json.dumps(result, ensure_ascii=False))
+    return 1 if result.get("blocked") or result.get("error") else 0
 
 
 def cmd_coord_push_check(args: argparse.Namespace) -> int:

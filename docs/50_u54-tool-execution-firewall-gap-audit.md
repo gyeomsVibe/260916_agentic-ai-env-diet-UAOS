@@ -11,10 +11,10 @@
 
 ## 요약
 
-- 전체 지점: 48
+- 전체 지점: 50
 - GAP: 0
-- CALLER_INPUT: 29
-- GUARDED: 2
+- CALLER_INPUT: 30
+- GUARDED: 3
 - FIXED: 13
 - PASS_THROUGH: 4
 
@@ -31,13 +31,15 @@
 | `v7_harness/calculator_gate.py:176` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/calculator_gate.py:185` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/calculator_gate.py:213` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
-| `v7_harness/coord/agy_dispatch.py:75` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/deliver.py:105` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/deliver.py:239` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/agy_dispatch.py:243` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/deliver.py:129` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/deliver.py:263` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:38` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/merge_route.py:50` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/merge_route.py:159` | INDIRECT | `runner -> subprocess.run` | CALLER | yes | no | GUARDED |
 | `v7_harness/coord/next_card.py:31` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/notify.py:219` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/presence.py:456` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/presence.py:467` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/stop_gate.py:33` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/stop_gate.py:92` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/thrift.py:63` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
@@ -59,12 +61,12 @@
 | `v7_harness/olla.py:567` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/olla.py:967` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/olla.py:1104` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/pilot.py:758` | DIRECT | `subprocess.run` | CALLER | yes | yes | GUARDED |
-| `v7_harness/pilot.py:767` | DIRECT | `subprocess.run` | CALLER | yes | no | GUARDED |
+| `v7_harness/pilot.py:784` | DIRECT | `subprocess.run` | CALLER | yes | yes | GUARDED |
+| `v7_harness/pilot.py:793` | DIRECT | `subprocess.run` | CALLER | yes | no | GUARDED |
 | `v7_harness/proof_receipt.py:187` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/review.py:140` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/review.py:152` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/rsi_release.py:674` | INDIRECT | `run -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/rsi_release.py:1099` | INDIRECT | `run -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/snapshot.py:75` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
 | `v7_harness/snapshot.py:101` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
 | `v7_harness/snapshot.py:115` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
@@ -80,13 +82,14 @@
 - `v7_harness/adapters/claude_worker.py:173` DIRECT `subprocess.run`
 - `v7_harness/adapters/lane_worker.py:79` DIRECT `subprocess.run`
 - `v7_harness/calculator_gate.py:96` DIRECT `subprocess.run`
-- `v7_harness/coord/agy_dispatch.py:75` INDIRECT `runner -> subprocess.run`
-- `v7_harness/coord/deliver.py:105` INDIRECT `execute -> subprocess.run`
-- `v7_harness/coord/deliver.py:239` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/agy_dispatch.py:243` INDIRECT `runner -> subprocess.run`
+- `v7_harness/coord/deliver.py:129` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/deliver.py:263` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/desk_delta.py:38` DIRECT `subprocess.run`
+- `v7_harness/coord/merge_route.py:50` INDIRECT `runner -> subprocess.run`
 - `v7_harness/coord/next_card.py:31` DIRECT `subprocess.run`
 - `v7_harness/coord/notify.py:219` INDIRECT `execute -> subprocess.run`
-- `v7_harness/coord/presence.py:456` DIRECT `subprocess.Popen`
+- `v7_harness/coord/presence.py:467` DIRECT `subprocess.Popen`
 - `v7_harness/coord/stop_gate.py:33` DIRECT `subprocess.run`
 - `v7_harness/coord/stop_gate.py:92` DIRECT `subprocess.run`
 - `v7_harness/coord/thrift.py:63` DIRECT `subprocess.run`
@@ -105,4 +108,4 @@
 - `v7_harness/proof_receipt.py:187` DIRECT `subprocess.run`
 - `v7_harness/review.py:140` INDIRECT `runner -> subprocess.run`
 - `v7_harness/review.py:152` INDIRECT `runner -> subprocess.run`
-- `v7_harness/rsi_release.py:674` INDIRECT `run -> subprocess.run`
+- `v7_harness/rsi_release.py:1099` INDIRECT `run -> subprocess.run`
