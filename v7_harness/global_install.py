@@ -36,6 +36,12 @@ ADAPTER_SOURCE = {
     "codex": REPO_ROOT / "uaos_everywhere" / "adapters" / "codex.md",
     "antigravity": REPO_ROOT / "uaos_everywhere" / "adapters" / "antigravity.md",
 }
+# U168: where each tool loads user skills (Claude Code ~/.claude/skills, Codex ~/.codex/skills, Antigravity's MIA plugin).
+SKILL_DIRS = {
+    "claude": Path(".claude") / "skills",
+    "codex": Path(".codex") / "skills",
+    "antigravity": Path(".gemini") / "config" / "plugins" / "mia-modular-intelligence-architect" / "skills",
+}
 BLOCK_BEGIN = "<!-- UAOS:BEGIN (install_uaos_everywhere.py; source uaos_everywhere/uaos_global_rule_block.md) -->"
 BLOCK_END = "<!-- UAOS:END -->"
 BLOCK_RE = re.compile(r"\n?<!-- UAOS:BEGIN[^\n]*-->\n.*?<!-- UAOS:END -->\n?", re.DOTALL)
@@ -286,6 +292,14 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
         if not folder.is_dir():
             changes.append(Change(f"{tool} (all)", folder, "SKIP", "tool folder not found: not installed for this user"))
             continue
+        if not uninstall:
+            # U168: the mia-strategic skill was hand-edited in three homes with no source (a session still ran the
+            # 4-stage text on 2026-10-05); one repo copy keeps them equal and --check names a drifted copy. Uninstall
+            # leaves skills alone: they predate UAOS and belong to the user.
+            for src in sorted((Path(repo) / "uaos_everywhere" / "skills").glob("*/SKILL.md")):
+                dest = home / SKILL_DIRS[tool] / src.parent.name / "SKILL.md"
+                changes.append(_text_change(f"{tool} skill {src.parent.name}", dest, _read(dest),
+                                            src.read_text(encoding="utf-8")))
         if rules:
             path = rule_paths[tool]
             current_rules = _read(path)
