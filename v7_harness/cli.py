@@ -2095,7 +2095,7 @@ def cmd_rsi_rollback(args: argparse.Namespace) -> int:
 
 def cmd_rsi_watch(args: argparse.Namespace) -> int:
     import time
-    from .rsi_release import run_scheduler_cycle
+    from .rsi_release import durable_trigger, file_source_fetch, run_scheduler_cycle
 
     project = Path(args.project)
     config_path = Path(args.config) if args.config else project / ".coord" / "rsi" / "watcher.json"
@@ -2106,16 +2106,27 @@ def cmd_rsi_watch(args: argparse.Namespace) -> int:
             "max_retries": 3,
             "backoff_base_seconds": 60,
             "lock_ttl_seconds": 3600,
-            "sources": [],
+            # U157-B: the user's error reports are the source; runs.jsonl is left out because every pilot run
+            # changes it, so it would wake the loop on non-errors.
+            "sources": [{"url": "file:.coord/usage/user_error_reports.jsonl", "first_seen": "actionable"}],
         }
     else:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            config = exc
+        if not isinstance(config, dict):
+            error = type(config).__name__ if isinstance(config, Exception) else "TypeError"
+            _print_json({"status": "FAILED", "failure_receipt": {"stage": "config", "error": error}})
+            return 1
 
     def _record(event: dict[str, Any]) -> None:
         # A quiet local scheduler still leaves one line when it recovers a dead/stale lock.
         print(json.dumps({"scheduler_event": event}, ensure_ascii=False))
 
-    res = run_scheduler_cycle(project, config, now=time.time(), sleeper=time.sleep, record=_record)
+    res = run_scheduler_cycle(project, config, now=time.time(), sleeper=time.sleep, record=_record,
+                              fetch=lambda source, timeout: file_source_fetch(project, source, timeout),
+                              trigger=lambda bundle: durable_trigger(project, bundle))
     _print_json(res)
     return 0 if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") else 1
 

@@ -13,8 +13,11 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
+import time
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -699,6 +702,149 @@ def _reclaim_dead_lock(
         return _try_acquire_lock(lock_file, payload)
 
 
+# U157-B: the first error must wake the loop. A missing or blank file is "no error yet", never a delta.
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+# U157-B: the watcher reads only the project's own coordination records and docs; any other path is refused.
+SOURCE_ROOTS = (".coord/", "docs/")
+# U157-B v2 (Antigravity REVISE relay_52f836f4): a watched file never names a secret. "token" is left out on purpose:
+# the project's own docs are named 27_token-budget-routing-policy.md.
+SECRET_WORDS = frozenset({"env", "secret", "secrets", "credential", "credentials", "cookie", "cookies", "password",
+                          "passwords", "pem", "key", "keys", "pfx", "p12"})
+# Why 10 s: a queue append is one read plus one fsynced line (milliseconds); 10 s covers a stalled disk without
+# letting a dead watcher hang the next scheduled run.
+ACTIONABLE_LOCK_TIMEOUT_S = 10.0
+
+
+class SourceRefused(ValueError):
+    """U157-B: a watched source outside the allowlist. It is a configuration error, so it is never retried."""
+
+
+def _is_link(path: Path) -> bool:
+    """A symlink, or on Windows any reparse point (junctions included). A missing path is not a link."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    return bool(getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def _source_path(project: Path, url: Any) -> Path:
+    """Resolve a `file:<relative path>` source inside the project, or raise SourceRefused."""
+    if not isinstance(url, str) or not url.startswith("file:"):
+        raise SourceRefused("only file: sources are watched")
+    rel = url[len("file:"):]
+    parts = rel.split("/")
+    if (not rel or rel.startswith("/") or "\\" in rel or re.match(r"^[A-Za-z]:", rel)
+            or any(part in ("", ".", "..") for part in parts)):
+        raise SourceRefused(f"not a plain relative path: {rel}")
+    if not rel.startswith(SOURCE_ROOTS):
+        raise SourceRefused(f"outside {SOURCE_ROOTS}: {rel}")
+    for part in parts:
+        if set(re.split(r"[^a-z0-9]+", part.lower())) & SECRET_WORDS:
+            raise SourceRefused(f"secret-like name: {part}")
+    base = Path(project).resolve()
+    current = base
+    for part in parts:
+        current = current / part
+        if _is_link(current):
+            raise SourceRefused(f"link or reparse point: {part}")
+    target = base.joinpath(*parts)
+    if not target.resolve().is_relative_to(base):
+        raise SourceRefused(f"escapes the project: {rel}")
+    return target
+
+
+def file_source_fetch(project: Path, source: dict[str, Any], timeout: float = 0) -> dict[str, Any]:
+    """U157-B: observe one project file by content. A missing file is empty, not an error."""
+    url = source.get("url")
+    target = _source_path(project, url)
+    try:
+        handle = open(target, "rb")
+    except FileNotFoundError:
+        return {"url": url, "content_sha256": EMPTY_SHA256, "bytes": 0, "blank": True}
+    with handle:
+        opened = os.fstat(handle.fileno())
+        data = handle.read()
+    after = os.lstat(target)
+    if (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino):
+        raise OSError("source changed during read")
+    return {"url": url, "content_sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+            "blank": not data.strip()}
+
+
+def _write_state(state_file: Path, observations: dict[str, Any]) -> None:
+    """Atomic state publish: a crash leaves the old state or the new one, never a torn file."""
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    temp = state_file.with_name(f"{state_file.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(temp, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(observations, ensure_ascii=False, indent=2))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, state_file)
+    finally:
+        with contextlib.suppress(OSError):
+            temp.unlink()
+
+
+def _bundle_id(changes: list[tuple[str, Optional[str], Any]]) -> str:
+    """Same changes give the same id in any config order; A->B->A gives three ids (prior sha is part of it)."""
+    lines = sorted(f"{url}\t{prior or ''}\t{new}" for url, prior, new in changes)
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def _append_once(queue: Path, bundle: dict[str, Any]) -> bool:
+    data = queue.read_bytes() if queue.exists() else b""
+    end = data.rfind(b"\n") + 1
+    if end < len(data):  # a torn tail from a crashed writer: keep it aside, then cut it off
+        with open(queue.with_name(queue.name + ".torn"), "ab") as torn:
+            torn.write(data[end:] + b"\n")
+            torn.flush()
+            os.fsync(torn.fileno())
+        with open(queue, "r+b") as handle:
+            handle.truncate(end)
+            handle.flush()
+            os.fsync(handle.fileno())
+        data = data[:end]
+    for line in data.splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)  # a corrupt full line raises ValueError: never append behind it
+        if not isinstance(row, dict):
+            raise ValueError("actionable queue row is not a JSON object")
+        if row.get("bundle_id") == bundle.get("bundle_id"):
+            return False
+    row = {"bundle_id": bundle.get("bundle_id"), "ts": time.time(), "deltas": bundle.get("deltas", [])}
+    with open(queue, "ab") as handle:
+        handle.write((json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    return True
+
+
+def durable_trigger(project: Path, bundle: dict[str, Any]) -> bool:
+    """U157-B: queue one actionable bundle at most once, under an OS lock. True when this call appended it."""
+    from v7_harness.coord import stream
+
+    folder = Path(project) / ".coord" / "rsi"
+    folder.mkdir(parents=True, exist_ok=True)
+    fd = os.open(folder / "actionable.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + ACTIONABLE_LOCK_TIMEOUT_S
+        while not stream._try_lock(fd):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("actionable queue lock busy")
+            time.sleep(0.01)
+        try:
+            return _append_once(folder / "actionable.jsonl", bundle)
+        finally:
+            stream._unlock(fd)
+    finally:
+        os.close(fd)
+
+
 def run_scheduler_cycle(
     root: Path,
     config: dict[str, Any],
@@ -756,16 +902,23 @@ def run_scheduler_cycle(
         state_file = root / ".work" / "rsi-scheduler-state.json"
         prior_state: dict[str, dict[str, Any]] = {}
         if state_file.is_file():
+            # U157-B v2: an unreadable state fails closed. Resetting it to {} would silently re-baseline every
+            # source and swallow the change it was about to report.
             try:
                 prior_state = json.loads(state_file.read_text(encoding="utf-8"))
-            except (ValueError, json.JSONDecodeError):
-                prior_state = {}
+            except (OSError, ValueError) as exc:
+                return {"status": "FAILED", "failure_receipt": {"stage": "state", "error": type(exc).__name__}}
+            if not isinstance(prior_state, dict) or not all(isinstance(v, dict) for v in prior_state.values()):
+                return {"status": "FAILED", "failure_receipt": {"stage": "state", "error": "TypeError"}}
 
         observations: dict[str, dict[str, Any]] = {}
         deltas: list[dict[str, Any]] = []
-
+        changes: list[tuple[str, Optional[str], Any]] = []
+        sources: dict[str, dict[str, Any]] = {}
         for source in config.get("sources", []):
-            url = source.get("url", "")
+            sources.setdefault(source.get("url", ""), source)  # a URL listed twice is fetched once
+
+        for url, source in sources.items():
             # Fetch with bounded retries; a real exponential sleep only happens between attempts,
             # never after the final one.
             obs: Optional[dict[str, Any]] = None
@@ -775,6 +928,9 @@ def run_scheduler_cycle(
                     if fetch is not None:
                         obs = fetch(source, timeout)
                     break
+                except SourceRefused:  # a configuration error: retrying cannot fix it
+                    return {"status": "FAILED", "failure_receipt": {"stage": "fetch", "url": url,
+                                                                    "error": "SourceRefused"}}
                 except Exception as exc:  # noqa: BLE001
                     last_exc = exc
                     if attempt < max_retries - 1:
@@ -785,31 +941,48 @@ def run_scheduler_cycle(
                     "status": "FAILED",
                     "backoff_seconds": backoff_seconds,
                     "next_run_at": now + backoff_seconds[-1],
-                    "failure_receipt": {"error": f"{type(last_exc).__name__}: {last_exc}"},
+                    "failure_receipt": {"stage": "fetch", "url": url,
+                                        "error": f"{type(last_exc).__name__}: {last_exc}"},
                 }
 
             observations[url] = obs
 
             # Content change is the sole actionable signal; etag/date-only changes are ACK_ONLY.
+            # U157-B: a source marked first_seen=actionable also reports its first non-blank content.
             prev_obs = prior_state.get(url)
-            if prev_obs is not None and obs.get("content_sha256") != prev_obs.get("content_sha256"):
-                deltas.append(obs)
+            new_sha = obs.get("content_sha256")
+            if prev_obs is not None:
+                if new_sha != prev_obs.get("content_sha256"):
+                    deltas.append({**obs, "prior_sha256": prev_obs.get("content_sha256")})
+                    changes.append((url, prev_obs.get("content_sha256"), new_sha))
+            elif (source.get("first_seen", "baseline") == "actionable" and new_sha != EMPTY_SHA256
+                  and not obs.get("blank")):
+                deltas.append({**obs, "prior_sha256": None})
+                changes.append((url, None, new_sha))
 
-        # Update saved state, only while this cycle still owns the lock (U157-L fencing).
+        if not deltas:
+            # Update saved state, only while this cycle still owns the lock (U157-L fencing).
+            if not still_owner():
+                return {"status": "LOCKED_OUT"}
+            _write_state(state_file, observations)
+            return {"status": "ACK_ONLY", "observations": observations}
+
+        # U157-B: state is written after the trigger, never before it, so a failed dispatch is recomputed next
+        # cycle with the same bundle_id; a crash between the two re-dispatches and the receiver dedupes by id.
+        bundle_id = _bundle_id(changes)
+        bundle = {"bundle_id": bundle_id, "deltas": deltas, "count": len(deltas)}
         if not still_owner():
             return {"status": "LOCKED_OUT"}
-        state_file.write_text(json.dumps(observations, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        if deltas:
-            # Collect every changed source first, dedupe by URL, then trigger exactly once.
-            deduped: dict[str, dict[str, Any]] = {d.get("url"): d for d in deltas}
-            bundle = {"deltas": list(deduped.values()), "count": len(deduped)}
-            if trigger is not None:
-                if not still_owner():
-                    return {"status": "LOCKED_OUT"}
+        if trigger is not None:
+            try:
                 trigger(bundle)
-            return {"status": "ACTIONABLE_DELTA", "observations": observations, "deltas": bundle["deltas"]}
-        return {"status": "ACK_ONLY", "observations": observations}
+            except Exception as exc:  # noqa: BLE001 - the type only: a message may carry paths or secrets
+                return {"status": "FAILED", "failure_receipt": {"stage": "trigger", "error": type(exc).__name__,
+                                                                "bundle_id": bundle_id}}
+        if not still_owner():
+            return {"status": "LOCKED_OUT"}
+        _write_state(state_file, observations)
+        return {"status": "ACTIONABLE_DELTA", "observations": observations, "deltas": deltas, "bundle_id": bundle_id}
 
     finally:
         try:
