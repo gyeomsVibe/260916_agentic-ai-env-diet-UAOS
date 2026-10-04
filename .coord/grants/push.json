@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "granted_by": "윤겸스",
+  "granted_at": "2026-10-04",
+  "quote": "push 상시 허가 승인한다",
+  "branches": [
+    "claude/*",
+    "codex/*",
+    "agy/*"
+  ],
+  "never": [
+    "main",
+    "master"
+  ],
+  "force": false,
+  "merge": false,
+  "pr_create": true,
+  "revoke": "set enabled to false or remove the file"
+}

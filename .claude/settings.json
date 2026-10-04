@@ -40,6 +40,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && python -m v7_harness.cli coord stop-gate --project . --tool claude",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

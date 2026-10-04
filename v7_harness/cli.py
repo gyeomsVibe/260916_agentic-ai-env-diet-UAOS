@@ -859,6 +859,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_watch.add_argument("--policy", default="structured", choices=["structured", "legacy"])
     p_coord_watch.set_defaults(func=cmd_coord_watch)
 
+    # U146-A: the nonstop chain. `next` names the tool's next card, `stop-gate` is the Claude Stop hook, and
+    # `push-check` reads the user's standing push grant.
+    p_coord_next = p_coord_subs.add_parser("next", help="Print the next card for a tool from the master schedule")
+    p_coord_next.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_next.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_next.add_argument("--claim", action="store_true", help="Claim the own NEXT card so no other session runs it")
+    p_coord_next.add_argument("--session", default=None, help="Session id that owns the claim (U146a-R: required to claim)")
+    p_coord_next.set_defaults(func=cmd_coord_next)
+    p_coord_stop = p_coord_subs.add_parser("stop-gate", help="Stop hook: block a turn end while an own NEXT card is ready")
+    p_coord_stop.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_stop.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_stop.set_defaults(func=cmd_coord_stop_gate)
+    p_coord_push = p_coord_subs.add_parser("push-check", help="ALLOW or DENY a push under .coord/grants/push.json")
+    p_coord_push.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_push.add_argument("--branch", required=True)
+    p_coord_push.add_argument("--force", action="store_true", help="The push would be forced (always DENY)")
+    p_coord_push.set_defaults(func=cmd_coord_push_check)
+
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_route.set_defaults(func=cmd_coord_route)
@@ -1741,6 +1759,41 @@ def cmd_coord_usage_session(args: argparse.Namespace) -> int:
         return 2
     print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
     return 0
+
+
+def cmd_coord_next(args: argparse.Namespace) -> int:
+    """U146-A: print the next card for a tool from the master schedule (read-only unless --claim)."""
+    from .coord.next_card import next_step
+    print(json.dumps(next_step(Path(args.project), args.tool, claim=args.claim, session=args.session),
+                     ensure_ascii=False))
+    return 0
+
+
+def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
+    """U146-A: the Claude Stop hook. A broken gate never breaks the session, so every failure exits 0 silently."""
+    try:
+        try:
+            hook = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            hook = {}
+        # U146a-R: the hook input's session_id owns the claim; without one the gate claims nothing and allows the stop.
+        session = hook.get("session_id") if isinstance(hook, dict) else None
+        from .coord.stop_gate import gate
+        result = gate(Path(args.project), args.tool, session=session if isinstance(session, str) else None)
+        if isinstance(result, dict):
+            print(json.dumps(result, ensure_ascii=False))
+    except Exception:  # noqa: BLE001 - fail open: the stop is allowed
+        pass
+    return 0
+
+
+def cmd_coord_push_check(args: argparse.Namespace) -> int:
+    """U146-A R2: deny-by-default push grant check."""
+    from .coord.stop_gate import push_check
+    result = push_check(Path(args.project), args.branch, force=args.force)
+    print(json.dumps(result, ensure_ascii=False))
+    # Exit 3 on DENY: a non-zero exit stops a shell `&&` chain before `git push`.
+    return 0 if result.get("decision") == "ALLOW" else 3
 
 
 def cmd_coord_route(args: argparse.Namespace) -> int:
