@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -248,10 +249,31 @@ def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
     letters = agy_letters(project)
     desk = ", ".join(f"{tool}={desk_label(info)}" for tool, info in presence.items())
     conversation = str(event.get("conversationId") or "")
+    # U148: only the user's Antigravity desk hears what its headless runs answered (agy_dispatch, U120)
+    answers = ""
+    from .agy_dispatch import answered_today
+    from .deliver import read_user_desk
+
+    if conversation and conversation == read_user_desk(project, "antigravity"):
+        done = answered_today(project, time.time())
+        if done:
+            answers = (f"Your headless runs sent {len(done)} headless answer(s) today, newest re {done[0]} "
+                       "(.coord/mailbox/delivery/agy_auto.jsonl). This hook text reaches only you, never the user "
+                       "(Antigravity review relay_39c3f5be), so begin your next visible reply with one line naming "
+                       "these answers. ")
+    # U148 REPLAN (Codex codex_u148_c1_human_origin_gate_unmet): the hook never registers a desk, so a desktop
+    # conversation with no valid desk learns the explicit registration, to be used only on the user's own turn.
+    from .deliver import agy_desktop_conversation, user_desk_state
+
+    if conversation and user_desk_state(project, "antigravity")[0] != "OK" and agy_desktop_conversation(conversation):
+        runtime = Path.home() / ".uaos" / "uaos.py"
+        answers += (f"No valid Antigravity user desk is registered for this project. Only if 윤겸스 is the one "
+                    f"typing to you in this conversation, register it once with: python \"{runtime}\" coord presence "
+                    f"--tool antigravity --desk-thread {conversation} --project \"{project}\" ")
     from .mode import mode_phrase  # U95-T
 
     mode = mode_phrase(project)
-    fingerprint = hashlib.sha256("\n".join([conversation, desk, mode, *letters]).encode("utf-8")).hexdigest()
+    fingerprint = hashlib.sha256("\n".join([conversation, desk, mode, answers, *letters]).encode("utf-8")).hexdigest()
     seen = Path(project) / AGY_SEEN
     try:
         if seen.read_text(encoding="utf-8").strip() == fingerprint:
@@ -265,7 +287,7 @@ def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
         pass  # a hook never fails the session; the line is said again next time
     line = (f"UAOS project {Path(project).name}: desk {desk}. Antigravity conducts only while codex and claude are "
             "both LIMITED/ABSENT; otherwise it does only work orders addressed to antigravity and never judges its "
-            f"own work. {mode} ")
+            f"own work. {mode} {answers}")
     if letters:
         try:
             newest = json.loads((Path(project) / ".coord" / "mailbox" / "inbox" / f"{letters[0]}.json")

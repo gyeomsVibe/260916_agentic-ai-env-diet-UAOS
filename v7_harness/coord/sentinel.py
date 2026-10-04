@@ -389,6 +389,11 @@ def run_sentinel_cycle(
                 payload={
                     "recipient": recipient,
                     "p1_alert": True,
+                    # U141-B: producer adaptation; the structured watcher routes by requested_target and wakes only on
+                    # wake_class, so a P1 wake carries both (its id still comes from the events, never repeated).
+                    "requested_target": recipient,
+                    "wake_class": "ACTIONABLE",
+                    "delta": "; ".join(p1_reasons)[:200],
                     "wake_reason": "; ".join(p1_reasons),
                     "event_fingerprint": event_fingerprint,
                     "actor": "sentinel",

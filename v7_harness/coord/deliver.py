@@ -28,11 +28,18 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from v7_harness.coord.stream import SECRET_PATTERNS, _try_lock, _unlock
 from v7_harness.coord.mailbox import Mailbox
+
+
+AGY_APP_HOME_ENV = "UAOS_AGY_APP_HOME"  # tests point this at a fixture; default ~/.gemini/antigravity
+
+
+REPLACE_TRIES = 20  # Windows refuses os.replace while another process replaces the same file; 20 x 50 ms = 1 s
 
 
 @dataclass(frozen=True)
@@ -54,18 +61,35 @@ _ACK_RE = re.compile(_TOKEN.format("ACK_ONLY"))
 _NEGATED_RE = re.compile(r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+ACTIONABLE_DELTA\b")
 _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
     "ACTIONABLE_DELTA", "VERDICT_REQUESTED=YES", "APPROVAL_REQUIRED", r"(?:PRIORITY|SEVERITY|P1)=(?:P1|YES|1)"))
+# U141-B: quoted data is never an instruction. Fenced blocks (``` or ~~~, an unclosed fence runs to the end) go first,
+# then "...", curly quotes, 'single' quotes, `code` and "> " reply lines are blanked before the token scan. A single
+# quote counts only with no word character outside it, so apostrophes (it's, tools') never open a span (U141-B2 REWORK).
+_FENCE_RE = re.compile(r"^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)", re.MULTILINE | re.DOTALL)
+_QUOTED_RE = re.compile(r'"[^"\n]*"|“[^”\n]*”|(?<![\w\'])\'[^\'\n]*\'(?!\w)|`[^`\n]*`|^[ \t]*>.*$', re.MULTILINE)
+DELTA_LIMIT = 200  # an inferred delta is the hook's one-line summary; the full text stays in `message`
 
 
-def _digest(actor: str, message: str, card: str = "", window: str | None = None) -> str:
+def _digest(actor: str, message: str, card: str = "", window: str | None = None,
+            target: str | None = None, fields: dict[str, Any] | None = None) -> str:
     # U115: a card letter's id also covers its card and window, so the same text routed to another window is a new
     # letter instead of a mailbox collision; without a card the id is exactly today's.
     key = actor + "\0" + message + (f"\0{card}\0{window or ''}" if card else "")
+    # U141-B: every structured field stored in the payload, explicit or inferred, joins the id (v3). A letter stored
+    # before inference existed (v2, no fields) and its inferred retry are then two ids, never a collision or a shared
+    # ACK (U141-B2 REWORK). Without fields the v2/legacy ids stay exactly as published.
+    if fields:
+        key = json.dumps(["uaos-relay-v3", actor, message, card, window or "" if card else "", target, fields],
+                         ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    # Explicit destination is payload identity; None preserves legacy auto IDs.
+    elif target is not None:
+        key = json.dumps(["uaos-relay-v2", actor, message, card, window or "" if card else "", target],
+                         ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
 def _requires_wake(message: str) -> bool:
-    """Only a real delta may spend a paid turn; ACK_ONLY, negated or incidental tokens never do."""
-    upper = message.upper()
+    """Only a real delta may spend a paid turn; ACK_ONLY, negated, incidental or quoted tokens never do."""
+    upper = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()
     if _ACK_RE.search(upper):
         return False
     upper = _NEGATED_RE.sub(" ", upper)
@@ -586,56 +610,211 @@ def _registered_roots(project: Path) -> set[str]:
     return roots
 
 
-def _newest_verified_thread(desk: Path, sessions_dir: Path, exclude_threads: set[str] = ()) -> str:
-    """Discover the newest verified thread for this project from up to 12 recent rollouts."""
-    if not sessions_dir.is_dir():
+# U147: text that a tool, not 윤겸스, puts into a Codex thread as a user turn: injected AGENTS.md, app context blocks
+# (<...>), and UAOS relays and sentinel data (seen in the 2026-10-04 rollouts).
+INJECTED_PREFIXES = ("# AGENTS.md", "<", "[UAOS relay", "[DATA]")
+
+
+def last_human_input(path: Path) -> str:
+    """U147: ISO timestamp of the last user turn 윤겸스 typed in a Codex rollout, '' when there is none.
+
+    The newest-written rollout is not the user's window: a background Codex thread that answers relays is written on
+    every letter, stays newest, and pulled every later letter away from the window 윤겸스 watched (2026-10-04,
+    relay_54d2ee83 went to 01a1006f, not 01a102e7). The window a human last typed in is the one the user reads.
+    """
+    last = ""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if '"role":"user"' not in line and '"role": "user"' not in line:
+                    continue  # cheap filter: four 1-4 MiB rollouts scanned in 0.05 s (2026-10-04)
+                try:
+                    data = json.loads(line)
+                except ValueError:
+                    continue
+                payload = data.get("payload") if isinstance(data, dict) else None
+                if not isinstance(payload, dict) or payload.get("role") != "user":
+                    continue
+                content = payload.get("content")
+                text = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict)) \
+                    if isinstance(content, list) else ""
+                if text.strip() and not text.lstrip().startswith(INJECTED_PREFIXES):
+                    last = str(data.get("timestamp") or last)
+    except OSError:
         return ""
+    return last
+
+
+# U147-D: the guessed window is only a bootstrap. Any truncated candidate list starves the user's window: newest 12
+# (relay_6dfa9184) and a 7-day window capped at 500 (relay_ef4ac44f) both lost it to newer relay-only threads, and a
+# day cutoff drops a quiet desk. The guess therefore reads every rollout or none: above ROUTE_SCAN_MAX rollouts it
+# fails closed and only the designated user desk routes. 226 rollouts existed on 2026-10-04, one first line each.
+ROUTE_SCAN_MAX = 500
+
+
+def _iso_epoch(stamp: str) -> float:
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def verified_rollouts(desk: Path, sessions_dir: Path, exclude_threads: set[str] = ()) -> tuple[list[tuple[str, Path]], bool]:
+    """U147-D: ((thread, rollout) of this project's verified Codex threads, newest-written first; overflow).
+
+    overflow is True when more than ROUTE_SCAN_MAX rollouts exist; the list is then empty, never a truncated guess.
+    """
+    if not sessions_dir.is_dir():
+        return [], False
+    stamped = []
+    for path in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
+        try:
+            stamped.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    if len(stamped) > ROUTE_SCAN_MAX:
+        return [], True
     reg_roots = _registered_roots(desk)
-    candidates = sorted(sessions_dir.glob("*/*/*/rollout-*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for path in candidates[:12]:
+    verified: list[tuple[str, Path]] = []
+    for _mtime, path in sorted(stamped, key=lambda item: item[0], reverse=True):
         chosen_id, cwd, status = _read_rollout_meta(path)
         if status == "OK" and chosen_id not in exclude_threads:
             if cwd and os.path.normcase(str(cwd.resolve())) in reg_roots:
-                return chosen_id
-    return ""
+                verified.append((chosen_id, path))
+    return verified, False
+
+
+def _newest_verified_thread(desk: Path, sessions_dir: Path, exclude_threads: set[str] = ()) -> str:
+    """Bootstrap guess of the user's verified thread when no user desk is designated; '' above ROUTE_SCAN_MAX.
+
+    U147: among verified threads, the one 윤겸스 typed in last wins; with no human turn anywhere, the newest-written.
+    U147-R: a rollout's last human turn is never later than its write time, so the newest-first scan stops at the
+    first rollout written before the best human turn found; with every rollout listed, that stop is exact.
+    """
+    verified, _overflow = verified_rollouts(desk, sessions_dir, exclude_threads)
+    if not verified:
+        return ""
+    best_stamp, best_epoch, best_id = "", 0.0, verified[0][0]
+    for chosen_id, path in verified:  # newest-written first, so a tie keeps the newest-written thread
+        try:
+            if best_stamp and path.stat().st_mtime < best_epoch:
+                break
+        except OSError:
+            continue
+        stamp = last_human_input(path)
+        if stamp > best_stamp:  # ISO-8601 UTC strings of one format sort by time
+            best_stamp, best_epoch, best_id = stamp, _iso_epoch(stamp), chosen_id
+    return best_id
 
 
 def _codex_thread(desk: Path, thread: str) -> tuple[str, dict[str, str], str]:
     """U134-D / U134-R F1: Resolve Codex thread with strict identity and workspace verification.
 
     Returns (chosen_thread, fallback_dict, status).
-    Status is 'DISPATCH' on success, or 'THREAD_UNVERIFIED', 'THREAD_PROJECT_MISMATCH', 'NO_VERIFIED_THREAD'.
+    Status is 'DISPATCH' on success, or 'THREAD_UNVERIFIED', 'THREAD_PROJECT_MISMATCH', 'NO_VERIFIED_THREAD',
+    'USER_DESK_STALE' (U147-D).
+    U147-D: with no usable explicit thread, the designated user desk routes; a designated desk that fails
+    verification fails closed instead of falling back to a guess. Only an undesignated desk uses the bootstrap guess.
     """
     root = _codex_sessions()
-    if not thread:
-        newest = _newest_verified_thread(desk, root)
-        if newest:
-            return newest, {}, "DISPATCH"
-        return "", {}, "NO_VERIFIED_THREAD"
+    why = ""
+    if thread and not UUID_RE.fullmatch(thread):
+        why = "not_uuid"
+    elif thread and not list(root.glob(f"*/*/*/rollout-*-{thread}.jsonl")):
+        why = "no_rollout"
+    elif thread:
+        status = _verify_thread(desk, root, thread)
+        return (thread, {}, status) if status == "DISPATCH" else ("", {}, status)
 
+    desk_state, designated = user_desk_state(desk, "codex")
+    if desk_state == "INVALID":
+        return "", {"why": "user_desk_invalid"}, "USER_DESK_STALE"
+    if designated:
+        status = _verify_thread(desk, root, designated)
+        if status != "DISPATCH":
+            return "", {"designated": designated, "why": status}, "USER_DESK_STALE"
+        return designated, ({"given": thread, "used": designated, "why": why} if why else {}), "DISPATCH"
+    newest = _newest_verified_thread(desk, root)
+    if newest:
+        return newest, ({"given": thread, "used": newest, "why": why} if why else {}), "DISPATCH"
+    return "", {}, "NO_VERIFIED_THREAD"
+
+
+def _verify_thread(desk: Path, root: Path, thread: str) -> str:
+    """U134-R F1 strict identity: a UUID whose rollout names itself and a cwd inside this project."""
     if not UUID_RE.fullmatch(thread):
-        newest = _newest_verified_thread(desk, root)
-        if newest:
-            return newest, {"given": thread, "used": newest, "why": "not_uuid"}, "DISPATCH"
-        return "", {}, "NO_VERIFIED_THREAD"
-
+        return "THREAD_UNVERIFIED"
     matched = list(root.glob(f"*/*/*/rollout-*-{thread}.jsonl"))
     if not matched:
-        newest = _newest_verified_thread(desk, root)
-        if newest:
-            return newest, {"given": thread, "used": newest, "why": "no_rollout"}, "DISPATCH"
-        return "", {}, "NO_VERIFIED_THREAD"
+        return "THREAD_UNVERIFIED"
+    cid, cwd, status = _read_rollout_meta(matched[0])
+    if status != "OK" or cid != thread:
+        return "THREAD_UNVERIFIED"
+    if not cwd or os.path.normcase(str(cwd.resolve())) not in _registered_roots(desk):
+        return "THREAD_PROJECT_MISMATCH"
+    return "DISPATCH"
 
-    reg_roots = _registered_roots(desk)
-    for mf in matched:
-        cid, cwd, status = _read_rollout_meta(mf)
-        if status != "OK":
-            return "", {}, "THREAD_UNVERIFIED"
-        if not cwd or os.path.normcase(str(cwd.resolve())) not in reg_roots:
-            return "", {}, "THREAD_PROJECT_MISMATCH"
-        return thread, {}, "DISPATCH"
 
-    return "", {}, "THREAD_UNVERIFIED"
+# U147-D designated user desk, the window 윤겸스 types in, per tool:
+# - registered: by the tool's UserPromptSubmit hook when the prompt is human-typed (not INJECTED_PREFIXES), so it
+#   follows the user to a new window on their next prompt; `register_user_desk` is also callable directly.
+# - stored: `.coord/presence/user_desk_<tool>.json`, one file per tool so two tools' hooks never overwrite each other;
+#   written by temp file + os.replace, so a reader sees the old or the new record, never half of one.
+# - verified at every delivery (`_verify_thread`); a stale desk (rollout gone, other project) fails closed as
+#   USER_DESK_STALE and the letter stays in the mailbox until the next human prompt registers a live desk.
+USER_DESK_TOOLS = ("codex", "claude", "antigravity")
+
+
+def user_desk_path(project: Path, tool: str) -> Path:
+    return Path(project) / ".coord" / "presence" / f"user_desk_{tool}.json"
+
+
+def user_desk_state(project: Path, tool: str) -> tuple[str, str]:
+    """U147-D: ("ABSENT", "") when no record exists, ("OK", thread), or ("INVALID", "") for a record that exists but
+    cannot be read or holds no UUID. Only ABSENT allows the bootstrap guess (Codex relay_48fb8d38: a broken record
+    must not silently hand a designated desk's letters to a guessed window)."""
+    path = user_desk_path(project, tool)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "ABSENT", ""
+    except (OSError, ValueError):
+        return "INVALID", ""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return "INVALID", ""
+    thread = data.get("thread") if isinstance(data, dict) else None
+    if isinstance(thread, str) and UUID_RE.fullmatch(thread):
+        return "OK", thread
+    return "INVALID", ""
+
+
+def read_user_desk(project: Path, tool: str) -> str:
+    return user_desk_state(project, tool)[1]
+
+
+def is_human_prompt(prompt: object) -> bool:
+    return isinstance(prompt, str) and bool(prompt.strip()) and not prompt.lstrip().startswith(INJECTED_PREFIXES)
+
+
+def register_user_desk(project: Path, tool: str, thread: str, *, source: str) -> bool:
+    if tool not in USER_DESK_TOOLS or not isinstance(thread, str) or not UUID_RE.fullmatch(thread):
+        return False
+    if read_user_desk(project, tool) == thread:
+        return True  # every prompt in the same window would otherwise rewrite the record
+    path = user_desk_path(project, tool)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    temp.write_text(json.dumps({"thread": thread, "at": time.time(), "source": source}), encoding="utf-8")
+    for _attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(temp, path)
+            return True
+        except PermissionError:
+            time.sleep(0.05)
+    temp.unlink(missing_ok=True)
+    return False
 
 
 def _queue_dir(project: Path, tool: str) -> Path:
@@ -651,7 +830,7 @@ def _queue_until_active(project: Path, tool: str, *, message_id: str, digest: st
     marker = _queue_dir(project, tool) / f"{message_id}.json"
     try:
         _write_receipt(marker, {"message_id": message_id, "actor": actor, "message": message, "card": card,
-                                "thread": thread, "attempts": 0})
+                                "thread": thread, "attempts": 0, "digest": digest})
     except FileExistsError:
         pass  # the same letter sent again stays one queued letter
     return DeliverResult(False, tool, "QUEUED_UNTIL_ACTIVE", (), "", message_id, digest, str(marker))
@@ -783,7 +962,8 @@ def dispatch_queued(project: Path, tool: str, *, runner: Any = None) -> list[dic
 
             message = str(letter.get("message") or "")
             actor = str(letter.get("actor") or "")
-            digest = _digest(actor, message, card, "")
+            # Keep the published identity, including destination and legacy queued IDs.
+            digest = str(letter.get("digest") or _digest(actor, message, card, ""))
 
             # Decision: acquire per-message dispatch guard following U83 age rule (_acquire_guard, GUARD_STALE_S)
             guard = box.root / "delivery" / "guards" / f"{message_id}.lock"
@@ -841,6 +1021,7 @@ def dispatch_queued(project: Path, tool: str, *, runner: Any = None) -> list[dic
                         pending_owner=pending_owner,
                         card=card,
                         window="",
+                        identity_digest=digest,
                     )
                 finally:
                     _release_guard(guard, guard_owner)
@@ -889,6 +1070,7 @@ def _deliver_unlocked(
     pending_owner: str | None = None,
     card: str = "",
     window: str = "",
+    identity_digest: str | None = None,
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -903,7 +1085,7 @@ def _deliver_unlocked(
     box = _project_mailbox(project)
     desk = box.root.parent.parent
     # Stable id makes repeated calls with the same sender and bytes idempotent.
-    digest = _digest(actor, message, card, window)
+    digest = identity_digest or _digest(actor, message, card, window)
     message_id = "relay_" + digest[:32]
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
     ack_file = box.ack_dir / f"{message_id}.json"
@@ -958,6 +1140,7 @@ def _deliver_unlocked(
             envelope += (f"\nAfter processing, run coord ack --id {message_id} for this project. "
                          "The sender keeps this message in the inbox until ACK.")
         fallback: dict[str, str] = {}
+        sent_thread = ""  # U147: the receipt names the Codex thread, so a misrouted letter is visible
         if target == "codex":
             if window:  # U115: the card's own Codex thread replaces the default thread
                 thread = window
@@ -966,12 +1149,16 @@ def _deliver_unlocked(
                 result = DeliverResult(False, "codex", status, (), "")
             else:
                 result = _deliver_to_codex(envelope, chosen_thread, runner=runner)
+                sent_thread = chosen_thread
                 # Rule 6: retry once on rc != 0 with newest verified thread other than failed one
-                if not result.delivered and result.reason.startswith("DELIVERY_FAILED:rc="):
+                # U147-D: a letter to the designated user desk is never re-sent to a guessed relay window.
+                if not result.delivered and result.reason.startswith("DELIVERY_FAILED:rc=") \
+                        and chosen_thread != read_user_desk(desk, "codex"):
                     alt_thread = _newest_verified_thread(desk, _codex_sessions(), exclude_threads={chosen_thread})
                     if alt_thread:
                         fallback = {"given": chosen_thread, "used": alt_thread, "why": "send_failed"}
                         result = _deliver_to_codex(envelope, alt_thread, runner=runner)
+                        sent_thread = alt_thread
         elif target == "claude":
             prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
                 "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
@@ -983,7 +1170,8 @@ def _deliver_unlocked(
         receipt = {"message_id": message_id, "digest": digest, "target": target,
                    "state": "DISPATCHED" if result.delivered else "FAILED", "reason": result.reason,
                    "attempt": _dispatch_count(attempts, message_id) + 1, "timestamp_ns": time.time_ns(),
-                   "output": result.output, **({"thread_fallback": fallback} if fallback else {})}
+                   "output": result.output, **({"thread_fallback": fallback} if fallback else {}),
+                   **({"thread": sent_thread} if sent_thread else {})}
         attempt_path = attempts / f"{message_id}_{uuid.uuid4().hex}.json"
         _write_receipt(attempt_path, receipt)
         if result.delivered:
@@ -1052,8 +1240,16 @@ def deliver(
     if card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
-        digest = _digest(actor, message, card, window)
-        message_id = "relay_" + digest[:32]
+    explicit = {key: value for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested),
+                                              ("verdict", verdict), ("delta", delta)) if value is not None}
+    if not explicit and requested_target and _requires_wake(message):
+        # U141-B: an ordinary letter whose text asks for a turn becomes a structured ACTIONABLE envelope, so the
+        # structured watcher (which never reads text) wakes its receiver. Explicit fields, even NOTICE, always win.
+        first = next((line.strip() for line in message.splitlines() if line.strip()), "")
+        wake_class, delta = "ACTIONABLE", first[:DELTA_LIMIT]
+        explicit = {"wake_class": wake_class, "delta": delta}  # stored fields, so the id is v3 (see _digest)
+    digest = _digest(actor, message, card, window, requested_target, explicit)
+    message_id = "relay_" + digest[:32]
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
@@ -1108,6 +1304,13 @@ def deliver(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "")
+                                 card=card, window=window or "", identity_digest=digest)
     finally:
         _release_guard(guard, owner)
+
+
+def agy_desktop_conversation(conversation: object) -> bool:
+    if not isinstance(conversation, str) or not UUID_RE.fullmatch(conversation):
+        return False
+    home = Path(os.environ.get(AGY_APP_HOME_ENV) or (Path.home() / ".gemini" / "antigravity"))
+    return (home / "conversations" / f"{conversation}.db").is_file() or (home / "brain" / conversation).is_dir()
