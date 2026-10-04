@@ -31,6 +31,8 @@ def _remove_safe_log() -> None:
 def install() -> None:
     os.environ["UAOS_STREAM_AUTOLOG"] = "0"
     os.environ["OLLA_USAGE"] = str(SAFE_OLLA_USAGE)  # inherited by the worker subprocesses tests start
+    # U143: test letters must not play the real Windows sound (hundreds of deliveries per suite run).
+    os.environ["UAOS_RING"] = "0"
     olla = sys.modules.get("v7_harness.olla")
     if olla is not None:  # already imported by an earlier module: its path was fixed at import time
         olla.USAGE_LOG = SAFE_OLLA_USAGE

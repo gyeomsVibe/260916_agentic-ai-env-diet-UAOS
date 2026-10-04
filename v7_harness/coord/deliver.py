@@ -1273,6 +1273,13 @@ def deliver(
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
     box.publish(message_id, _payload(actor, message, digest, requested_target, card, window, wake_class=wake_class,
                                      verdict_requested=verdict_requested, verdict=verdict, delta=delta))
+    if explicit.get("wake_class") == "ACTIONABLE" or (explicit.get("wake_class") is None and _requires_wake(message)):
+        # U143: a letter that asks for a turn plays one real sound (coalesced in ring.py); a sound never fails a letter.
+        from v7_harness.coord import ring as _ring
+        try:
+            _ring.ring(desk, reason=f"{message_id} {actor}->{requested_target or target or 'mailbox'}")
+        except Exception:  # noqa: BLE001
+            pass
     if target == "antigravity":
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
