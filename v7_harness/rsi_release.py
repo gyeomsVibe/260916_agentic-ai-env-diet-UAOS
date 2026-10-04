@@ -12,8 +12,10 @@ import fnmatch
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
@@ -607,14 +609,101 @@ def _task_name(project: Path) -> str:
     return f"UAOS_RSI_Watch_{_project_hash(project)}"
 
 
-def _wrapper_text(project: Path, python_bin: str) -> str:
-    """A deterministic wrapper: `cd` to the project root, then run with absolute paths only."""
+_TASK_NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
+# U157: a new error waits at most 15 min for the local scan, which spends no paid tokens; the daily calendar trigger
+# repeats it all day. Logon with StartWhenAvailable catches up after sleep or a missed start.
+_REPEAT = "PT15M"
+# U157: a ceiling, not a measurement; the live proof measures one scan and replaces it.
+_TIME_LIMIT = "PT10M"
+
+
+def _wrapper_text(project: Path, python_bin: str, launcher: Optional[Path] = None) -> str:
+    """A deterministic wrapper: `cd` to the project root, then run the installed runtime with absolute paths only.
+
+    U157: the task runs the installed launcher (`~/.uaos/uaos.py`), not the checkout module. It leaves an exit
+    receipt in `.coord/rsi/schedule_last.json` and returns the same exit code, so Task Scheduler's Last Result and
+    the receipt both show the real result of `rsi watch`.
+    """
     project_str = str(project)
+    launcher = launcher if launcher is not None else Path.home() / ".uaos" / "uaos.py"
+    receipt_dir = f"{project_str}\\.coord\\rsi"
     return (
         "@echo off\r\n"
         f'cd /d "{project_str}"\r\n'
-        f'"{python_bin}" -m v7_harness.cli rsi watch --project "{project_str}"\r\n'
+        f'"{python_bin}" "{launcher}" rsi watch --project "{project_str}"\r\n'
+        "set UAOS_RC=%ERRORLEVEL%\r\n"
+        f'if not exist "{receipt_dir}" mkdir "{receipt_dir}"\r\n'
+        f'>"{receipt_dir}\\schedule_last.json" echo {{"exit": %UAOS_RC%, "at": "%DATE% %TIME%"}}\r\n'
+        "exit /b %UAOS_RC%\r\n"
     )
+
+
+def _task_xml(wrapper_path: Path, project: Path) -> str:
+    """U157: the whole task as Task Scheduler XML; Exec/Command holds a spaced path as one element."""
+    from xml.sax.saxutils import escape
+
+    domain, user = os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", "")
+    user_id = f"{domain}\\{user}" if domain and user else user
+    # A logon trigger for one named user needs no elevation; without a name it would mean any user.
+    logon_user = f"<UserId>{escape(user_id)}</UserId>" if user_id else ""
+    return (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        f'<Task version="1.2" xmlns="{_TASK_NS}">\n'
+        "  <RegistrationInfo><Description>UAOS RSI watch (U157)</Description></RegistrationInfo>\n"
+        "  <Triggers>\n"
+        "    <CalendarTrigger><StartBoundary>2026-01-01T00:00:00</StartBoundary><Enabled>true</Enabled>"
+        f"<Repetition><Interval>{_REPEAT}</Interval><Duration>P1D</Duration>"
+        "<StopAtDurationEnd>false</StopAtDurationEnd></Repetition>"
+        "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>\n"
+        f"    <LogonTrigger><Enabled>true</Enabled>{logon_user}</LogonTrigger>\n"
+        "  </Triggers>\n"
+        f'  <Principals><Principal id="Author">{logon_user}'
+        "<LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n"
+        "  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"
+        "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+        "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable>"
+        f"<ExecutionTimeLimit>{_TIME_LIMIT}</ExecutionTimeLimit><Enabled>true</Enabled></Settings>\n"
+        f'  <Actions Context="Author"><Exec><Command>{escape(str(wrapper_path))}</Command>'
+        f"<WorkingDirectory>{escape(str(project))}</WorkingDirectory></Exec></Actions>\n"
+        "</Task>\n"
+    )
+
+
+def _task_mismatch(xml_text: str, wrapper_path: Path) -> Optional[str]:
+    """U157: the first field where the installed task differs from the intended one, or None when it matches."""
+    try:
+        task = ET.fromstring(xml_text[xml_text.index("<Task"):])
+    except (ValueError, ET.ParseError):
+        return "parse"
+    ns = {"t": _TASK_NS}
+    checks = (
+        ("command", task.findtext(".//t:Exec/t:Command", namespaces=ns), str(wrapper_path)),
+        ("repetition", task.findtext(".//t:CalendarTrigger/t:Repetition/t:Interval", namespaces=ns), _REPEAT),
+        ("logon", "present" if task.find(".//t:LogonTrigger", ns) is not None else "", "present"),
+        ("instances", task.findtext(".//t:Settings/t:MultipleInstancesPolicy", namespaces=ns), "IgnoreNew"),
+        ("catch_up", task.findtext(".//t:Settings/t:StartWhenAvailable", namespaces=ns), "true"),
+    )
+    for field, actual, wanted in checks:
+        if (actual or "").strip() != wanted:
+            return field
+    return None
+
+
+def _run_captured(
+    cmd: list[str], cwd: Path, run: Optional[Callable[..., subprocess.CompletedProcess]] = None,
+) -> tuple[int, str, str]:
+    """Run one scheduler command; return (exit code, stdout, stderr), both stripped.
+
+    U157 (Codex REVISE relay_8fda024b): a top-level function that binds `subprocess.run` itself, so
+    firewall_audit lists this execution site; a call inside a nested closure was invisible to it.
+    """
+    if run is None:
+        run = subprocess.run
+    proc = run(
+        cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", check=False,
+    )
+    return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
 
 
 def windows_schedule(
@@ -624,62 +713,78 @@ def windows_schedule(
     action: str = "install",
     apply: bool = False,
     run: Optional[Callable[..., subprocess.CompletedProcess]] = None,
+    launcher: Optional[Path] = None,
 ) -> dict[str, Any]:
-    """Manage a Windows Task Scheduler task for deterministic daily rsi watch.
+    """Manage a Windows Task Scheduler task that runs rsi watch every 15 minutes and at logon.
 
     Task names are made project-unique with a stable normalized-project hash so installing on two
     projects never collides. Install goes through a deterministic wrapper that `cd`s to the project
-    root and calls absolute python/launcher paths. Supports install/status/remove/manual-now; every
-    action defaults to dry run unless `apply=True` is passed explicitly.
+    root and calls absolute python/launcher paths. Supports install/status/remove/manual-now.
+
+    U157: install imports the task as XML and reads it back, and status is a read-only query that runs
+    without `apply`. install, remove and manual-now stay dry runs unless `apply=True`. A non-zero exit, or
+    an installed task that differs from the intended one, is FAILED with a reason and never APPLIED.
     """
     if run is None:
         run = subprocess.run
 
     project = Path(project).resolve()
-    python_bin = str(Path(python_bin).resolve())
+    # U157 (Codex REWORK relay_c8628506): a bare name is looked up on PATH, as a shell would. Path.resolve would
+    # turn "python.exe" into <project>\python.exe. The found path is kept unresolved, so a venv launcher stays one.
+    found = python_bin if Path(python_bin).is_absolute() else shutil.which(python_bin)
+    interpreter = Path(found) if found else None
+    python_bin = str(interpreter) if interpreter is not None else python_bin
+    launcher = Path(launcher) if launcher is not None else Path.home() / ".uaos" / "uaos.py"
     task_name = _task_name(project)
-    wrapper_text = _wrapper_text(project, python_bin)
-    wrapper_path = (project / ".work" / "rsi watch.cmd").resolve()
-    watch_command = str(wrapper_path)
+    wrapper_text = _wrapper_text(project, python_bin, launcher)
+    # U157: no space in the name; the old "rsi watch.cmd" split at the space in an unquoted /TR.
+    wrapper_path = (project / ".work" / "rsi_watch.cmd").resolve()
+    xml_path = wrapper_path.with_name("rsi_watch_task.xml")
 
     if action == "install":
-        command = [
-            "schtasks",
-            "/Create",
-            "/F",
-            "/SC",
-            "DAILY",
-            "/TN",
-            task_name,
-            "/TR",
-            watch_command,
-        ]
+        command = ["schtasks", "/Create", "/F", "/TN", task_name, "/XML", str(xml_path)]
     elif action == "status":
         command = ["schtasks", "/Query", "/TN", task_name, "/FO", "LIST", "/V"]
     elif action == "remove":
         command = ["schtasks", "/Delete", "/F", "/TN", task_name]
     elif action == "manual-now":
-        command = [python_bin, "-m", "v7_harness.cli", "rsi", "watch", "--project", str(project)]
+        command = [python_bin, str(launcher), "rsi", "watch", "--project", str(project)]
     else:
         raise ValueError(f"Unknown scheduler action: '{action}'")
 
-    base = {"task_name": task_name, "wrapper_text": wrapper_text, "wrapper_path": str(wrapper_path)}
+    base = {"task_name": task_name, "wrapper_text": wrapper_text, "wrapper_path": str(wrapper_path),
+            "launcher": str(launcher), "action": action, "command": command}
 
-    if not apply:
-        return {"status": "DRY_RUN", "action": action, "command": command, **base}
+    if not apply and action != "status":
+        return {"status": "DRY_RUN", **base}
+
+    def call(cmd: list[str]) -> tuple[int, str, str]:
+        return _run_captured(cmd, project, run)
+
+    def failed(reason: str, output: str = "", error: str = "") -> dict[str, Any]:
+        return {"ok": False, "status": "FAILED", "reason": reason, "output": output, "error": error, **base}
 
     if action == "install":
+        if interpreter is None or not interpreter.is_file():
+            return failed("INTERPRETER_MISSING", error=f"python interpreter not found: {python_bin}")
+        if not launcher.is_file():
+            return failed("RUNTIME_MISSING", error=f"installed runtime not found: {launcher}")
         wrapper_path.parent.mkdir(parents=True, exist_ok=True)
         wrapper_path.write_text(wrapper_text, encoding="utf-8", newline="")
-    proc = run(
-        command, cwd=project, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", check=False,
-    )
-    return {
-        "ok": proc.returncode == 0,
-        "status": "APPLIED",
-        "action": action,
-        "output": (proc.stdout or "").strip(),
-        "error": (proc.stderr or "").strip(),
-        **base,
-    }
+        xml_path.write_text(_task_xml(wrapper_path, project), encoding="utf-16")  # schtasks /XML reads UTF-16
+        rc, out, err = call(command)
+        if rc != 0:
+            return failed("CREATE_FAILED", out, err)
+        rc, installed, err = call(["schtasks", "/Query", "/TN", task_name, "/XML"])
+        if rc != 0:
+            return failed("VERIFY_MISSING", installed, err)
+        mismatch = _task_mismatch(installed, wrapper_path)
+        if mismatch:
+            return failed(f"VERIFY_MISMATCH:{mismatch}", installed, err)
+        return {"ok": True, "status": "APPLIED", "output": out, "error": err, **base}
+
+    rc, out, err = call(command)
+    if rc != 0:
+        return failed("TASK_MISSING" if action == "status" else "COMMAND_FAILED", out, err)
+    return {"ok": True, "status": "QUERIED" if action == "status" else "APPLIED", "output": out, "error": err,
+            **base}

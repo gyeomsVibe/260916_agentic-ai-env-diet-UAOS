@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -296,24 +297,40 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual("OSError: offline", result["failure_receipt"]["error"])
 
     def test_windows_schedule_is_dry_run_by_default_and_supports_install_status_remove(self) -> None:
-        calls = []
+        calls, stored = [], {}
 
         def run(command, **kwargs):
             calls.append(list(command))
+            if "/XML" in command and command[1] == "/Create":
+                stored["xml"] = Path(command[command.index("/XML") + 1]).read_text(encoding="utf-16")
+            if "/XML" in command and command[1] == "/Query":
+                return subprocess.CompletedProcess(command, 0, stored["xml"], "")
             return subprocess.CompletedProcess(command, 0, "SUCCESS", "")
 
-        project = Path(r"C:\Work\UAOS")
-        preview = rsi_release.windows_schedule(project, "python.exe", action="install", run=run)
-        self.assertEqual("DRY_RUN", preview["status"])
-        self.assertEqual([], calls)
-        installed = rsi_release.windows_schedule(project, "python.exe", action="install", apply=True, run=run)
-        status = rsi_release.windows_schedule(project, "python.exe", action="status", apply=True, run=run)
-        removed = rsi_release.windows_schedule(project, "python.exe", action="remove", apply=True, run=run)
+        with tempfile.TemporaryDirectory() as d:
+            # U157 amendment: install writes and verifies a real task file, so the project and launcher are real.
+            project = Path(d).resolve()
+            launcher = project / "uaos.py"
+            launcher.write_text("", encoding="utf-8")
+            python = Path(sys.executable).name  # a bare name, found on PATH (U157)
+            preview = rsi_release.windows_schedule(project, python, action="install", run=run,
+                                                   launcher=launcher)
+            self.assertEqual("DRY_RUN", preview["status"])
+            self.assertEqual([], calls)
+            installed = rsi_release.windows_schedule(project, python, action="install", apply=True, run=run,
+                                                     launcher=launcher)
+            status = rsi_release.windows_schedule(project, python, action="status", apply=True, run=run,
+                                                  launcher=launcher)
+            removed = rsi_release.windows_schedule(project, python, action="remove", apply=True, run=run,
+                                                   launcher=launcher)
         self.assertTrue(installed["ok"] and status["ok"] and removed["ok"])
         self.assertEqual(["schtasks", "/Create"], calls[0][:2])
-        self.assertEqual(["schtasks", "/Query"], calls[1][:2])
-        self.assertEqual(["schtasks", "/Delete"], calls[2][:2])
-        self.assertIn("rsi watch", " ".join(calls[0]))
+        self.assertEqual(["schtasks", "/Query"], calls[1][:2])  # U157: install reads the task back
+        self.assertEqual(["schtasks", "/Query"], calls[2][:2])
+        self.assertEqual(["schtasks", "/Delete"], calls[3][:2])
+        # U157 amendment: the old `" ".join(create)` check passed only because the unquoted /TR held the words.
+        self.assertIn("/XML", calls[0])
+        self.assertIn("rsi watch", installed["wrapper_text"])
 
 
 if __name__ == "__main__":
