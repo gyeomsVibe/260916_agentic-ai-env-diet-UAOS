@@ -112,6 +112,14 @@ class MergeRouteTests(unittest.TestCase):
         runner = FakeRunner([_view(branch="codex/u1-x"), _view(state="MERGED", branch="codex/u1-x")])
         self.assertEqual("MERGED", self._merge(runner)["state"])
 
+    def test_a_real_mailbox_letter_keeps_actor_and_message_under_payload(self):
+        # PR #128 real use: the u23-mailbox-v1 inbox letter relay_68c5cf38 was REFUSED because the gate read top level
+        letter = {"schema": "u23-mailbox-v1", "message_id": VERDICT,
+                  "payload": {"actor": "antigravity", "message": f"[agy-auto] re relay_x: PASS for head {HEAD}"}}
+        (self.root / ".coord" / "mailbox" / "inbox" / f"{VERDICT}.json").write_text(json.dumps(letter), encoding="utf-8")
+        runner = FakeRunner([_view(), _view(state="MERGED")])
+        self.assertEqual("MERGED", self._merge(runner)["state"])
+
     def test_antigravity_merges_first_with_match_head_and_worker_env(self):
         runner = FakeRunner([_view(), _view(state="MERGED")])
         row = self._merge(runner)

@@ -77,6 +77,8 @@ def read_verdict(project: Path, verdict: str) -> dict[str, Any]:
                 letter = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            if isinstance(letter, dict) and isinstance(letter.get("payload"), dict):
+                letter = letter["payload"]  # u23-mailbox-v1 keeps actor and message under payload (PR #128 real use)
             if isinstance(letter, dict) and "message" in letter:
                 return letter
     raise MergeRefused(f"verdict letter {verdict} not found")
