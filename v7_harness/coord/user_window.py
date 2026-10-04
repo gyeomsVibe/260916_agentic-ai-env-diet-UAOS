@@ -44,9 +44,13 @@ LOCK_WAIT_S = 10.0  # a hook must not hang a session; 10 s is far beyond 8 paral
 def is_declaration(text) -> bool:
     if not is_human_prompt(text) or "대화창구" not in text or TITLE_PREFIX in text:
         return False  # a "[사용자 대화창구-…]" mention refers to an existing window, it does not open one
-    if any(word in text.lower() for word in _REPAIR) or not _DECLARE_RE.search(text):
-        return False
-    return any(word in text for word in _DESIGNATION)
+    # U159: one prompt can declare the window and then list requirements that name errors (Codex relay_89ccebf3);
+    # a declaration is one sentence, so a repair word only rejects the sentence it is in.
+    for sentence in re.split(r"[\n.!?。]+", text):
+        if (_DECLARE_RE.search(sentence) and any(word in sentence for word in _DESIGNATION)
+                and not any(word in sentence.lower() for word in _REPAIR)):
+            return True
+    return False
 
 
 def _presence(project: Path) -> Path:
