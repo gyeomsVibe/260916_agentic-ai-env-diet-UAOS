@@ -102,7 +102,7 @@ class _Lock:
             try:
                 os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
                 return self
-            except FileExistsError:
+            except (FileExistsError, PermissionError):
                 if time.monotonic() > deadline:
                     raise TimeoutError(f"lock busy: {self.path}")
                 time.sleep(LOCK_RETRY_S)
