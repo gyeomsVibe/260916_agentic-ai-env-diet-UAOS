@@ -1609,7 +1609,9 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 except Exception:  # noqa: BLE001 - a hook never fails the session
                     pass
             window_line = ""
-            if args.tool:
+            # U154: only the per-prompt hook global_install writes (`--delta`, all 3 tools) runs U150. Claude's project
+            # hook has no --delta and got byte-identical stdin, so it recorded every prompt a second time.
+            if args.tool and args.delta:
                 # U150-C: a declared user window gets `[사용자 대화창구-YYMMDD-N]` in its own tool's UI. Claude and
                 # Codex hand the typed prompt; Antigravity's first invocation names its transcript instead.
                 try:
