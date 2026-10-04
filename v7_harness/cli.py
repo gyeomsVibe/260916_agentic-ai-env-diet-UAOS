@@ -1571,11 +1571,17 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             print(json.dumps({"injectSteps": [{"ephemeralMessage": line}]}, ensure_ascii=False) if line else "{}")
 
     if getattr(args, "desk_thread", None) is not None:
-        from .coord.deliver import agy_desktop_conversation, register_user_desk
+        from .coord import desk_sync
+        from .coord.deliver import agy_desktop_conversation
 
-        # Only a conversation of the Antigravity desktop app can be the user's Antigravity desk.
-        ok = args.tool == "antigravity" and agy_desktop_conversation(args.desk_thread) \
-            and register_user_desk(Path(args.project), "antigravity", args.desk_thread, source="explicit")
+        # Only a conversation of the Antigravity desktop app can be the user's Antigravity desk. U163: the peers hear
+        # it. This explicit command alone repairs an unreadable record (U148); the bytes are kept as `.corrupt`.
+        try:
+            ok = args.tool == "antigravity" and agy_desktop_conversation(args.desk_thread) \
+                and desk_sync.designate(Path(args.project), "antigravity", args.desk_thread, source="explicit",
+                                        repair=True)
+        except (OSError, ValueError):
+            ok = False
         print(json.dumps({"ok": bool(ok), "tool": args.tool, "desk_thread": args.desk_thread}))
         return 0 if ok else 2
     if getattr(args, "from_hook", False):
@@ -1603,18 +1609,17 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 _emit({"ok": True, "skipped": "NOT_A_UAOS_PROJECT"})
                 return 0
             if args.tool:
-                # U147-D: a human-typed prompt designates this window as the user's desk for letters. It runs before
-                # mark(dispatch=True) so letters queued for the old desk go to the window the user just typed in
-                # (Codex relay_48fb8d38).
+                # U147-D: the user's desk is set before mark(dispatch=True), so letters queued for the old desk go to the
+                # new one (Codex relay_48fb8d38). U163: only a fresh explicit declaration designates (relay_69611232);
+                # the peers see the change in their own desk delta.
                 try:
-                    from .coord.deliver import agy_desktop_conversation, is_human_prompt, register_user_desk
+                    from .coord import desk_sync
+                    from .coord.deliver import agy_desktop_conversation
 
                     event = json.loads(stdin_text) if stdin_text.strip() else {}
-                    if isinstance(event, dict) and event.get("hook_event_name") == "UserPromptSubmit" \
-                            and is_human_prompt(event.get("prompt")):
-                        register_user_desk(project, args.tool, hook_session(stdin_text) or "",
-                                           source="UserPromptSubmit")
-                    elif args.tool == "antigravity" and isinstance(event, dict) \
+                    if isinstance(event, dict):
+                        desk_sync.on_hook(project, args.tool, event, hook_session(stdin_text) or "")
+                    if args.tool == "antigravity" and isinstance(event, dict) \
                             and event.get("invocationNum", 0) == 0 \
                             and agy_desktop_conversation(event.get("conversationId")):
                         # U148: Antigravity has no UserPromptSubmit, and nothing in its PreInvocation payload proves

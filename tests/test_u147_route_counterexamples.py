@@ -150,7 +150,7 @@ class DesignatedUserDeskTest(UserWindowTest):
 
         prompt("[UAOS relay id=r] work", BACKGROUND)
         self.assertEqual(deliver_module.read_user_desk(self.project, "codex"), "")
-        prompt("윤겸스가 직접 쓴 지시", USER)
+        prompt("여기는 사용자 대화창구이다", USER)
         self.assertEqual(deliver_module.read_user_desk(self.project, "codex"), USER)
         prompt("[DATA] from=sentinel", BACKGROUND)
         self.assertEqual(deliver_module.read_user_desk(self.project, "codex"), USER)
@@ -198,7 +198,7 @@ class DesignatedUserDeskTest(UserWindowTest):
         result, runner = self._send()
         self.assertEqual(result.reason, "QUEUED_UNTIL_ACTIVE")
         self.assertEqual(runner.threads(), [])
-        event = json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": USER, "prompt": "윤겸스 새 창 지시",
+        event = json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": USER, "prompt": "여기는 사용자 대화창구이다",
                             "cwd": str(self.project)})
         hook = _Runner()
         real_dispatch = presence._dispatch_queued
