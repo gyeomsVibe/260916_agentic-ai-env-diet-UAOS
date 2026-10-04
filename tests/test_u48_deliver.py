@@ -249,7 +249,9 @@ class TestDurableDelivery(unittest.TestCase):
 
 
 def _guard_for(project: Path, message: str, actor: str = "codex") -> Path:
-    digest = hashlib.sha256((actor + "\0" + message).encode("utf-8")).hexdigest()
+    # Explicit Claude destination uses the versioned, unambiguous relay identity.
+    digest = hashlib.sha256(json.dumps(["uaos-relay-v2", actor, message, "", "", "claude"],
+                                       separators=(",", ":")).encode("utf-8")).hexdigest()
     guard = project / ".coord" / "mailbox" / "delivery" / "guards" / f"relay_{digest[:32]}.lock"
     guard.parent.mkdir(parents=True, exist_ok=True)
     guard.write_text("{}", encoding="utf-8")

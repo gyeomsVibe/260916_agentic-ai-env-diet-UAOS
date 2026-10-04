@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
-import tempfile
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -348,9 +348,11 @@ def apply_promotion(
         staging_copies.append((stg_path, src_path, safe_rel))
 
     # 5. Prepare every payload and backup on the source volume before mutating source.
-    transaction_root = Path(
-        tempfile.mkdtemp(prefix=f".{canonical_source.name}.promotion-", dir=canonical_source.parent)
-    )
+    # U145: not tempfile.mkdtemp. On Python 3.13+ Windows its 0o700 DACL is private and protected, and os.replace
+    # carried it into source, so sandboxed readers lost access. A default-mode mkdir inherits the parent's ACEs;
+    # uuid4 keeps the name unique and the same parent keeps os.replace on one volume.
+    transaction_root = canonical_source.parent / f".{canonical_source.name}.promotion-{uuid.uuid4().hex}"
+    transaction_root.mkdir()
     payload_root = transaction_root / "payload"
     backup_root = transaction_root / "backup"
     prepared: list[tuple[Path, Path, Path | None, str]] = []

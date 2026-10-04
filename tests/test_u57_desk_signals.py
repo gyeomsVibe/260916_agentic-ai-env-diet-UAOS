@@ -170,9 +170,10 @@ class TestWatch(_Project):
             self._letter("wake_me", "codex")
 
         out = io.StringIO()
+        # U141-A rev 6: an untagged letter wakes only the legacy policy; the structured default is in test_u141a.
         with patch("v7_harness.coord.watch.time.sleep", sleep), redirect_stdout(out):
             code = main(["coord", "watch", "--project", str(self.project), "--target", "claude",
-                         "--target", "codex", "--timeout", "30", "--interval", "0.01"])
+                         "--target", "codex", "--timeout", "30", "--interval", "0.01", "--policy", "legacy"])
         self.assertEqual(0, code)
         self.assertEqual("wake_me", json.loads(out.getvalue())["id"])
 
