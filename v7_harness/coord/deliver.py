@@ -1250,6 +1250,15 @@ def deliver(
         explicit = {"wake_class": wake_class, "delta": delta}  # stored fields, so the id is v3 (see _digest)
     digest = _digest(actor, message, card, window, requested_target, explicit)
     message_id = "relay_" + digest[:32]
+    if explicit.get("wake_class") or explicit.get("verdict_requested") is True or explicit.get("verdict"):
+        # U155 (C6 class): a letter that declares a wake intent with malformed fields (ACTIONABLE without delta, a
+        # NOTICE asking for a verdict) used to publish an INVALID envelope that never wakes anyone. Refuse it before
+        # any marker or publish, so the sender gets a non-OK result instead of a silent stall. Untagged, NOTICE,
+        # ACK_ONLY and verdict_requested=False letters keep today's bytes (U141-B frozen test).
+        from v7_harness.coord.watch import classify
+        cls, diag = classify(_payload(actor, message, digest, requested_target, card, window, **explicit))
+        if cls == "INVALID":
+            return DeliverResult(False, target or "mailbox_only", "INVALID_INTENT", (), diag, message_id, digest)
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
