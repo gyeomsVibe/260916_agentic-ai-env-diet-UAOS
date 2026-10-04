@@ -46,20 +46,20 @@ and every skipped slot is recorded: `uaos card claim --card {card} --session <se
 
 ## Receipt
 
-## Stage 1 - Research
-Workers: conductor web search; Ollama local_draft condenses each source to one line; Antigravity audits the source list
-Output: .work/cards/{card}_research.md (primary sources)
+## Stage 1 - Research (Web Deep Research)
+Workers: conductor web search (mandatory primary sources: official docs / GitHub URL); Ollama local_draft; Antigravity source audit
+Output: .work/cards/{card}_research.md (primary sources & observed facts)
 
-## Stage 2 - MIA
-Workers: conductor frame/review/decision; Ollama local_read_map before any file over ~300 lines; Antigravity design audit
+## Stage 2 - MIA (11-Stage Canonical Frame)
+Workers: conductor 11-stage flow (기획-검증-큰계획-검증-세부계획-검증-구현계획-검증); Ollama local_read_map; Antigravity design audit
 Output: .work/cards/{card}_frame.md
 
-## Stage 3 - Execute
+## Stage 3 - Execute (Implementation)
 Workers: Ollama (pilot run, worker: local) first; Antigravity for multi-file or Ollama-failed work; worker: apply only per U98-D
 Output: pilot runs {card}-L<n>
 
-## Stage 4 - Verify
-Workers: fixed acceptance + full suite; Antigravity review (pilot review --reviewer agy); Ollama local_draft for the commit message
+## Stage 4 - Verify (Debugging & Final Verification)
+Workers: fixed acceptance + full suite + debugging / vaccine test; Antigravity review (pilot review --reviewer agy); Ollama local_draft
 Gate: uaos card audit --card {card} exits 0 before the PR
 
 ## Contract (measurable)
