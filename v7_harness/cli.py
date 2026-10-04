@@ -795,6 +795,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_deliver.add_argument("--thread", default="")
     # U115: a card id routes the letter into that card's window (`.coord/windows/<card>.json`, U114).
     p_coord_deliver.add_argument("--card", default="")
+    # U141-A: structured wake fields. Only these decide a paid wake; the message text is never read for it.
+    p_coord_deliver.add_argument("--wake-class", default=None, choices=["ACTIONABLE", "NOTICE"])
+    p_coord_deliver.add_argument("--verdict-requested", action="store_true", default=None)
+    p_coord_deliver.add_argument("--verdict", default=None,
+                                 choices=["PASS", "REVISE", "FAIL", "APPROVE", "PIVOT", "REWORK"])
+    p_coord_deliver.add_argument("--delta", default=None, help="U141-A: what changed; an ACTIONABLE letter needs one")
     p_coord_deliver.set_defaults(func=cmd_coord_deliver)
 
     p_coord_sentinel = p_coord_subs.add_parser("sentinel")
@@ -837,6 +843,9 @@ def build_parser() -> argparse.ArgumentParser:
     # (U47-A1b) already existed in presence.mark, only the flag was missing.
     p_coord_presence.add_argument("--lease", action="store_true", default=False,
                                   help="Record a capability lease that ordinary heartbeats cannot overwrite until --ttl")
+    # U148: a hook never moves an OK Antigravity desk (Codex review); this explicit registration does.
+    p_coord_presence.add_argument("--desk-thread", default=None,
+                                  help="U148: record this Antigravity desktop conversation id as the user's desk")
     p_coord_presence.set_defaults(func=cmd_coord_presence)
 
     p_coord_watch = p_coord_subs.add_parser("watch", help="Block until a new mailbox letter for a target arrives")
@@ -846,6 +855,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_watch.add_argument("--interval", type=float, default=30.0, help="Seconds between inbox scans (default: 30)")
     p_coord_watch.add_argument("--wakes-session", action="store_true",
                                help="U117: this watch runs as a background task whose exit wakes its session")
+    # U141-A: structured (default) wakes only on an ACTIONABLE letter, once per letter, one watcher per target.
+    p_coord_watch.add_argument("--policy", default="structured", choices=["structured", "legacy"])
     p_coord_watch.set_defaults(func=cmd_coord_watch)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
@@ -1273,7 +1284,10 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     from .coord.deliver import deliver
 
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
-                     target=args.target, thread=args.thread, card=args.card)
+                     target=args.target, thread=args.thread, card=args.card,
+                     wake_class=getattr(args, "wake_class", None),
+                     verdict_requested=getattr(args, "verdict_requested", None),
+                     verdict=getattr(args, "verdict", None), delta=getattr(args, "delta", None))
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
     # U134-C: QUEUED_UNTIL_ACTIVE waits for the target's next ACTIVE turn; also not a failure.
@@ -1508,14 +1522,27 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
 
     say = getattr(args, "say", "json")
 
+    shown = {"user": "", "event": ""}  # U147: the in-app line for 윤겸스 and the hook event that carries it
+
     def _emit(data: dict[str, Any], line: str = "") -> None:
+        user = shown["user"]
         if getattr(args, "post_tool", False):
             # U105: plain stdout on PostToolUse never reaches the model; only this JSON does
+            out: dict[str, Any] = {"systemMessage": user} if user else {}
             if line:
-                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}},
-                                 ensure_ascii=False))
+                out["hookSpecificOutput"] = {"hookEventName": "PostToolUse", "additionalContext": line}
+            if out:
+                print(json.dumps(out, ensure_ascii=False))
             return
-        if say == "json":
+        if user and say in ("brief", "p1", "none"):
+            # U147: Claude Code and Codex show `systemMessage` to the user, not the model (0 tokens); the model's
+            # line moves into additionalContext, which these hooks read like plain stdout.
+            out = {"systemMessage": user}
+            if line:
+                out["hookSpecificOutput"] = {"hookEventName": shown["event"] or "UserPromptSubmit",
+                                             "additionalContext": line}
+            print(json.dumps(out, ensure_ascii=False))
+        elif say == "json":
             print(json.dumps(data, ensure_ascii=False))
         elif say in ("brief", "p1", "none") and line:
             print(line)
@@ -1525,6 +1552,14 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             # Antigravity reads one JSON object on stdout; a skip, an error or an unchanged line prints {}.
             print(json.dumps({"injectSteps": [{"ephemeralMessage": line}]}, ensure_ascii=False) if line else "{}")
 
+    if getattr(args, "desk_thread", None) is not None:
+        from .coord.deliver import agy_desktop_conversation, register_user_desk
+
+        # Only a conversation of the Antigravity desktop app can be the user's Antigravity desk.
+        ok = args.tool == "antigravity" and agy_desktop_conversation(args.desk_thread) \
+            and register_user_desk(Path(args.project), "antigravity", args.desk_thread, source="explicit")
+        print(json.dumps({"ok": bool(ok), "tool": args.tool, "desk_thread": args.desk_thread}))
+        return 0 if ok else 2
     if getattr(args, "from_hook", False):
         from .coord.hook_context import (
             agy_line,
@@ -1549,6 +1584,30 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             if project is None:
                 _emit({"ok": True, "skipped": "NOT_A_UAOS_PROJECT"})
                 return 0
+            if args.tool:
+                # U147-D: a human-typed prompt designates this window as the user's desk for letters. It runs before
+                # mark(dispatch=True) so letters queued for the old desk go to the window the user just typed in
+                # (Codex relay_48fb8d38).
+                try:
+                    from .coord.deliver import agy_desktop_conversation, is_human_prompt, register_user_desk
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    if isinstance(event, dict) and event.get("hook_event_name") == "UserPromptSubmit" \
+                            and is_human_prompt(event.get("prompt")):
+                        register_user_desk(project, args.tool, hook_session(stdin_text) or "",
+                                           source="UserPromptSubmit")
+                    elif args.tool == "antigravity" and isinstance(event, dict) \
+                            and event.get("invocationNum", 0) == 0 \
+                            and agy_desktop_conversation(event.get("conversationId")):
+                        # U148: Antigravity has no UserPromptSubmit, and nothing in its PreInvocation payload proves
+                        # a human turn (Codex review: subagents, restarts and continuations look the same), so the
+                        # hook never writes the desk; coord presence --desk-thread does (U148-C2). The key names
+                        # (never values) are the evidence a future human-origin field would need.
+                        keys = project / ".coord" / "presence" / "agy_hook_keys.json"
+                        keys.parent.mkdir(parents=True, exist_ok=True)
+                        keys.write_text(json.dumps(sorted(event)), encoding="utf-8")
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    pass
             if args.tool and args.state:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
                 # U134: a turn start clears a stale LIMITED/ABSENT lease; an ACTIVE beat sends queued letters.
@@ -1567,15 +1626,32 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 line = ""  # U46-P1: an unchanged P1 set is ACK_ONLY; it was repeated on every prompt
             if say == "none":
                 line = ""  # `none` prints nothing of its own; only a U103 desk delta may speak
+            ack = None
             if getattr(args, "delta", False) and args.tool:
-                from .coord.desk_delta import delta_text
+                from .coord.desk_delta import prepare_delta
 
                 event = json.loads(stdin_text) if stdin_text.strip() else {}
                 event = event if isinstance(event, dict) else {}
                 # U105: removed first-call limit (invocationNum 0) so a letter arriving mid-turn is heard at next call
                 session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
-                line = "\n".join(part for part in (line, delta_text(project, args.tool, session)) if part)
+                # U141-A: the cursor and the wake receipts advance only after the output below was written.
+                text, ack = prepare_delta(project, args.tool, session)
+                line = "\n".join(part for part in (line, text) if part)
+                if say != "agy":  # Antigravity's user-visible hook field is UNKNOWN; its line stays model-facing
+                    from .coord.board import letters_in, line_is_new, status_line
+
+                    try:  # the in-app line must never cost the model its desk delta
+                        user = status_line(project, args.tool, letters_in(text))
+                        if line_is_new(project, args.tool, user):
+                            shown["user"], shown["event"] = user, str(event.get("hook_event_name") or "")
+                    except Exception:  # noqa: BLE001
+                        pass
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
+            if ack is not None:
+                try:
+                    ack()
+                except Exception:  # noqa: BLE001 - a failed ack shows the same letters again next time; never a crash
+                    pass
         except Exception as exc:  # noqa: BLE001
             _emit({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]})
         return 0
@@ -1602,7 +1678,11 @@ def cmd_coord_watch(args: argparse.Namespace) -> int:
     from .coord.watch import watch
 
     found = watch(Path(args.project), tuple(args.target), timeout_s=args.timeout, interval_s=args.interval,
-                  wakes_session=args.wakes_session)
+                  wakes_session=args.wakes_session, policy=getattr(args, "policy", "structured"))
+    if found is not None and found.get("state") == "ALREADY_WATCHING":
+        # U141-A: one watcher per target; a second one exits instead of waking the session a second time.
+        print(json.dumps({"ok": False, "reason": "ALREADY_WATCHING", **found}, ensure_ascii=False))
+        return 4
     if found is None:
         print(json.dumps({"ok": False, "reason": "TIMEOUT", "targets": args.target}, ensure_ascii=False))
         return 3
