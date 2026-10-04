@@ -8,6 +8,7 @@ Automates the cycle:
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -462,18 +463,240 @@ def _default_pid_alive(pid: Optional[int]) -> bool:
         return False
 
 
-def _try_acquire_lock(lock_file: Path, payload: dict[str, Any]) -> bool:
-    """Atomic exclusive lock creation: only one caller (process or thread) ever wins the create."""
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
+_STILL_ACTIVE = 259  # GetExitCodeProcess value while a Windows process runs
+
+
+def _process_identity(pid: Any) -> tuple[str, Optional[int]]:
+    """U157-L: ("ABSENT", None), ("PRESENT", creation time) or ("UNKNOWN", None) for one PID.
+
+    The creation time comes from the OS (GetProcessTimes FILETIME on Windows, field 22 of /proc/<pid>/stat on
+    Linux), so PID plus creation time names one process even after the PID is reused.
+    """
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return "ABSENT", None
     try:
-        fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+            kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(wintypes.FILETIME),) * 4
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                # ERROR_INVALID_PARAMETER (87) means no such process; anything else (access denied) is unknown.
+                return ("ABSENT", None) if ctypes.get_last_error() == 87 else ("UNKNOWN", None)
+            try:
+                code = wintypes.DWORD()
+                if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != _STILL_ACTIVE:
+                    return "ABSENT", None
+                times = [wintypes.FILETIME() for _ in range(4)]
+                if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                    return "UNKNOWN", None
+                return "PRESENT", (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+            finally:
+                kernel32.CloseHandle(handle)
+        if Path("/proc/self/stat").is_file():
+            try:
+                text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+            except FileNotFoundError:
+                return "ABSENT", None
+            # Fields after the ")" that closes the command name start at field 3; starttime is field 22.
+            return "PRESENT", int(text.rsplit(")", 1)[1].split()[19])
+        os.kill(pid, 0)
+        return "UNKNOWN", None
+    except ProcessLookupError:
+        return "ABSENT", None
+    except (OSError, ValueError, IndexError, AttributeError):
+        return "UNKNOWN", None
+
+
+def _process_created(pid: Any) -> Optional[int]:
+    """U157-L: the OS creation time of a running process, or None when it is absent or unreadable."""
+    state, created = _process_identity(pid)
+    return created if state == "PRESENT" else None
+
+
+def _holder_state(
+    pid: int,
+    created: Any,
+    holder_alive: Optional[Callable[[int, Any], Optional[bool]]],
+    pid_alive: Optional[Callable[[Optional[int]], bool]],
+) -> tuple[Optional[bool], str]:
+    """U157-L: (alive, reason) for a lock holder; alive None means unverifiable, which counts as alive.
+
+    The old `pid_alive` keyword decides only after the OS identity check, so it cannot vouch for a reused PID.
+    """
+    if holder_alive is not None:
+        return holder_alive(pid, created), "DEAD"
+    state, actual = _process_identity(pid)
+    if state == "PRESENT" and created is not None and actual != created:
+        return False, "PID_REUSED"
+    if pid_alive is not None:
+        return bool(pid_alive(pid)), "DEAD"
+    if state == "ABSENT":
+        return False, "DEAD"
+    if state == "PRESENT" and created is not None:
+        return True, "DEAD"
+    return None, "DEAD"
+
+
+@contextlib.contextmanager
+def _takeover_guard(work_dir: Path):
+    """U157-L: an OS-held exclusive lock on byte 0 of `rsi-scheduler.lock.guard`; yields True when held.
+
+    The guard file is created once and never unlinked or rewritten. The OS drops the byte lock when the handle
+    closes, including when its holder crashes or is killed, so a dead claimant never blocks the next one.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(work_dir / "rsi-scheduler.lock.guard"), os.O_RDWR | os.O_CREAT)
+    held = False
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held = True
+        except OSError:
+            held = False
+        yield held
+    finally:
+        if held:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        os.close(fd)
+
+
+class _LockPublishUnsupported(Exception):
+    """U157-L: the file system refused the hard link that publishes a complete lock."""
+
+
+def _try_acquire_lock(lock_file: Path, payload: dict[str, Any]) -> bool:
+    """Atomic exclusive lock publish: only one caller ever wins, and the lock is complete when it appears.
+
+    U157-L: the payload goes to a temp file named by a fresh UUID only (a token holds `:`, invalid in a Windows
+    file name), then `os.link` publishes it and fails when the lock exists. Any other link error raises
+    `_LockPublishUnsupported`; there is no create-then-write fallback that could leave a partial lock.
+    """
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = lock_file.with_name(f"{lock_file.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_bytes(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    try:
+        os.link(str(tmp), str(lock_file))
     except FileExistsError:
         return False
-    try:
-        os.write(fd, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    except OSError as exc:
+        raise _LockPublishUnsupported(type(exc).__name__) from exc
     finally:
-        os.close(fd)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
     return True
+
+
+def _read_lock(lock_file: Path) -> tuple[str, dict[str, Any]]:
+    """U157-L: ("ABSENT" | "BUSY" | "MALFORMED" | "OK", payload). A malformed lock fails closed."""
+    try:
+        raw = lock_file.read_bytes()
+    except FileNotFoundError:
+        return "ABSENT", {}
+    except OSError:
+        return "BUSY", {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return "MALFORMED", {}
+    pid, started = (data.get("pid"), data.get("started_at")) if isinstance(data, dict) else (None, None)
+    if (not isinstance(pid, int) or isinstance(pid, bool)
+            or isinstance(started, bool) or not isinstance(started, (int, float))):
+        return "MALFORMED", {}
+    return "OK", data
+
+
+def _stale_reason(
+    lock: dict[str, Any], *, now: float, ttl: float, grace: float,
+    holder_alive: Optional[Callable[[int, Any], Optional[bool]]],
+    pid_alive: Optional[Callable[[Optional[int]], bool]],
+    record: Callable[[dict[str, Any]], None],
+) -> Optional[str]:
+    """U157-L: "DEAD" or "PID_REUSED" when the holder is dead past the grace period, else None.
+
+    A live holder is never reclaimed at any age: past `ttl` it only raises LOCK_OVERDUE. An unverifiable
+    holder counts as alive and raises LOCK_HOLDER_UNVERIFIABLE.
+    """
+    age = now - lock["started_at"]
+    if age < grace:
+        return None
+    alive, reason = _holder_state(lock["pid"], lock.get("created"), holder_alive, pid_alive)
+    if alive is None:
+        record({"event": "LOCK_HOLDER_UNVERIFIABLE", "pid": lock["pid"], "age_seconds": age})
+        return None
+    if alive:
+        if age >= ttl:
+            record({"event": "LOCK_OVERDUE", "pid": lock["pid"], "age_seconds": age})
+        return None
+    return reason
+
+
+def _reclaim_dead_lock(
+    lock_file: Path, payload: dict[str, Any], *, now: float, ttl: float, grace: float,
+    holder_alive: Optional[Callable[[int, Any], Optional[bool]]],
+    pid_alive: Optional[Callable[[Optional[int]], bool]],
+    record: Callable[[dict[str, Any]], None],
+) -> bool:
+    """U157-L: take the lock from a dead holder; False leaves it alone.
+
+    Steps: judge the lock; take the OS-held guard; re-read the lock under the guard and go on only if it still
+    holds the judged token and its holder is still dead; unlink it; publish our own lock. Only a guard holder
+    ever unlinks a lock it did not create, and only the exact token it rechecked, so two reclaimers can never
+    both own the lock.
+    """
+    judge = dict(now=now, ttl=ttl, grace=grace, holder_alive=holder_alive, pid_alive=pid_alive)
+    state, existing = _read_lock(lock_file)
+    if state == "ABSENT":
+        return _try_acquire_lock(lock_file, payload)
+    if state == "MALFORMED":
+        record({"event": "LOCK_MALFORMED"})
+        return False
+    if state != "OK" or _stale_reason(existing, record=record, **judge) is None:
+        return False
+    with _takeover_guard(lock_file.parent) as held:
+        if not held:
+            record({"event": "LOCK_TAKEOVER_BUSY", "pid": existing["pid"]})
+            return False
+        state, current = _read_lock(lock_file)
+        if state != "OK" or current.get("token") != existing.get("token"):
+            return False
+        reason = _stale_reason(current, record=lambda _event: None, **judge)
+        if reason is None:
+            return False
+        try:
+            lock_file.unlink()
+        except OSError:
+            return False
+        record({"event": "STALE_LOCK_RECOVERED", "pid": current["pid"], "reason": reason,
+                "age_seconds": now - current["started_at"], "stale_token": current.get("token")})
+        return _try_acquire_lock(lock_file, payload)
 
 
 def run_scheduler_cycle(
@@ -486,46 +709,43 @@ def run_scheduler_cycle(
     sleeper: Optional[Callable[[float], None]] = None,
     pid_alive: Optional[Callable[[Optional[int]], bool]] = None,
     record: Optional[Callable[[dict[str, Any]], None]] = None,
+    holder_alive: Optional[Callable[[int, Any], Optional[bool]]] = None,
 ) -> dict[str, Any]:
     """Run one bounded deterministic change-detection cycle.
 
-    The scheduler lock is acquired with exclusive creation (never a "file exists" check-then-write
-    race). A live, non-expired lock returns LOCKED. A lock whose owner PID is dead, or whose age is
-    at or past `lock_ttl_seconds`, is recovered (removed, `STALE_LOCK_RECOVERED` is recorded, and
-    acquisition is retried once). Only the lock this invocation created is ever removed.
+    The scheduler lock is published atomically and complete (never a "file exists" check-then-write
+    race). U157-L: the lock names its holder by PID plus OS creation time. A live holder keeps its lock at
+    any age (past `lock_ttl_seconds` it raises LOCK_OVERDUE); an unverifiable or malformed lock fails closed.
+    Only a dead holder past `stale_lock_grace_seconds` is reclaimed, under the OS-held takeover guard. Before
+    each effect the cycle re-checks that it still owns the lock (LOCK_LOST, LOCKED_OUT). Only the lock this
+    invocation created is ever released.
     """
     sleeper = sleeper or (lambda _seconds: None)
-    pid_alive = pid_alive or _default_pid_alive
     record = record or (lambda _event: None)
 
     lock_file = root / ".work" / "rsi-scheduler.lock"
     lock_ttl_seconds = config.get("lock_ttl_seconds", 3600)
     dead_pid_grace_seconds = config.get("stale_lock_grace_seconds", 30)
     token = f"{os.getpid()}:{uuid.uuid4().hex}"
-    payload = {"pid": os.getpid(), "started_at": now, "token": token}
+    payload = {"pid": os.getpid(), "created": _process_created(os.getpid()), "started_at": now, "token": token}
 
-    acquired = _try_acquire_lock(lock_file, payload)
+    try:
+        acquired = _try_acquire_lock(lock_file, payload) or _reclaim_dead_lock(
+            lock_file, payload, now=now, ttl=lock_ttl_seconds, grace=dead_pid_grace_seconds,
+            holder_alive=holder_alive, pid_alive=pid_alive, record=record,
+        )
+    except _LockPublishUnsupported as exc:
+        record({"event": "LOCK_PUBLISH_UNSUPPORTED", "error": str(exc)})
+        return {"status": "LOCKED"}
     if not acquired:
-        try:
-            existing = json.loads(lock_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError):
-            existing = {}
-        existing_pid = existing.get("pid")
-        existing_started = existing.get("started_at", now)
-        age = now - existing_started
-        is_stale = age >= lock_ttl_seconds
-        is_dead = age >= dead_pid_grace_seconds and not pid_alive(existing_pid)
-        if not (is_stale or is_dead):
-            return {"status": "LOCKED"}
+        return {"status": "LOCKED"}
 
-        record({"event": "STALE_LOCK_RECOVERED", "pid": existing_pid, "age_seconds": age})
-        try:
-            lock_file.unlink()
-        except OSError:
-            pass
-        acquired = _try_acquire_lock(lock_file, payload)
-        if not acquired:
-            return {"status": "LOCKED"}
+    def still_owner() -> bool:
+        state, current = _read_lock(lock_file)
+        if state == "OK" and current.get("token") == token:
+            return True
+        record({"event": "LOCK_LOST", "token": token})
+        return False
 
     try:
         timeout = config.get("timeout_seconds", 15)
@@ -575,7 +795,9 @@ def run_scheduler_cycle(
             if prev_obs is not None and obs.get("content_sha256") != prev_obs.get("content_sha256"):
                 deltas.append(obs)
 
-        # Update saved state
+        # Update saved state, only while this cycle still owns the lock (U157-L fencing).
+        if not still_owner():
+            return {"status": "LOCKED_OUT"}
         state_file.write_text(json.dumps(observations, ensure_ascii=False, indent=2), encoding="utf-8")
 
         if deltas:
@@ -583,6 +805,8 @@ def run_scheduler_cycle(
             deduped: dict[str, dict[str, Any]] = {d.get("url"): d for d in deltas}
             bundle = {"deltas": list(deduped.values()), "count": len(deduped)}
             if trigger is not None:
+                if not still_owner():
+                    return {"status": "LOCKED_OUT"}
                 trigger(bundle)
             return {"status": "ACTIONABLE_DELTA", "observations": observations, "deltas": bundle["deltas"]}
         return {"status": "ACK_ONLY", "observations": observations}
