@@ -33,6 +33,14 @@ jobs:
           python-version: "3.14"  # the version the local runs use (python --version 3.14.6)
       - name: Install pytest
         run: python -m pip install --disable-pip-version-check pytest
+      # tests/test_u48_deliver.py mocks the runner but first resolves the codex and claude CLIs on PATH
+      # (CLI_NOT_FOUND on a bare runner, run 37275802644); inert shims keep the tests unchanged.
+      - name: CLI shims
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/shims"
+          for tool in codex claude; do printf '@echo off\r\nexit /b 0\r\n' > "$RUNNER_TEMP/shims/$tool.cmd"; done
+          echo "$RUNNER_TEMP/shims" >> "$GITHUB_PATH"
       - name: Full suite
         shell: bash
         run: python -m pytest -q -p no:cacheprovider 2>&1 | tee pytest.log; exit ${PIPESTATUS[0]}
