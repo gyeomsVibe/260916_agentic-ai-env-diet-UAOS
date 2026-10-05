@@ -1273,7 +1273,10 @@ def deliver(
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
     box.publish(message_id, _payload(actor, message, digest, requested_target, card, window, wake_class=wake_class,
                                      verdict_requested=verdict_requested, verdict=verdict, delta=delta))
-    if explicit.get("wake_class") == "ACTIONABLE" or (explicit.get("wake_class") is None and _requires_wake(message)):
+    # U169: one wake rule for the sound and the Antigravity auto-answer: an explicit class wins, else the text decides.
+    wants_turn = explicit.get("wake_class") == "ACTIONABLE" or (explicit.get("wake_class") is None
+                                                                and _requires_wake(message))
+    if wants_turn:
         # U143: a letter that asks for a turn plays one real sound (coalesced in ring.py); a sound never fails a letter.
         from v7_harness.coord import ring as _ring
         try:
@@ -1284,7 +1287,7 @@ def deliver(
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
         unread = ("UNREAD until a user turn in Antigravity; for a verdict run `pilot review --reviewer agy` "
-                  "(headless, no user)") if _requires_wake(message) else ""
+                  "(headless, no user)") if wants_turn else ""
         if unread and actor in ("claude", "codex") and os.environ.get("UAOS_AGY_AUTO", "1") != "0":
             # U120: a headless one-turn answer (U119 live: 27,989 tokens) is mailed back to the sender; a failure,
             # a loop tag or the daily cap keeps the U118 UNREAD route. UAOS_AGY_AUTO=0 opts out.
