@@ -135,10 +135,13 @@ def _record(project: Path, row: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
 
 
-def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = subprocess.run,
+def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None,
           now: float | None = None, desk: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Merge `pr` at `head` through Antigravity, then Codex. Returns {"state": MERGED | REFUSED | FAILED_ALL_ROUTES}."""
     project = Path(project)
+    if runner is None:
+        from ..judge import run_resolved  # U175: codex is an npm shim (codex.cmd); a bare name never starts on Windows
+        runner = run_resolved
     moment = time.time() if now is None else now
     if desk is None:
         from .presence import read_all
