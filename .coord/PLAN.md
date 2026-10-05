@@ -367,11 +367,11 @@ Claude 대행 중 반영된 것. 만든 이가 유일한 검증자가 되지 않
   - 구현: `uaos_everywhere/hooks/codex_delta.py`에 세션별 고유 커서 분리(`cursor_for`), 상위 경로 탈출 방지 정규화, `message` 필드 본문 표시, stdin JSON 페이로드 연동 구현.
   - 검증: `tests.test_u99m_mailbox_delta` 4/4 PASS GREEN 통과, 전체 1,287개 단위/회귀 테스트 전건 통과(OK, skipped=6, exit 0). 커밋 5840eab(`claude/u99-mailbox`), Claude 우편함에 완료 보고 인계 완료(`relay_7be9efc98cdbc034d57e237aa346dddd`).
 - 2026-10-05 [P5-BUDGET-RSI-CLOSEOUT] 마스터 스케줄 마감 검수 (Claude 부지휘 대행, Codex 대화 세션 부재·headless만 가능, Antigravity 한도 소진):
-  - 마스터 스케줄: P1-COMMS·P2-UI-PRIORITY·P3-MIA-STANDARDIZATION·P4-TIKI-TAKA-PIPELINE 모두 DONE. 근거 PR #130·#131·#133·#134·#135(diet), 전역 규칙 정본 PR #18(260718, 병합 2ca6921). 정본 v7.5.5 Apply 뒤 `sync-global-rules.ps1 -Mode Check` exit 0, 이 PC 세 규칙 파일 모두 티키타카 줄 1회 포함.
+  - 마스터 스케줄: P1-COMMS·P2-UI-PRIORITY·P3-MIA-STANDARDIZATION·P4-TIKI-TAKA-PIPELINE 모두 DONE. 근거 PR #130·#131·#133·#134·#135(diet), 전역 규칙 정본 PR #18(260718, 병합 2ca6921). 정본 v7.5.5 Apply 뒤 `sync-global-rules.ps1 -Mode Check` exit 0, 이 PC 세 규칙 파일 모두 티키타카 줄 1회 포함. 정본 근거 원본: 260718 저장소 `git log 2ca6921`, `.work/v755_verdicts.md`·`.work/v755_review3_out.md`(VERDICT: PASS, head b68f5b7)·`.work/v755_check.log`, PR #18 댓글 5987101744.
   - 독립 판정이 잡은 결함: 정본 v7.5.4가 상한을 맞추려 검사 대상 문구를 깎아 정본 검사 7개가 실패해 있었다. Codex headless 판정(FAIL→수정→PASS, 같은 head b68f5b7)으로 되살렸고 정본 검사 21개 모두 exit 0이다.
   - RSI 장부(`uaos rsi report`, 표본 533, 창 10): agy 통과 0.1·막힘 0.9(반복 원인 EXTERNAL_WRITE·SOURCE_DIVERGED, 입력 중앙값 647,601토큰), apply 통과 0.8, ollama 통과 0.1·막힘 0.5(반복 CODE·PROMPT_TOO_LARGE·PROVIDER_ERROR), claude 부분 창(8건). 채택 결정 0건, 시험 0건. 로컬 Ollama 실사용 263회·입력 716,859토큰·벽시계 20,915초(유료 토큰 0, 총비용 0은 아님).
   - 예산: 계정 한도 절감은 사용 전후 스냅숏이 없어 계속 UNMEASURED(docs/27). 2026-10-05 02:34Z Antigravity headless가 "Individual quota reached, resets in 164h58m"로 멈췄다(coord log 20261005T1134-claude-0001). 병합은 2순위 Codex로 넘겼다.
-  - 막힘: U169(편지 자동 응답이 명시 깨움 등급을 따르게 하는 5줄)는 카드 감사·전체 1,990 통과지만, 커밋 관문 AUDIT_FIRST가 Antigravity 답장만 받아 약 7일 대기한다. Codex 결정(`.work/u169/codex_gate_decision.md`): 손으로 쓴 agy_auto 83~85행은 감사 증거가 아니다. 관문은 작성자·검토자가 고칠 수 없는 주체의 서명 영수증을 요구해야 한다. 이 PC에는 그런 보호 경로가 없어 관문 변경(U174-AUDIT-PROOF)도 Antigravity 복구 뒤에 한다.
+  - 막힘: U169(편지 자동 응답이 명시 깨움 등급을 따르게 하는 5줄)는 카드 감사·전체 1,990 통과·6 skipped(작성자 보고값, 독립 재실행 없음)지만, 커밋 관문 AUDIT_FIRST가 Antigravity 답장만 받아 약 7일 대기한다. Codex 결정(`.work/u169/codex_gate_decision.md`): 손으로 쓴 agy_auto 83~85행은 감사 증거가 아니다. 관문은 작성자·검토자가 고칠 수 없는 주체의 서명 영수증을 요구해야 한다. 이 PC에는 그런 보호 경로가 없어 관문 변경(U174-AUDIT-PROOF)도 Antigravity 복구 뒤에 한다.
   - Codex 복귀 재검토 목록에 추가: U146B·U143·U168·U170·U172·U173(정본 v7.5.5)·P1-COMMS 종결·U166 자기 경로 지정·JUDGE-RELPATH(상대 경로 판정 승격 실패)·U150-B 오탐(헤드리스 codex 프롬프트를 사용자 오류 보고로 기록, coord log 20261005T1144-claude-0001)·`coord merge`가 `.coord` 없는 저장소를 병합하지 못함(coord log 20261005T1134-claude-0002).
 
 
