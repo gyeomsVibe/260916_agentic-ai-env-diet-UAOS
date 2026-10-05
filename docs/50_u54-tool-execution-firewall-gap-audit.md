@@ -35,7 +35,7 @@
 | `v7_harness/coord/deliver.py:129` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:263` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:38` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/merge_route.py:50` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/merge_route.py:61` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/next_card.py:31` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/notify.py:219` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/presence.py:467` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
@@ -85,7 +85,7 @@
 - `v7_harness/coord/deliver.py:129` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/deliver.py:263` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/desk_delta.py:38` DIRECT `subprocess.run`
-- `v7_harness/coord/merge_route.py:50` INDIRECT `runner -> subprocess.run`
+- `v7_harness/coord/merge_route.py:61` INDIRECT `runner -> subprocess.run`
 - `v7_harness/coord/next_card.py:31` DIRECT `subprocess.run`
 - `v7_harness/coord/notify.py:219` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/presence.py:467` DIRECT `subprocess.Popen`

@@ -40,6 +40,17 @@ AUTHOR_PREFIX = {"claude": "claude", "codex": "codex", "antigravity": "antigravi
 TOOL_TIMEOUT_S = 300
 PR_FIELDS = "state,mergeable,headRefOid,headRefName,url"
 LEDGER = Path(".coord") / "merges.jsonl"
+# U174-B: the judge letter is same-account data (Codex decision D1, .work/u169/codex_gate_decision.md); a receipt that
+# GitHub's OIDC identity signed for the CI workflow is not (https://docs.github.com/en/actions/concepts/security/
+# artifact-attestations). U174-A (PR #137) made uaos-tests.yml write and attest receipt.json on every PR head.
+CI_WORKFLOW = ".github/workflows/uaos-tests.yml"
+CI_ARTIFACT = "uaos-ci-receipt"
+RECEIPT_DIR = Path(".work") / "ci_receipts"
+GITHUB_PR_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/\d+$")
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# Reads answer in 1-5 s; a download and a Sigstore verify fetch bundles, so they get twice the read limit.
+GH_READ_S = 60
+GH_FETCH_S = 120
 
 
 class MergeRefused(ValueError):
@@ -107,6 +118,70 @@ def gate(view: dict[str, Any], head: str, letter: dict[str, Any]) -> None:
         raise MergeRefused("verdict letter does not pass this exact head")
 
 
+def _text(raw: Any) -> str:
+    return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw or "")
+
+
+def _check_ci_inputs(pr: Any, head: Any, repo: str) -> None:
+    """Every value that reaches a gh argv below is a positive int, a 40-hex head, or owner/name."""
+    if not isinstance(pr, int) or isinstance(pr, bool) or pr <= 0:
+        raise MergeRefused("pr must be a positive integer")
+    if not isinstance(head, str) or not HEAD_RE.match(head):
+        raise MergeRefused("head must be a 40-character commit sha")
+    if not REPO_RE.match(repo):
+        raise MergeRefused(f"repo {repo!r} is not owner/name")
+
+
+def ci_attested(view: dict[str, Any], pr: int, head: str, project: Path, runner: Any) -> str:
+    """Return the CI run id whose signed receipt passed this head; NOT_CONFIGURED when the repo has no workflow."""
+    match = GITHUB_PR_RE.match(str(view.get("url", "")))
+    if not match:
+        return "NOT_CONFIGURED"  # not a github.com pull request: no Actions attestation exists for it
+    repo = match.group(1)
+    _check_ci_inputs(pr, head, repo)
+    cwd = str(project)
+    probe = runner(["gh", "api", f"repos/{repo}/contents/{CI_WORKFLOW}", "--silent"], cwd=cwd, capture_output=True,
+                   timeout=GH_READ_S)
+    if probe.returncode != 0:
+        if "HTTP 404" in _text(probe.stderr):
+            return "NOT_CONFIGURED"
+        raise MergeRefused(f"gh api exit {probe.returncode}")  # a network failure is UNKNOWN, not "no workflow"
+    diff = runner(["gh", "pr", "diff", str(pr), "--name-only"], cwd=cwd, capture_output=True, timeout=GH_READ_S)
+    if diff.returncode != 0:
+        raise MergeRefused(f"gh pr diff exit {diff.returncode}")
+    if CI_WORKFLOW in _text(diff.stdout).split():
+        # A pull_request run uses the PR's own copy of the workflow, so it cannot attest a change to itself.
+        raise MergeRefused("PR changes the CI workflow; its own run cannot attest it")
+    runs = runner(["gh", "run", "list", "-R", repo, "--workflow", Path(CI_WORKFLOW).name, "--commit", head,
+                   "--json", "databaseId,conclusion", "--limit", "20"], cwd=cwd, capture_output=True,
+                  timeout=GH_READ_S)
+    if runs.returncode != 0:
+        raise MergeRefused(f"gh run list exit {runs.returncode}")
+    listed = json.loads(_text(runs.stdout) or "[]")
+    green = [r.get("databaseId") for r in (listed if isinstance(listed, list) else [])
+             if isinstance(r, dict) and r.get("conclusion") == "success"]
+    if not green or not isinstance(green[0], int) or isinstance(green[0], bool):
+        raise MergeRefused("no green CI run for this head")
+    run_id = green[0]
+    out = Path(project) / RECEIPT_DIR / f"{pr}-{head[:12]}-{run_id}"
+    receipt = out / "receipt.json"
+    if not receipt.exists():
+        fetched = runner(["gh", "run", "download", str(run_id), "-R", repo, "-n", CI_ARTIFACT, "-D", str(out)],
+                         cwd=cwd, capture_output=True, timeout=GH_FETCH_S)
+        if fetched.returncode != 0:
+            raise MergeRefused(f"gh run download exit {fetched.returncode}")
+    # A kept file is verified again on every use: an edited receipt no longer matches its signed digest.
+    verified = runner(["gh", "attestation", "verify", str(receipt), "-R", repo, "--signer-workflow",
+                       f"{repo}/{CI_WORKFLOW}"], cwd=cwd, capture_output=True, timeout=GH_FETCH_S)
+    if verified.returncode != 0:
+        raise MergeRefused(f"CI receipt attestation did not verify (exit {verified.returncode})")
+    data = json.loads(receipt.read_text(encoding="utf-8"))
+    if (not isinstance(data, dict) or data.get("head") != head or str(data.get("pr")) != str(pr)
+            or data.get("repo") != repo or data.get("exit") != 0):
+        raise MergeRefused("CI receipt does not pass this exact head")
+    return str(run_id)
+
+
 def merge_command(pr: int, head: str) -> str:
     return f"gh pr merge {pr} --merge --match-head-commit {head}"
 
@@ -149,7 +224,9 @@ def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None
         desk = read_all(project, now=moment)
     try:
         check_args(pr, head, verdict)
-        gate(pr_view(pr, project, runner), head, read_verdict(project, verdict))
+        view = pr_view(pr, project, runner)
+        gate(view, head, read_verdict(project, verdict))
+        ci_run = ci_attested(view, pr, head, project, runner)
     except (MergeRefused, OSError, subprocess.SubprocessError, ValueError) as exc:
         row = {"ts": moment, "pr": str(pr)[:20], "head": str(head)[:40], "verdict": str(verdict)[:40],
                "state": "REFUSED", "reason": str(exc)[:200], "attempts": []}
@@ -174,7 +251,7 @@ def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None
         attempts.append(attempt)
         if after.get("state") == "MERGED" and after.get("headRefOid") == head:
             row = {"ts": moment, "pr": pr, "head": head, "verdict": verdict, "state": "MERGED", "merged_by": tool,
-                   "attempts": attempts}
+                   "ci_run": ci_run, "attempts": attempts}
             _record(project, row)
             return row
         if after.get("state") == "CLOSED":
