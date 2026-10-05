@@ -1,0 +1,57 @@
+# U174-A: an execution receipt the author cannot write. Codex decision (.work/u169/codex_gate_decision.md D1) said a
+# same-account JSON, hash or signature is not a trust boundary; a Sigstore attestation issued to this workflow by
+# GitHub's OIDC identity is (https://docs.github.com/en/actions/concepts/security/artifact-attestations).
+# Verify a receipt locally with:
+#   gh attestation verify receipt.json -R gyeomsVibe/260916_agentic-ai-env-diet-UAOS \
+#     --signer-workflow gyeomsVibe/260916_agentic-ai-env-diet-UAOS/.github/workflows/uaos-tests.yml
+# Phase A only records receipts; no gate reads them until two PRs have shown green runs (U174 plan).
+name: uaos-tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write      # Sigstore signing identity for the attestation
+  attestations: write
+
+concurrency:
+  group: uaos-tests-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # The suite is written for the Windows host the three tools run on (Windows paths, .cmd shims).
+    runs-on: windows-latest
+    timeout-minutes: 30  # local full runs take 5-6 minutes; 30 leaves room for a cold runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"  # the version the local runs use (python --version 3.14.6)
+      - name: Install pytest
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Full suite
+        shell: bash
+        run: python -m pytest -q -p no:cacheprovider 2>&1 | tee pytest.log; exit ${PIPESTATUS[0]}
+      - name: Write receipt
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR: ${{ github.event.pull_request.number || '' }}
+        run: |
+          summary="$(tail -n 1 pytest.log)"
+          printf '{"schema":"uaos-ci-receipt-v1","repo":"%s","pr":"%s","head":"%s","run_id":"%s","exit":0,"summary":"%s"}\n' \
+            "$GITHUB_REPOSITORY" "$PR" "$HEAD_SHA" "$GITHUB_RUN_ID" "$summary" > receipt.json
+          cat receipt.json
+      - uses: actions/attest@v4
+        with:
+          subject-path: receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uaos-ci-receipt
+          path: |
+            receipt.json
+            pytest.log
