@@ -207,7 +207,7 @@ def scan(project: Path, tool: str, *, now: float | None = None,
                 continue
             owners = route(wait, desk)
             entry = {"item": wait["item"], "kind": wait["kind"], "waiting_on": wait["waiting_on"],
-                     "age_s": int(age), "route": owners}
+                     "age_s": int(age), "route": owners, "author": wait["author"], "since": wait["since"]}
             if not owners:
                 result["blocked"].append(entry)
                 continue
