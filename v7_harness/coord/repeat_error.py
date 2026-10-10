@@ -20,7 +20,7 @@ import time
 import uuid
 from pathlib import Path
 
-from v7_harness.coord.deliver import is_human_prompt
+from v7_harness.coord.deliver import is_human_prompt, typed_prompt
 from v7_harness.coord.mailbox import SECRET_PATTERNS as _MAILBOX_SECRETS
 from v7_harness.coord.stream import SECRET_PATTERNS as _STREAM_SECRETS
 
@@ -42,6 +42,7 @@ LOCK_RETRY_S, LOCK_WAIT_S = 0.02, 10.0
 
 
 def is_error_report(text) -> bool:
+    text = typed_prompt(text)  # U176
     if not is_human_prompt(text) or text.lstrip().startswith(_INJECTED):
         return False
     low = text.lower()

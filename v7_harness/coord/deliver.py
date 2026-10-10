@@ -796,7 +796,19 @@ def read_user_desk(project: Path, tool: str) -> str:
     return user_desk_state(project, tool)[1]
 
 
+# U176: Claude Code puts its own `<system-reminder>…</system-reminder>` blocks in front of what 윤겸스 typed (the
+# first prompt of a desktop worktree session, 2026-10-10), and the "<" injected prefix then hid a real declaration.
+# Only whole leading blocks are dropped (tag attributes allowed, Antigravity audit relay_6c7083d0); a prompt that is
+# nothing but a reminder stays empty, so not human.
+_HARNESS_NOTE_RE = re.compile(r"\A(?:\s*<system-reminder(?:\s[^>]*)?>.*?</system-reminder>)+\s*", re.S)
+
+
+def typed_prompt(prompt: object) -> object:
+    return _HARNESS_NOTE_RE.sub("", prompt) if isinstance(prompt, str) else prompt
+
+
 def is_human_prompt(prompt: object) -> bool:
+    prompt = typed_prompt(prompt)
     return isinstance(prompt, str) and bool(prompt.strip()) and not prompt.lstrip().startswith(INJECTED_PREFIXES)
 
 
