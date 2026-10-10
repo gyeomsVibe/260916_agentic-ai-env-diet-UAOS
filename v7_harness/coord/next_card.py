@@ -94,6 +94,9 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
     project = Path(project)
     path = schedule_path(project)
     if not path.is_file():
+        if (path.parent / "PLAN.md").is_file():  # U180C: a plan without a machine schedule is unscheduled work
+            return {"state": "WAIT", "code": "SCHEDULE_MISSING", "reason": "coordinated project has no schedule",
+                    "action": "register authorized work in .coord/master_schedule.json before stopping"}
         return {"state": "DONE", "reason": "no schedule"}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
