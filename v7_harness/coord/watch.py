@@ -38,6 +38,10 @@ LIVE_MIN_S = 90.0
 # Longer than the 120 s Claude dispatch timeout plus receipt writes. A crashed dispatcher must not suppress the
 # interactive fallback forever; after this bound the marker is evidence of failure, not an active dispatch.
 PENDING_MAX_AGE_S = 300.0
+# U179: 60 s between long-wait scans. A scan takes the stall lock, reads the schedule and the queued letters and
+# writes three small state files, so it does not run on every 2 s inbox scan; 60 s bounds lateness to 3% of
+# stall.MAX_WAIT_S (1800 s). Never tokens.
+STALL_SCAN_S = 60.0
 # U141-A: an empty O_EXCL placeholder younger than this is a claim being written (the full record follows within
 # milliseconds), so it counts as EXISTS. An older empty one is a crashed claim: CORRUPT, kept, never a wake.
 PLACEHOLDER_GRACE_S = 5.0
@@ -329,6 +333,28 @@ def _release_locks(project: Path, tools: list[str], mine: dict[str, Any]) -> Non
             pass
 
 
+def _stalled_wait(project: Path, tools: tuple[str, ...], clock: Callable[[], float]) -> dict[str, Any] | None:
+    """U179: the first stalled wait one of `tools` has a part in and has not been woken for yet."""
+    from v7_harness.coord import stall
+
+    for tool in tools:
+        try:
+            result = stall.scan(project, tool, now=clock())
+        except (OSError, ValueError):
+            continue  # a locked or unreadable stall state: the next scan looks again, the watch goes on
+        for entry in result["stalled"] + result["blocked"]:
+            if tool not in (entry["author"], entry["waiting_on"], entry.get("owner")):
+                continue
+            # One receipt per wait instance: a step that waits again later has a new `since` and wakes again.
+            key = f"stall:{entry['item']}:{entry['since']}"
+            if claim_wake(project, tool, key, hashlib.sha256(key.encode("utf-8")).hexdigest(),
+                          clock=clock) == "CLAIMED":
+                return {"id": key, "reason": "STALLED_WAIT", "item": entry["item"], "kind": entry["kind"],
+                        "waiting_on": entry["waiting_on"], "age_s": entry["age_s"], "owner": entry.get("owner"),
+                        "requested_target": tool}
+    return None
+
+
 def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_TIMEOUT_S,
           interval_s: float = DEFAULT_INTERVAL_S, clock: Callable[[], float] | None = None,
           sleep: Callable[[float], None] | None = None, wakes_session: bool = False,
@@ -363,6 +389,7 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
             return {"state": "ALREADY_WATCHING", "tool": owned_by_other}
     seen = set() if structured else set(box.list_inbox())
     deadline = clock() + timeout_s
+    next_stall_scan = deadline - timeout_s  # the first scan runs at once; no extra clock read (U117 test counts them)
     try:
         while True:
             _beat(project, tools, token, interval_s, clock(), wakes_session)
@@ -403,6 +430,11 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                     if claim_wake(project, target, message_id, letter_digest(message_id, body),
                                   clock=clock) == "CLAIMED":
                         return {**found, "wake_class": cls}
+            if structured and clock() >= next_stall_scan:
+                next_stall_scan = clock() + STALL_SCAN_S
+                stalled = _stalled_wait(Path(project), tools, clock)
+                if stalled is not None:
+                    return stalled
             if clock() >= deadline:
                 return None
             sleep(interval_s)
