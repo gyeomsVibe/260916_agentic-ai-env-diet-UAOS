@@ -25,7 +25,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from v7_harness.coord.deliver import is_human_prompt
+from v7_harness.coord.deliver import is_human_prompt, typed_prompt
 
 TITLE_PREFIX = "[사용자 대화창구-"
 TITLE_RE = re.compile(r"\[사용자 대화창구-(\d{6})-(\d+)\]")
@@ -42,6 +42,7 @@ LOCK_WAIT_S = 10.0  # a hook must not hang a session; 10 s is far beyond 8 paral
 
 
 def is_declaration(text) -> bool:
+    text = typed_prompt(text)  # U176: the harness's own leading reminder is not what was typed
     if not is_human_prompt(text) or "대화창구" not in text or TITLE_PREFIX in text:
         return False  # a "[사용자 대화창구-…]" mention refers to an existing window, it does not open one
     # U159: one prompt can declare the window and then list requirements that name errors (Codex relay_89ccebf3);
