@@ -146,6 +146,12 @@ def lint(text: str, project: Path) -> ManualReport:
 
     worker = contract.get("worker", "")
     judge = contract.get("judge", "").lower()
+    if worker in ("local", "cascade"):
+        from v7_harness.adapters.ollama_worker import preflight
+
+        problem = preflight(text, project)  # U177: the author learns before a run that the model would not be called
+        if problem:
+            report.warnings.append(f"LOCAL_{problem}")
     if worker and worker not in WORKERS:
         report.errors.append(f"UNKNOWN_WORKER:{worker}")
     if judge and judge not in JUDGES:
