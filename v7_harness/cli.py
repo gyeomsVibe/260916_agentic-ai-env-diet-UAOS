@@ -1494,6 +1494,26 @@ def _sentinel_loop_owner(pid_file: Path, interval: float) -> int:
 
 
 def cmd_coord_sentinel(args: argparse.Namespace) -> int:
+    """U180S: every launcher kind holds one OS lease for the whole synchronous command."""
+    from .coord.sentinel_lease import LeaseUnavailable, lease
+    try:
+        with lease(Path(args.project)):
+            return _cmd_coord_sentinel(args)
+    except LeaseUnavailable as exc:
+        duplicate = str(exc) == "LEGACY_ALIVE"  # a live old-runtime loop: the U37 answer, never an adoption
+        record = ({"ok": True, "skipped": "ALREADY_RUNNING", "operator_verified": False} if duplicate
+                  else {"ok": False, "error": str(exc)})
+        line = json.dumps(record, ensure_ascii=False)
+        print(line, flush=True)
+        if log := getattr(args, "log", None):
+            path = Path(log)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        return 0 if duplicate else 3
+
+
+def _cmd_coord_sentinel(args: argparse.Namespace) -> int:
     """U23 S4 / U32b: 0-token sentinel (deterministic rules, no model call) — one cycle or a resident loop."""
     import time
     from .coord.mailbox import Mailbox
