@@ -75,3 +75,4 @@
 - **복귀 시 권한대행 인계 확인**: 한도·부재 후 다시 구동된 도구(Codex·Claude Code)는 구동과 동시에 `coord inbox`로 권한대행(Antigravity)의 인계 통지를 확인하고, `.coord/tasks/NEXT_MORNING_RESUME.md` 및 `.coord/codex_return_checklist.md`에 명시된 대행 구축 프로세스·프로젝트 검증 목록을 확인한 뒤 지휘·조율을 정상 재개한다.
 - 사용 기록은 개선 제안의 입력일 뿐 승인·판정 권한이 아니다. 10개 유효 표본마다 품질·재작업·토큰·시간을 비교하고, P1·품질 저하·3배 비용 회귀면 개선안을 채택하지 않는다. 자동 수집은 U27 검증 전까지 미구현이다.
 - U121: user gets only the Safety human list; do the rest unasked; copy to .work/backup_<date>/, then revert canon-conflicting edits.
+- **무승인 논스톱 기조(U176, 2026-10-06 사용자 영구 지시)**: 사람 전용이 아니면 묻지 않고 끝까지 진행한다(커밋·`git -C`·`claude/*`·`codex/*`·`agy/*` 브랜치 push·PR 생성·상대 도구 편지·런타임 재설치). 사람 전용은 다섯으로 줄인다: 배포·공개 게시, 지출, 자격 증명·계정, `main` push·force push·이력 재작성·데이터 삭제, 거부 규칙(deny) 완화. 권한 허용 목록은 읽기·로컬 VCS처럼 되돌릴 수 있는 항목에 한해 `.work/backup_<날짜>/` 백업 뒤 도구가 직접 추가하고 (거부 규칙은 줄이지 않는다), 그 결정은 세 도구 티키타카(≤5턴, 작성자가 아닌 판정자)로 합의한다. 병합 경로(Antigravity→Codex)가 모두 한도면 기다리지 말고 다음 카드를 진행하며 한도 복귀 시 같은 판정 편지로 병합한다. 세부: U176.
