@@ -11,9 +11,9 @@
 
 ## 요약
 
-- 전체 지점: 49
+- 전체 지점: 50
 - GAP: 0
-- CALLER_INPUT: 30
+- CALLER_INPUT: 31
 - GUARDED: 2
 - FIXED: 13
 - PASS_THROUGH: 4
@@ -32,6 +32,7 @@
 | `v7_harness/calculator_gate.py:185` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/calculator_gate.py:213` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/coord/agy_dispatch.py:243` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/boot_task.py:136` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:129` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:263` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:38` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
@@ -82,6 +83,7 @@
 - `v7_harness/adapters/lane_worker.py:79` DIRECT `subprocess.run`
 - `v7_harness/calculator_gate.py:96` DIRECT `subprocess.run`
 - `v7_harness/coord/agy_dispatch.py:243` INDIRECT `runner -> subprocess.run`
+- `v7_harness/coord/boot_task.py:136` DIRECT `subprocess.Popen`
 - `v7_harness/coord/deliver.py:129` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/deliver.py:263` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/desk_delta.py:38` DIRECT `subprocess.run`

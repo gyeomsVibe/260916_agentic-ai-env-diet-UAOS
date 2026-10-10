@@ -815,6 +815,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_sentinel.add_argument("--ring", action="store_true", default=False,
                                   help="Ring Codex (codex queue) for waiting P1 wakes while Codex has a fresh ACTIVE heartbeat")
     p_coord_sentinel.set_defaults(func=cmd_coord_sentinel)
+    p_coord_boot = p_coord_subs.add_parser("boot", help="U181: boot task plan (registers nothing) or its launcher")
+    p_coord_boot.add_argument("--home", default=None, help="Home that holds .uaos (default: the user's)")
+    p_coord_boot.add_argument("--launch", action="store_true", help="Start one sentinel loop per project and wait")
+    p_coord_boot.set_defaults(func=cmd_coord_boot)
 
     p_coord_presence = p_coord_subs.add_parser("presence")
     p_coord_presence.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1491,6 +1495,17 @@ def _sentinel_loop_owner(pid_file: Path, interval: float) -> int:
     except (OSError, ValueError):
         return 0
     return running if age < max(180.0, 3 * interval) and running != os.getpid() and _is_pid_alive(running) else 0
+
+
+def cmd_coord_boot(args: argparse.Namespace) -> int:
+    """U181: print the boot task plan (registers nothing) or run the launcher the task starts."""
+    from .coord import boot_task
+    home = Path(args.home) if args.home else Path.home()
+    if args.launch:
+        return boot_task.launch(home)
+    result = boot_task.plan(home)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["ok"] else 1
 
 
 def cmd_coord_sentinel(args: argparse.Namespace) -> int:
