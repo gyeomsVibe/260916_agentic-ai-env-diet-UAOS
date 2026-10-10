@@ -27,6 +27,11 @@ CLAIM_TTL_S = 7200
 
 def coord_root(project: Path) -> Path:
     """R5: all worktrees agree on one schedule, kept in the main checkout (the git common dir's parent)."""
+    project = Path(project)
+    # U182: a worktree's top folder always holds `.git`; a folder that has its own .coord but no `.git` is a project
+    # nested inside a larger repository (Lotto receipt 2026-10-11) and keeps its own schedule and mailbox.
+    if (project / ".coord").is_dir() and not (project / ".git").exists():
+        return project
     try:
         done = subprocess.run(["git", "-C", str(project), "rev-parse", "--path-format=absolute", "--git-common-dir"],
                               capture_output=True, text=True, timeout=10)
