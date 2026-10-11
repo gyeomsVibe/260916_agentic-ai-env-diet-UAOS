@@ -1,22 +1,23 @@
-"""Shared lifetime exclusion for the sentinel; no heartbeat age grants ownership."""
+"""Shared lifetime exclusion for the sentinel; only the kernel grants or frees ownership, never a file time."""
 import os
 from contextlib import contextmanager
 from pathlib import Path
 
-from .stream import _try_lock, _unlock
-
-# A live pid is the legacy owner unless its process was created this long after the pid file was last written: then
-# Windows reused the pid and the file is stale (ledger BLOCKED 20261010T2206-claude-0001: after a reboot both
-# launchers answered ALREADY_RUNNING for ever). 2 s is the coarsest file-time step on a Windows volume (FAT).
-REUSE_MARGIN_S = 2.0
 QUERY_LIMITED = 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION: read-only, can never terminate
 STILL_ACTIVE = 259
 INVALID_PARAMETER = 87  # OpenProcess: no such pid
-FILETIME_EPOCH = 116444736000000000  # 100 ns steps between 1601-01-01 and 1970-01-01
+# ERROR_LOCK_VIOLATION is the only answer that proves another handle holds the byte. Measured with two real processes
+# (U183, 2026-10-11): 33 whether the holder locked through LockFileEx or through the older msvcrt.locking.
+LOCK_VIOLATION = 33
+LOCK_NOW = 0x3  # LOCKFILE_EXCLUSIVE_LOCK (2) | LOCKFILE_FAIL_IMMEDIATELY (1)
 
 
 class LeaseUnavailable(RuntimeError):
     """Busy or uncertain ownership must never start a second operator."""
+
+    def __init__(self, reason, kind=None):
+        super().__init__(reason)
+        self.kind = kind or reason  # HELD, LOCK_ERROR, LEGACY_ALIVE or LEGACY_UNKNOWN
 
 
 def _kernel():
@@ -27,10 +28,13 @@ def _kernel():
     kernel.OpenProcess.restype = wintypes.HANDLE
     kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
     kernel.GetExitCodeProcess.restype = wintypes.BOOL
-    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
-    kernel.GetProcessTimes.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.c_void_p]
+    kernel.LockFileEx.restype = wintypes.BOOL
+    kernel.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+    kernel.UnlockFileEx.restype = wintypes.BOOL
     return ctypes, wintypes, kernel
 
 
@@ -58,22 +62,40 @@ def pid_state(pid):
         return 'UNKNOWN'
 
 
-def created_at(pid):
-    """Epoch seconds at which the live process was created, or None when it cannot be read (then: fail closed)."""
-    if os.name != 'nt' or type(pid) is not int or not 0 < pid < 2**32:
-        return None
-    ctypes, wintypes, kernel = _kernel()
-    handle = kernel.OpenProcess(QUERY_LIMITED, False, pid)
-    if not handle:
-        return None
+def _range(ctypes, wintypes):
+    """Start of the locked range: byte 0, the byte every launcher of every runtime version locks."""
+    class Overlapped(ctypes.Structure):
+        _fields_ = [('Internal', ctypes.c_void_p), ('InternalHigh', ctypes.c_void_p), ('Offset', wintypes.DWORD),
+                    ('OffsetHigh', wintypes.DWORD), ('hEvent', wintypes.HANDLE)]
+    return ctypes.byref(Overlapped())
+
+
+def _try_lock(fd):
+    """'OK', 'HELD' (the kernel reports another holder of the byte) or 'LOCK_ERROR' (any other failure: no evidence)."""
+    if os.name == 'nt':
+        import msvcrt
+        ctypes, wintypes, kernel = _kernel()
+        if kernel.LockFileEx(msvcrt.get_osfhandle(fd), LOCK_NOW, 0, 1, 0, _range(ctypes, wintypes)):
+            return 'OK'
+        return 'HELD' if ctypes.get_last_error() == LOCK_VIOLATION else 'LOCK_ERROR'
+    import fcntl
     try:
-        times = [wintypes.FILETIME() for _ in range(4)]
-        if not kernel.GetProcessTimes(handle, *(ctypes.byref(value) for value in times)):
-            return None
-        ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
-        return (ticks - FILETIME_EPOCH) / 10_000_000
-    finally:
-        kernel.CloseHandle(handle)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return 'OK'
+    except BlockingIOError:
+        return 'HELD'
+    except OSError:
+        return 'LOCK_ERROR'
+
+
+def _unlock(fd):
+    if os.name == 'nt':
+        import msvcrt
+        ctypes, wintypes, kernel = _kernel()
+        kernel.UnlockFileEx(msvcrt.get_osfhandle(fd), 0, 1, 0, _range(ctypes, wintypes))
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 @contextmanager
@@ -84,13 +106,13 @@ def lease(project):
     fd = os.open(directory / 'loop.lock', os.O_CREAT | os.O_RDWR, 0o600)
     locked = False
     try:
-        locked = _try_lock(fd)
-        if not locked:
-            raise LeaseUnavailable('LEASE_BUSY_OR_LOCK_ERROR')
+        answer = _try_lock(fd)
+        if answer != 'OK':
+            raise LeaseUnavailable('LEASE_BUSY_OR_LOCK_ERROR', answer)
+        locked = True
         try:
             with (directory / 'loop.pid').open(encoding='utf-8') as handle:
                 raw = handle.read(65)
-                written = os.fstat(handle.fileno()).st_mtime
                 if len(raw) > 64:
                     raise LeaseUnavailable('LEGACY_UNKNOWN')
                 raw = raw.strip()
@@ -101,12 +123,12 @@ def lease(project):
         if raw is not None:
             if not raw or len(raw) > 10 or not raw.isascii() or not raw.isdecimal():
                 raise LeaseUnavailable('LEGACY_UNKNOWN')
+            # A live pid is never handed over: no file time and no creation time can tell a reused pid from the
+            # operator that wrote it (U183). Only a pid the kernel reports dead frees the legacy file.
             state = pid_state(int(raw))
             if state == 'ALIVE':
-                created = created_at(int(raw))
-                if created is None or created <= written + REUSE_MARGIN_S:
-                    raise LeaseUnavailable('LEGACY_ALIVE')
-            elif state != 'DEAD':
+                raise LeaseUnavailable('LEGACY_ALIVE')
+            if state != 'DEAD':
                 raise LeaseUnavailable('LEGACY_UNKNOWN')
         yield  # once, loop and exceptions remain inside the same lifetime lease
     finally:

@@ -12,9 +12,12 @@ import os
 import re
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.sax.saxutils import escape
+
+from .sentinel_lease import LeaseUnavailable, lease
 
 NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
 TASK_NAME = "UAOS\\Sentinel-Boot"
@@ -22,7 +25,8 @@ BOOT_DELAY = "PT30S"  # the profile volume and the scheduler service settle befo
 RESTART_INTERVAL = "PT1M"  # the shortest restart interval Task Scheduler accepts
 RESTART_COUNT = 3  # a broken runtime must not restart for ever
 INTERVAL_S = 60  # the interval the logon launcher (global_install sentinel_*.cmd) already uses
-LEASE_BUSY = 3  # cmd_coord_sentinel: another launcher already supervises this project
+POLL_S = 1.0  # how often every owned child is read: the longest a failed loop goes unreported
+TERMINATE_GRACE_S = 5.0  # a loop holds no state but the lease, which the kernel frees; longer only delays the restart
 ORDER = ("RegistrationInfo", "Triggers", "Principals", "Settings", "Actions")  # the schema's required sequence
 PROJECT = re.compile(r'--project "([^"]+)"')
 
@@ -126,18 +130,75 @@ def plan(home, user: str | None = None, python: str | None = None) -> dict:
             "needs": "an elevated prompt (administrator token); the user runs it once"}
 
 
-def launch(home, python: str | None = None) -> int:
-    """Start one sentinel loop per project and wait: 0 when every loop ended cleanly or was already supervised."""
+def _observe(root) -> tuple[bool, str]:
+    """What the launcher itself sees for a project whose child ended: (healthy, outcome). An exit code proves nothing."""
+    try:
+        with lease(root):
+            return False, "LOOP_ENDED"  # nobody holds the lease: the loop ended or never ran
+    except LeaseUnavailable as exc:
+        if exc.kind == "HELD":
+            return True, "SUPERVISED_ELSEWHERE"
+        # A live legacy pid may be any process: it is no evidence that a sentinel supervises the project.
+        return False, ("LEGACY_UNVERIFIED" if exc.kind == "LEGACY_ALIVE" else exc.kind)
+    except Exception as exc:  # an unreadable lease is no evidence of supervision either
+        return False, type(exc).__name__
+
+
+def _end(children, sleep) -> None:
+    """End every child this launcher started and still owns; it ends no other process."""
+    live = [child for child in children if child.poll() is None]
+    for child in live:
+        child.terminate()
+    waited = 0.0  # counted, not read from a clock, so an injected sleep bounds it too
+    while waited < TERMINATE_GRACE_S and any(child.poll() is None for child in live):
+        sleep(POLL_S)
+        waited += POLL_S
+    for child in live:
+        if child.poll() is None:
+            child.kill()
+
+
+def launch(home, python: str | None = None, sleep=time.sleep) -> int:
+    """Start one sentinel loop per project and supervise all of them: 0 when no owned loop is left and none failed.
+
+    Every owned child is read in every cycle and none is waited on, so a failed loop is seen while its siblings run.
+    The first failure is logged and printed as one typed line, the owned children are ended and 1 is returned:
+    restarting belongs to the task's RestartOnFailure or to the next logon launcher, not to this function.
+    """
     home = Path(home)
-    children = []
-    for root in projects(home):
-        log = Path(root) / ".work" / "sentinel" / "sentinel.log"
-        log.parent.mkdir(parents=True, exist_ok=True)
-        children.append(subprocess.Popen(
-            [python or sys.executable, str(home / ".uaos" / "uaos.py"), "coord", "sentinel", "--project", root,
-             "--loop", "--interval", str(INTERVAL_S), "--write-brief", "--log", str(log)],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    if sys.stdout is not None:  # pythonw has no console
-        print(json.dumps({"ok": True, "children": [child.pid for child in children]}), flush=True)
-    codes = [child.wait() for child in children]
-    return 0 if all(code in (0, LEASE_BUSY) for code in codes) else 1
+    owned = []  # (project, child) pairs this launcher started and has not yet seen supervised elsewhere
+    failure = None
+    try:
+        for root in projects(home):
+            log = Path(root) / ".work" / "sentinel" / "sentinel.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            owned.append((root, subprocess.Popen(
+                [python or sys.executable, str(home / ".uaos" / "uaos.py"), "coord", "sentinel", "--project", root,
+                 "--loop", "--interval", str(INTERVAL_S), "--write-brief", "--log", str(log)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
+        if sys.stdout is not None:  # pythonw has no console
+            print(json.dumps({"ok": True, "children": [child.pid for _root, child in owned]}), flush=True)
+        while owned and failure is None:
+            for root, child in list(owned):
+                code = child.poll()
+                if code is None:
+                    continue
+                healthy, outcome = _observe(root)
+                if healthy:
+                    owned.remove((root, child))
+                    continue
+                failure = {"ok": False, "project": str(root), "pid": child.pid, "exit_code": code, "outcome": outcome}
+                break
+            else:
+                if owned:
+                    sleep(POLL_S)
+        if failure is None:
+            return 0
+        line = json.dumps(failure)
+        with (Path(failure["project"]) / ".work" / "sentinel" / "sentinel.log").open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+        if sys.stdout is not None:
+            print(line, flush=True)
+        return 1
+    finally:  # also on an exception while starting: no child of this launcher outlives it unobserved
+        _end([child for _root, child in owned], sleep)
