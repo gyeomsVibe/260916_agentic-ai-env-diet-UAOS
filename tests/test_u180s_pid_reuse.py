@@ -1,7 +1,9 @@
-"""U180S rework: a stale loop.pid whose pid an unrelated process now owns must not block the sentinel for ever.
+"""U183: a live pid in loop.pid is never handed over on a file time; only the kernel's DEAD answer frees the project.
 
-Receipt: ledger BLOCKED 20261010T2206-claude-0001. After a reboot the file still holds the last pid, Windows reuses
-pids, and both launchers answered ALREADY_RUNNING with exit 0 while no sentinel ran (U122 regression).
+Receipts: ledger BLOCKED 20261010T2206-claude-0001 (a reused pid blocked both launchers after a reboot) and Codex
+return review U183 (PR 145 answered that receipt by comparing the file time with the process creation time, so a
+restored or touched file time handed a living owner's project to a second loop). A file time is writable by anyone;
+the block is kept and reported, the bypass is not.
 """
 import os
 import subprocess
@@ -14,8 +16,6 @@ from unittest import mock
 
 from v7_harness.coord import sentinel_lease
 from v7_harness.coord.sentinel_lease import LeaseUnavailable, lease
-
-WINDOWS = os.name == "nt"
 
 
 class PidReuse(unittest.TestCase):
@@ -34,37 +34,35 @@ class PidReuse(unittest.TestCase):
     def date_file(self, when):
         os.utime(self.pid_file, (when, when))
 
-    @unittest.skipUnless(WINDOWS, "process creation time is read on Windows only")
-    def test_file_written_long_before_the_process_existed_is_stale(self):
-        self.date_file(self.before - 86400)
-        entered = False
-        with lease(self.root):
-            entered = True
-        self.assertTrue(entered)
-        self.assertEqual(str(self.other.pid), self.pid_file.read_text(encoding="utf-8"))  # evidence is kept
-
-    @unittest.skipUnless(WINDOWS, "process creation time is read on Windows only")
-    def test_file_inside_the_margin_still_belongs_to_the_live_process(self):
-        self.date_file(self.before - sentinel_lease.REUSE_MARGIN_S / 2)
-        with self.assertRaisesRegex(LeaseUnavailable, "LEGACY_ALIVE"):
+    def refused(self, reason):
+        with self.assertRaisesRegex(LeaseUnavailable, reason):
             with lease(self.root):
                 self.fail("entered")
+        self.assertEqual(str(self.other.pid), self.pid_file.read_text(encoding="utf-8"))  # evidence is kept
 
-    def test_unknown_creation_time_fails_closed(self):
+    def test_file_written_long_before_the_process_existed_still_refuses(self):
+        for when in (self.before - 86400, 1):
+            with self.subTest(when=when):
+                self.date_file(when)
+                self.refused("LEGACY_ALIVE")
+
+    def test_file_written_after_the_process_started_refuses(self):
+        self.date_file(time.time())
+        self.refused("LEGACY_ALIVE")
+
+    def test_unknown_process_state_fails_closed_whatever_the_file_time(self):
         self.date_file(self.before - 86400)
-        with mock.patch.object(sentinel_lease, "created_at", return_value=None):
-            with self.assertRaisesRegex(LeaseUnavailable, "LEGACY_ALIVE"):
-                with lease(self.root):
-                    self.fail("entered")
+        with mock.patch.object(sentinel_lease, "pid_state", return_value="UNKNOWN"):
+            self.refused("LEGACY_UNKNOWN")
 
-    @unittest.skipUnless(WINDOWS, "process creation time is read on Windows only")
-    def test_one_cycle_runs_through_the_cli(self):
+    def test_the_cli_reports_an_unverified_duplicate_and_runs_no_cycle(self):
         self.date_file(self.before - 86400)
         done = subprocess.run([sys.executable, "-m", "v7_harness.cli", "coord", "sentinel", "--project", str(self.root)],
                               capture_output=True, text=True, timeout=60, cwd=Path(__file__).resolve().parents[1])
         self.assertEqual(0, done.returncode, done.stderr[-300:])
-        self.assertNotIn("ALREADY_RUNNING", done.stdout)
-        self.assertIn("paid_api_calls", done.stdout)
+        self.assertIn('"skipped": "ALREADY_RUNNING"', done.stdout)
+        self.assertIn('"operator_verified": false', done.stdout)
+        self.assertNotIn("paid_api_calls", done.stdout)
 
 
 if __name__ == "__main__":

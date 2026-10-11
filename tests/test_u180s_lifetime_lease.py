@@ -30,20 +30,12 @@ class LifetimeLease(unittest.TestCase):
             with lease(self.root): raise RuntimeError('operation')
         with lease(self.root): pass
 
-    def test_live_legacy_preserved_without_any_heartbeat(self):
-        # Amended 2026-10-10 (.work/cards/U180S_rework_claude.md): the first fixture dated the file at epoch 1, older
-        # than the process that wrote it, which no real owner can produce and which is exactly a reused pid. A real
-        # stalled owner wrote the file once, after it started, and never again: no heartbeat age may free its lease.
-        import time
-        child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])
-        self.addCleanup(child.wait)
-        self.addCleanup(child.kill)
-        written=time.time()  # after the child exists, as an owner's first write is
-        path=self.pid(str(child.pid))
-        os.utime(path,(written,written))
+    def test_live_legacy_preserved_even_old_mtime(self):
+        path=self.pid(str(os.getpid()))
+        os.utime(path,(1,1))
         with self.assertRaisesRegex(LeaseUnavailable,'LEGACY_ALIVE'):
             with lease(self.root): self.fail('entered')
-        self.assertEqual(str(child.pid),path.read_text())
+        self.assertEqual(str(os.getpid()),path.read_text())
 
     def test_corrupt_legacy_and_probe_unknown_fail_closed(self):
         path=self.pid('corrupt')
