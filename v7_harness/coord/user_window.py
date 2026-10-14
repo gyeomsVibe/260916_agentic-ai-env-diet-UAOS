@@ -64,15 +64,10 @@ def claim(project: Path, tool: str, thread: str, *, now: datetime | None = None,
     folder = _presence(project)
     folder.mkdir(parents=True, exist_ok=True)
     record_path, lock = folder / "user_windows.json", folder / "user_windows.lock"
-    deadline = time.monotonic() + LOCK_WAIT_S
-    while True:
-        try:
-            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-            break
-        except FileExistsError:
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"user window lock busy: {lock}")
-            time.sleep(LOCK_RETRY_S)
+    from contextlib import ExitStack
+    from .stream import _exclusive
+    stack = ExitStack()
+    stack.enter_context(_exclusive(lock))
     try:
         try:
             record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -97,7 +92,7 @@ def claim(project: Path, tool: str, thread: str, *, now: datetime | None = None,
         os.replace(temp, record_path)
         return {"title": title, "new": not kept, "tool": tool, "thread": thread}
     finally:
-        lock.unlink(missing_ok=True)
+        stack.close()
 
 
 def _codex_db() -> Path:

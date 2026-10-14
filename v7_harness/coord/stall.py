@@ -100,7 +100,9 @@ def _phase_waits(schedule: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(phase, dict) or not phase.get("phase_id"):
             continue
         state, waiting_on = str(phase.get("state", "")), str(phase.get("waiting_on", ""))
-        if state not in WAIT_STATES and not waiting_on:
+        if state not in WAIT_STATES:
+            continue
+        if phase.get("blocker_kind") in ("SAFETY_GATE", "SCOPE_DECISION", "HUMAN_AUTH"):
             continue
         text = f"{phase['phase_id']} {phase.get('human', '')} {phase.get('note', '')}".lower()
         if state == "HUMAN" and HUMAN_ONLY_RE.search(text):

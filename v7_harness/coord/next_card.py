@@ -57,7 +57,7 @@ def _review_depth(pid: str, by_id: dict[str, dict], seen: frozenset = frozenset(
     return best
 
 
-def _claim(claims: Path, card: str, tool: str, session: str, now: float) -> bool:
+def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedule: Path | None = None, expected: dict | None = None) -> bool:
     """U146a-R: take `card` for this session. A hook process exits right after it claims, so a PID never owned
     anything (PR112 counterexample); the session id does, until CLAIM_TTL_S passes without renewal.
 
@@ -72,6 +72,17 @@ def _claim(claims: Path, card: str, tool: str, session: str, now: float) -> bool
     claims.mkdir(parents=True, exist_ok=True)
     try:
         with _exclusive(claims / ".lock"):
+            if schedule is not None:
+                try:
+                    phases = json.loads(schedule.read_text(encoding="utf-8"))["phases"]
+                    if not isinstance(phases, list) or not all(isinstance(p, dict) for p in phases) or not isinstance(expected, dict):
+                        return False
+                    matches = [p for p in phases if p.get("phase_id") == card]
+                    keys = ("phase_id", "state", "owner_tool", "owner_session")
+                    if len(matches) != 1 or any((k in matches[0], matches[0].get(k)) != (k in expected, expected.get(k)) for k in keys):
+                        return False
+                except (OSError, ValueError, KeyError, TypeError):
+                    return False
             try:
                 held = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -125,6 +136,9 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
     own = [p for p in candidates if p.get("owner_tool") in (tool, "all")]
     claimed_out = False
     for p in own:
+        assigned = p.get("owner_session")
+        if "owner_session" in p and (not isinstance(assigned, str) or not assigned or assigned != session):
+            continue
         card = str(p.get("phase_id"))
         if claim:
             if not session:
@@ -132,7 +146,7 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
                 return {"state": "WAIT", "reason": "a claim needs a session id (U146a-R)", "card": card}
             # The claim lives beside the schedule, so every worktree sees the same claims (R5).
             claims = path.parent / "next" / "claims"
-            if not _claim(claims, card, tool, session, time.time() if now is None else now):
+            if not _claim(claims, card, tool, session, time.time() if now is None else now, schedule=path, expected=p):
                 claimed_out = True
                 continue
             return {"state": "NEXT", "card": card, "owner": p.get("owner_tool"), "claimed": True}
