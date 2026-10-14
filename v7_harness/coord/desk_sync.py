@@ -85,6 +85,15 @@ def _write_json(path: Path, data: object) -> None:
 
 def _record(desk: Path, tool: str) -> dict[str, Any]:
     """{} when no record exists; ValueError when one exists but is unreadable. A legacy record is generation 0."""
+    data = _load_record(desk, tool)
+    if not data:
+        return {}
+    generation = data.get("generation")
+    return {**data, "generation": generation if isinstance(generation, int) and generation >= 0 else 0}
+
+
+def _load_record(desk: Path, tool: str) -> dict[str, Any]:
+    """The raw record with its generation untouched: {} when none exists; ValueError when unreadable."""
     path = deliver.user_desk_path(desk, tool)
     try:
         text = path.read_text(encoding="utf-8")
@@ -99,8 +108,56 @@ def _record(desk: Path, tool: str) -> dict[str, Any]:
     thread = data.get("thread") if isinstance(data, dict) else None
     if not isinstance(thread, str) or not deliver.UUID_RE.fullmatch(thread):
         raise ValueError(f"USER_DESK_RECORD_CORRUPT {path.name}")
-    generation = data.get("generation")
-    return {**data, "generation": generation if isinstance(generation, int) and generation >= 0 else 0}
+    return data
+
+
+def desk_identity(project: Path, tool: str) -> tuple[str, dict[str, Any]]:
+    """U190-A: (status, {thread, generation}) of a tool's user desk, read-only, from the existing validators only.
+
+    Only PROJECT_BOUND (the tool's own native metadata places the thread in this project) may ever count as
+    delivered. UNBOUND_EXISTS is antigravity, whose conversation records no project: typed unsupported scope. Every
+    other status, UNREADABLE for any native read or resolve error included, fails closed with an empty identity
+    (Codex PASS relay_6699e249, REVISE relay_b1204616)."""
+    from v7_harness.coord import windows
+    from v7_harness.coord.hook_context import shared_desk
+
+    if tool not in TOOLS:
+        return "UNKNOWN_TOOL", {}
+    try:
+        desk = shared_desk(Path(project).resolve())
+    except (OSError, ValueError):
+        return "UNREADABLE", {}
+    try:
+        data = _load_record(desk, tool)
+    except ValueError:
+        return "CORRUPT", {}
+    if not data:
+        return "ABSENT", {}
+    if "generation" not in data:
+        return "LEGACY", {}
+    generation = data["generation"]
+    if type(generation) is not int or generation < 1:
+        return "BAD_GENERATION", {}
+    thread = data["thread"]
+    identity = {"thread": thread, "generation": generation}
+    try:
+        if tool == "codex":
+            status = deliver._verify_thread(desk, deliver._codex_sessions(), thread)
+            if status == "DISPATCH":
+                return "PROJECT_BOUND", identity
+            return ("PROJECT_MISMATCH" if status == "THREAD_PROJECT_MISMATCH" else "UNVERIFIED"), {}
+        if tool == "claude":
+            status, cwd = windows.claude_session_identity(thread)
+            if status == "UNREADABLE":
+                return "UNREADABLE", {}
+            if status != "OK" or not cwd or not Path(cwd).is_absolute():
+                return "UNVERIFIED", {}
+            if os.path.normcase(str(Path(cwd).resolve())) not in deliver._registered_roots(desk):
+                return "PROJECT_MISMATCH", {}
+            return "PROJECT_BOUND", identity
+        return ("UNBOUND_EXISTS", identity) if deliver.agy_desktop_conversation(thread) else ("UNVERIFIED", {})
+    except (OSError, ValueError):
+        return "UNREADABLE", {}
 
 
 def _seen_path(desk: Path) -> Path:

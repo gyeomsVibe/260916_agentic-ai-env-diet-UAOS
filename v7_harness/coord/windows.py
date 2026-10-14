@@ -86,6 +86,37 @@ def claude_session(short: str) -> tuple[str, str]:
     return found[0].stem, cwd
 
 
+def claude_session_identity(thread: str) -> tuple[str, str]:
+    """U190-A strict native identity (Codex REVISE relay_b1204616: a file name is not a session).
+
+    ("OK", latest cwd) only when the claude_session lookup finds exactly one transcript, its name is the thread, at
+    least one row carries a sessionId and every sessionId is the thread; ("UNREADABLE", "") on a read error;
+    ("UNVERIFIED", "") otherwise."""
+    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    try:
+        found = sorted((home / "projects").glob(f"*/{thread}*.jsonl"))
+        if len(found) != 1 or found[0].stem != thread:
+            return "UNVERIFIED", ""
+        cwd, named = "", False
+        with found[0].open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                if row.get("sessionId") is not None:
+                    if row["sessionId"] != thread:
+                        return "UNVERIFIED", ""
+                    named = True
+                if row.get("cwd"):
+                    cwd = str(row["cwd"])
+    except OSError:
+        return "UNREADABLE", ""
+    return ("OK", cwd) if named else ("UNVERIFIED", "")
+
+
 def window_for(project: Path, card: str, tool: str) -> str | None:
     return _load(_record_path(project, card)).get("tools", {}).get(tool, {}).get("id")
 
