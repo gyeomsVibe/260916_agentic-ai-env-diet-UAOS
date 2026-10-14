@@ -67,6 +67,26 @@ _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
 _FENCE_RE = re.compile(r"^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)", re.MULTILINE | re.DOTALL)
 _QUOTED_RE = re.compile(r'"[^"\n]*"|“[^”\n]*”|(?<![\w\'])\'[^\'\n]*\'(?!\w)|`[^`\n]*`|^[ \t]*>.*$', re.MULTILINE)
 DELTA_LIMIT = 200  # an inferred delta is the hook's one-line summary; the full text stays in `message`
+# U188: a verdict a turn-based tool writes only as text never wakes its receiver. 98 of 198 codex->claude letters
+# (2026-10-14) carried no waking class (26 NOTICE, 72 untagged without a token), among them the verdicts
+# relay_f3fcef63 (REVISE) and relay_1be9792b (NOT ACCEPTED), which left Claude idle holding actionable work. Upper
+# case whole tokens only, longest first, so "NOT ACCEPTED" wins over "ACCEPTED" and PASSWORD/BYPASS never match.
+_VERDICT_TEXT_RE = re.compile(
+    r"(?<![A-Za-z0-9_=-])(?:NOT ACCEPTED|ACCEPTED|PASS|FAIL|REVISE|REWORK|PIVOT|APPROVE|NO-GO)(?![A-Za-z0-9_-])")
+
+
+def _unstructured_verdict(message: str, target: str | None, wake_class: str | None,
+                          verdict_requested: bool | None, verdict: str | None) -> str:
+    """U188: the verdict token of a codex/claude letter whose first unquoted line is a verdict without its field."""
+    if target not in ("codex", "claude") or verdict is not None or verdict_requested is True \
+            or wake_class == "ACTIONABLE":
+        return ""
+    text = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message))
+    if _ACK_RE.search(text.upper()):
+        return ""
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    found = _VERDICT_TEXT_RE.search(first)
+    return found.group(0) if found else ""
 
 
 def _digest(actor: str, message: str, card: str = "", window: str | None = None,
@@ -1254,6 +1274,14 @@ def deliver(
     if card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
+    token = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
+    if token:
+        # U188 (Codex design verdict relay_61456b14): text never becomes authoritative and NOTICE never wakes, so the
+        # contradiction fails visibly before any publish; the sender resends with the structured field.
+        diag = (f"UNSTRUCTURED_VERDICT: the first line reads as verdict {token!r} but carries no wake field; resend "
+                "with --verdict <PASS|REVISE|FAIL|APPROVE|PIVOT|REWORK> (or --wake-class ACTIONABLE --delta), or "
+                "mark a status echo ACK_ONLY")
+        return DeliverResult(False, target or "mailbox_only", "UNSTRUCTURED_VERDICT", (), diag, message_id, digest)
     explicit = {key: value for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested),
                                               ("verdict", verdict), ("delta", delta)) if value is not None}
     if not explicit and requested_target and _requires_wake(message):
