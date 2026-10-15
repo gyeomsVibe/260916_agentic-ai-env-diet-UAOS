@@ -130,6 +130,8 @@ def _today_count(project: Path, now: float) -> int:
         ts = row.get("ts")
         if isinstance(ts, bool) or not isinstance(ts, (int, float)) or seoul_day(ts) != day:
             continue
+        if row.get("audit") is True:  # U199: a commit-gate audit answer never spends the ordinary daily cap
+            continue
         if row.get("state") == "RESERVED" or "reservation" not in row:
             count += 1
     return count
@@ -149,14 +151,15 @@ def _budget_lock(project: Path):
     return _exclusive(_ledger(project).parent / "agy_budget.lock")
 
 
-def _reserve(project: Path, message_id: str, now: float) -> str | None:
+def _reserve(project: Path, message_id: str, now: float, audit: bool = False) -> str | None:
     """U164: take one unit of today's cap before the paid call, or None when the cap is spent. A process that dies
     after this keeps its unit spent: the budget counts calls started, not calls finished."""
     with _budget_lock(project):
-        if _today_count(project, now) >= DAILY_CAP:
+        if not audit and _today_count(project, now) >= DAILY_CAP:  # U199: 윤겸스 2026-10-15, audits are uncapped
             return None
         reservation = f"{os.getpid()}-{time.time_ns()}"
-        _append(project, {"ts": now, "message_id": message_id, "state": "RESERVED", "reservation": reservation})
+        _append(project, {"ts": now, "message_id": message_id, "state": "RESERVED", "reservation": reservation,
+                          **({"audit": True} if audit else {})})
         return reservation
 
 # U164: one failed headless run per drain, three in all, as queued letters park after three tries (U134).
@@ -276,7 +279,7 @@ def _record(project: Path, row: dict[str, Any]) -> None:
         _append(project, row)
 
 def dispatch(project: Path, *, message_id: str, actor: str, message: str, runner: Any = subprocess.run,
-             timeout_s: int = 240, now: float | None = None, card: str = "") -> dict[str, Any]:
+             timeout_s: int = 240, now: float | None = None, card: str = "", audit: bool = False) -> dict[str, Any]:
     now = time.time() if now is None else now
     if AUTO_TAG in message:
         return {"state": "SKIPPED_LOOP"}
@@ -292,7 +295,7 @@ def dispatch(project: Path, *, message_id: str, actor: str, message: str, runner
             return {"state": "REQUEST_BUSY", "message_id": message_id}
         try:
             return _dispatch_owned(project, message_id=message_id, actor=actor, message=message, runner=runner,
-                                   timeout_s=timeout_s, now=now, card=card)
+                                   timeout_s=timeout_s, now=now, card=card, audit=audit)
         finally:
             _unlock(fd)
     finally:
@@ -300,7 +303,7 @@ def dispatch(project: Path, *, message_id: str, actor: str, message: str, runner
 
 
 def _dispatch_owned(project: Path, *, message_id: str, actor: str, message: str, runner: Any = subprocess.run,
-                    timeout_s: int, now: float, card: str) -> dict[str, Any]:
+                    timeout_s: int, now: float, card: str, audit: bool = False) -> dict[str, Any]:
     """U193: the call itself, run only by the request's owner. An answered request is never mailed twice. The
     `subprocess.run` default keeps this provider call visible to the U54 firewall audit, as it was in dispatch()."""
     if _answered(project, message_id):
@@ -319,7 +322,7 @@ def _dispatch_owned(project: Path, *, message_id: str, actor: str, message: str,
     # still busy after the stream timeout parks the letter too, instead of calling past an unchecked cap.
     from v7_harness.coord.stream import StreamBusy
     try:
-        reservation = _reserve(project, message_id, now)
+        reservation = _reserve(project, message_id, now, audit)
     except StreamBusy:
         _park(project, message_id=message_id, actor=actor, message=message, card=card, now=now)
         return {"state": "BUDGET_BUSY_BACKLOG"}

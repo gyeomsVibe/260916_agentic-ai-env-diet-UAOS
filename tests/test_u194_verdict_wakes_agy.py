@@ -60,14 +60,15 @@ class VerdictWakesAgy(unittest.TestCase):
                 self.send(message=f"{PLAIN} {wake_class}", verdict_requested=True, wake_class=wake_class)
                 self.assertEqual([], self.calls)
 
-    def test_the_daily_cap_still_stops_a_verdict_request(self):
+    def test_the_daily_cap_never_stops_a_verdict_request(self):
+        # U199 (윤겸스 2026-10-15): a verdict request is the commit-gate audit, so a spent daily cap no longer parks it
         ledger = self.project / ".coord" / "mailbox" / "delivery" / "agy_auto.jsonl"
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text("".join(json.dumps({"ts": time.time(), "state": "ANSWERED"}) + "\n"
                                   for _ in range(agy_dispatch.DAILY_CAP)), encoding="utf-8")
         result = self.send(verdict_requested=True)
-        self.assertEqual([], self.calls)
-        self.assertIn("CAP_REACHED", result.output)
+        self.assertEqual(1, len(self.calls), result.output)
+        self.assertNotIn("CAP_REACHED", result.output)
 
     def test_a_duplicate_verdict_request_is_answered_once(self):
         first = self.send(verdict_requested=True)
