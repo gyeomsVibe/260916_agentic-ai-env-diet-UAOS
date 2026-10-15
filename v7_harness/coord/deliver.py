@@ -1326,8 +1326,12 @@ def deliver(
     if target == "antigravity":
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
+        # U194: a structured verdict request asks Antigravity for a turn too (receipt relay_19f9c6aa). Narrowed to
+        # this branch (Codex relay_5be83219): the U143 sound above keeps its rule; NOTICE/ACK_ONLY never ask.
+        agy_turn = wants_turn or (explicit.get("verdict_requested") is True
+                                  and explicit.get("wake_class") not in ("NOTICE", "ACK_ONLY"))
         unread = ("UNREAD until a user turn in Antigravity; for a verdict run `pilot review --reviewer agy` "
-                  "(headless, no user)") if wants_turn else ""
+                  "(headless, no user)") if agy_turn else ""
         if unread and actor in ("claude", "codex") and os.environ.get("UAOS_AGY_AUTO", "1") != "0":
             # U120: a headless one-turn answer (U119 live: 27,989 tokens) is mailed back to the sender; a failure,
             # a loop tag or the daily cap keeps the U118 UNREAD route. UAOS_AGY_AUTO=0 opts out.
