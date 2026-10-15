@@ -344,7 +344,7 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
                 review = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if isinstance(review, dict) and review.get("verdict") in AGY_VERDICTS:
+            if _real_agy_review(review, path.parent.name):
                 agy_evidence.append(f"agy review {path.parent.name} {review['verdict']}")
     skips = [r for r in mine if r.get("kind") == "card_skip"]
     for skip in skips:
@@ -356,3 +356,15 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
             found.append(f"skip {reason}: {skip.get('evidence')}")
     missing = [slot for slot, found in (("ollama", ollama_evidence), ("agy", agy_evidence)) if not found]
     return {"card": card, "ok": not missing, "ollama": ollama_evidence, "agy": agy_evidence, "missing": missing}
+
+
+def _real_agy_review(review, task: str) -> bool:
+    """U192: schema hardening only. Count a record that has review.py's strict agy fields for this run dir's task.
+    A hand-copied record still passes: this is not proof an agy run happened (Codex REVISE relay_0e17d7f3)."""
+    if not isinstance(review, dict) or review.get("verdict") not in AGY_VERDICTS:
+        return False
+    usage, conv, bundle = review.get("usage"), review.get("judge_conversation_id"), review.get("bundle_id")
+    tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+    return (review.get("reviewer") == "agy" and review.get("task_id") == task and review.get("cost_gate") == "WITHIN"
+            and isinstance(conv, str) and bool(conv) and type(tokens) is int and tokens > 0
+            and isinstance(bundle, str) and bool(re.fullmatch(r"[0-9a-f]{64}", bundle)) and bundle != "0" * 64)
