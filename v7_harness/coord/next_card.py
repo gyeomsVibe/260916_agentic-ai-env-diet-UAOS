@@ -57,7 +57,8 @@ def _review_depth(pid: str, by_id: dict[str, dict], seen: frozenset = frozenset(
     return best
 
 
-def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedule: Path | None = None, expected: dict | None = None) -> bool:
+def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedule: Path | None = None, expected: dict | None = None,
+           expected_schedule_sha: str | None = None) -> bool:
     """U146a-R: take `card` for this session. A hook process exits right after it claims, so a PID never owned
     anything (PR112 counterexample); the session id does, until CLAIM_TTL_S passes without renewal.
 
@@ -74,7 +75,12 @@ def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedul
         with _exclusive(claims / ".lock"):
             if schedule is not None:
                 try:
-                    phases = json.loads(schedule.read_text(encoding="utf-8"))["phases"]
+                    raw = schedule.read_bytes()
+                    # U195: an automatic claim holds only if the schedule is byte-identical to the one it was decided on
+                    import hashlib
+                    if expected_schedule_sha is not None and hashlib.sha256(raw).hexdigest() != expected_schedule_sha:
+                        return False
+                    phases = json.loads(raw.decode("utf-8"))["phases"]
                     if not isinstance(phases, list) or not all(isinstance(p, dict) for p in phases) or not isinstance(expected, dict):
                         return False
                     matches = [p for p in phases if p.get("phase_id") == card]
@@ -105,6 +111,46 @@ def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedul
         return False
 
 
+def _caps_available(phase) -> bool:
+    """U195: a phase auto-promotes only inside finite, unexhausted caps (contract 65136bf)."""
+    words = {"cap", "caps", "budget", "budgets", "limit", "limits", "token", "tokens", "quota", "remaining"}
+    if any(key != "caps" and words & set(str(key).lower().split("_")) for key in phase):
+        return False
+    caps = phase.get("caps", {})
+    if not isinstance(caps, dict):
+        return False
+    for value in caps.values():
+        if not isinstance(value, dict) or set(value) != {"used", "limit"}:
+            return False
+        used, limit = value["used"], value["limit"]
+        # exact int/float only (bool excluded); NaN fails both comparisons; huge ints compare exactly with inf
+        if any(type(n) not in (int, float) or not -float("inf") < n < float("inf") for n in (used, limit)):
+            return False
+        if not 0 <= used < limit:
+            return False
+    return True
+
+
+def _automatic_pending(phase, states) -> bool:
+    """U195: a PENDING phase starts by itself only when it opts in and nothing protects it; anything odd fails closed."""
+    if phase.get("state") != "PENDING" or phase.get("auto_promote") is not True:
+        return False
+    if "human" in phase or "gate_failed" in phase:
+        return False
+    if "rerouted_from" in phase:
+        moved = phase["rerouted_from"]
+        if not isinstance(moved, dict) or not isinstance(moved.get("state"), str):
+            return False
+        if moved["state"] in ("HUMAN", "PARKED", "SCOPE", "BLOCKED", "REWORK", "FAILED"):
+            return False
+    deps = phase.get("depends_on")
+    if not isinstance(deps, list) or not all(isinstance(d, str) and d for d in deps) or len(set(deps)) != len(deps):
+        return False
+    if any(states.get(d) != "DONE" for d in deps):  # only DONE satisfies the automatic path (REVIEW does not)
+        return False
+    return _caps_available(phase)
+
+
 def next_step(project: Path, tool: str, claim: bool = False, session: str | None = None,
               now: float | None = None) -> dict[str, Any]:
     project = Path(project)
@@ -115,7 +161,8 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
                     "action": "register authorized work in .coord/master_schedule.json before stopping"}
         return {"state": "DONE", "reason": "no schedule"}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
         phases = data["phases"]
         if not isinstance(phases, list) or not all(isinstance(p, dict) for p in phases):
             raise ValueError("phases is not a list of objects")
@@ -123,8 +170,16 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
         return {"state": "WAIT", "reason": f"schedule unreadable: {exc}"}
     by_id = {str(p.get("phase_id")): p for p in phases}
     state_of = {pid_: p.get("state") for pid_, p in by_id.items()}
+    # U195: the automatic path trusts only unique, non-empty string phase ids
+    ids = [p.get("phase_id") for p in phases]
+    unique = {i: p.get("state") for i, p in zip(ids, phases) if isinstance(i, str) and i and ids.count(i) == 1}
     candidates, stacked = [], []
     for p in phases:
+        if p.get("state") == "PENDING":
+            pid = p.get("phase_id")
+            if isinstance(pid, str) and pid in unique and _automatic_pending(p, unique):
+                candidates.append(p)
+            continue
         if p.get("state") not in CANDIDATE:
             continue
         if not all(state_of.get(d) in SATISFIED for d in p.get("depends_on") or []):
@@ -146,7 +201,12 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
                 return {"state": "WAIT", "reason": "a claim needs a session id (U146a-R)", "card": card}
             # The claim lives beside the schedule, so every worktree sees the same claims (R5).
             claims = path.parent / "next" / "claims"
-            if not _claim(claims, card, tool, session, time.time() if now is None else now, schedule=path, expected=p):
+            sha = None
+            if p.get("state") == "PENDING":
+                import hashlib
+                sha = hashlib.sha256(raw).hexdigest()
+            if not _claim(claims, card, tool, session, time.time() if now is None else now, schedule=path, expected=p,
+                          expected_schedule_sha=sha):
                 claimed_out = True
                 continue
             return {"state": "NEXT", "card": card, "owner": p.get("owner_tool"), "claimed": True}
