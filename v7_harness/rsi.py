@@ -78,12 +78,13 @@ REMEDIES: dict[str, tuple[str, str]] = {
     "SCOPE_VIOLATION": ("manual_template", "Name the exact file in the goal and keep allow to that file"),
     "EDIT_SEARCH_NOT_FOUND": ("manual_template", "Copy the SEARCH lines verbatim from the pinned input into the manual"),
     "EDIT_SEARCH_AMBIGUOUS": ("manual_template", "Extend the SEARCH text until it is unique"),
-    "PROMPT_TOO_LARGE": ("manual_template", "Split the input or summarise it first (olla read map); keep one file per manual"),
+    # U198: re-cut a failed local run into smaller slices first (U197 S3 42 lines failed, S3a-c 21 lines passed).
+    "PROMPT_TOO_LARGE": ("manual_template", "Re-cut into one-function slices of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice"),
     "NO_CHANGES": ("manual_template", "State one concrete verb and the exact file; read-only tasks need --allow-no-changes"),
     # U128: Ollama answered but dropped the ===EDIT frame (U125-L2, U125-L2R) or rewrote the dictated code (U126-L);
     # apply_after fixed all three, and copying known code through Ollama gains nothing over apply (U126 audit).
-    "NO_FILE_BLOCK": ("manual_template", "Known code goes to worker: apply with apply_after this run; give Ollama a spec, not a copy"),
-    "DICTATION_MISMATCH": ("manual_template", "Dictated code goes to worker: apply with apply_after this run; Ollama only rewrites it"),
+    "NO_FILE_BLOCK": ("manual_template", "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice"),
+    "DICTATION_MISMATCH": ("manual_template", "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice"),
     "PROVIDER_ERROR": ("environment", "Check that the Ollama service and model are up; do not escalate to a paid worker automatically"),
     "EXECUTION_ERROR": ("environment", "Check the worker command and the Ollama service before retrying"),
     "TIMEOUT": ("manual_template", "Split the task or raise timeout_s in the contract; reconcile the run first"),

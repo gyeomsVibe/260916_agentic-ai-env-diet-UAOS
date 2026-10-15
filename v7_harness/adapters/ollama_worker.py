@@ -390,7 +390,7 @@ def fit_prompt(task: str, named: list[tuple[str, str]], limit: int) -> tuple[str
     lines = sum(len(found) for found in literals.values())
     return rules, prompt, estimated, (f"PROMPT_TOO_LARGE: ~{estimated} tokens > {limit}; no cut fits ({len(anchors)} "
                                       f"backticked names, {lines} SEARCH lines): name the functions to edit in "
-                                      "backticks, or dictate ===EDIT blocks"), None
+                                      "backticks, or re-cut into one-function slices of about 20 lines (U198)"), None
 
 
 def preflight(task: str, workspace: Path) -> str:
