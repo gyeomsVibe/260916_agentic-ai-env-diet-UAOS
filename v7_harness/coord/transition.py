@@ -61,9 +61,24 @@ def _claimed(project: Path, record: dict[str, Any]) -> bool:
         held = json.loads(claim.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    at = held.get("at") if isinstance(held, dict) else None
-    return (held.get("tool") == record["tool"] and isinstance(at, (int, float)) and not isinstance(at, bool)
-            and at >= record["first_at"])
+    if not isinstance(held, dict):
+        return False
+    at = held.get("at")
+    bound = record.get("owner_session")  # a session-bound row is acked only by its own native session
+    return (held.get("tool") == record["tool"] and (not bound or held.get("session") == bound)
+            and isinstance(at, (int, float)) and not isinstance(at, bool) and at >= record["first_at"])
+
+
+def _sessions(project: Path, tool: str) -> list[str | None]:
+    """None, then each native session a row of this tool is bound to: next_step skips a bound row without it."""
+    try:
+        phases = json.loads(schedule_path(project).read_text(encoding="utf-8"))["phases"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return [None]
+    rows = [p for p in phases if isinstance(p, dict)] if isinstance(phases, list) else []
+    bound = {p["owner_session"] for p in rows if p.get("owner_tool") in (tool, "all")
+             and isinstance(p.get("owner_session"), str) and p["owner_session"]}
+    return [None, *sorted(bound)]
 
 
 def _letter(box: Mailbox, message_id: str, target: str, delta: str, **extra: Any) -> bool:
@@ -104,6 +119,11 @@ def run_transitions(project: Path, box: Mailbox, *, now: float | None = None) ->
             _write(path, record)
             out["acked"].append(path.stem)
             continue
+        sent_id = f"transition_{path.stem[:24]}_{record['attempts']}"
+        if not box.has_message(sent_id):  # the record survived but its letter did not: resend, same attempt
+            if _letter(box, sent_id, record["tool"], _delta(record), transition_key=path.stem):
+                out["published"].append(sent_id)
+            continue
         if moment - record["last_at"] < RETRY_S:
             continue
         if record["attempts"] >= MAX_ATTEMPTS:
@@ -126,20 +146,23 @@ def run_transitions(project: Path, box: Mailbox, *, now: float | None = None) ->
             out["published"].append(message_id)
     # Pass 2: open a record for each new transition, then send its first letter.
     for tool in TOOLS:
-        step = next_step(project, tool)
-        if step.get("state") != "NEXT":
-            continue
-        card = str(step["card"])
-        key = _key(tool, card, _row(project, card))
-        record = {"tool": tool, "card": card, "status": "SENT", "attempts": 1, "first_at": moment, "last_at": moment}
-        if not _write(outbox / f"{key}.json", record, exclusive=True):
-            continue
-        message_id = f"transition_{key[:24]}_1"
-        if _letter(box, message_id, tool, _delta(record), transition_key=key):
-            out["published"].append(message_id)
+        for session in _sessions(project, tool):
+            step = next_step(project, tool, session=session)
+            if step.get("state") != "NEXT":
+                continue
+            card = str(step["card"])
+            row = _row(project, card)
+            key = _key(tool, card, row)
+            record = {"tool": tool, "card": card, "owner_session": (row or {}).get("owner_session"),
+                      "status": "SENT", "attempts": 1, "first_at": moment, "last_at": moment}
+            if not _write(outbox / f"{key}.json", record, exclusive=True):
+                continue
+            message_id = f"transition_{key[:24]}_1"
+            if _letter(box, message_id, tool, _delta(record), transition_key=key):
+                out["published"].append(message_id)
     return out
 
 
 def _delta(record: dict[str, Any]) -> str:
     return (f"NEXT card {record['card']} for {record['tool']} (wake {record['attempts']}/{MAX_ATTEMPTS}): "
-            f"uaos coord next --tool {record['tool']} --claim --session <id>")
+            f"uaos coord next --tool {record['tool']} --claim --session {record.get('owner_session') or '<id>'}")
