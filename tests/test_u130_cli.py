@@ -60,8 +60,9 @@ class CardCliTest(unittest.TestCase):
         self._ledger([{"work_id": "U900-L1", "worker": "local", "input_tokens": 10}])
         review = self.root / ".coord" / "runs" / "U900-L1" / "review_agy.json"
         review.parent.mkdir(parents=True)
-        # U192: a real agy run record; a bare verdict file no longer counts.
-        review.write_text(json.dumps({"verdict": "PASS", "reviewer": "agy", "judge_conversation_id": "conv-1",
+        # U192: a record with review.py's strict agy schema; a bare verdict file no longer counts.
+        review.write_text(json.dumps({"task_id": "U900-L1", "bundle_id": "ab" * 32, "verdict": "PASS",
+                                      "reviewer": "agy", "judge_conversation_id": "conv-1",
                                       "cost_gate": "WITHIN", "usage": {"input_tokens": 500}}), encoding="utf-8")
         code, _ = run(["card", "audit", "--project", str(self.root), "--card", "U900"])
         self.assertEqual(code, 0)
