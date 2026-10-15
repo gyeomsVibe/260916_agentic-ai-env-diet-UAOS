@@ -533,6 +533,7 @@ def run_sentinel_cycle(
     ring: bool = False,
     runner: Any = None,
     sessions_dir: Path | None = None,
+    drain_runner: Any = None,
 ) -> dict[str, Any]:
     import hashlib
 
@@ -652,6 +653,18 @@ def run_sentinel_cycle(
     except Exception as exc:  # noqa: BLE001 - a broken outbox record must not stop the operator
         transition_res = {"error": f"{type(exc).__name__}: {exc}"[:200]}
 
+    # U200: the resident loop answers Antigravity letters parked at an earlier Seoul day's cap; before this only a hook
+    # turn did, so after midnight they waited for a person. backlog_ready stays false while today's cap is spent.
+    try:
+        from .agy_dispatch import backlog_ready
+        from .presence import _drain_agy_backlog
+
+        agy_backlog: Any = backlog_ready(project_root)
+        if agy_backlog:
+            _drain_agy_backlog(project_root, drain_runner, None)
+    except Exception as exc:  # noqa: BLE001 - a broken backlog entry must not stop the operator
+        agy_backlog = f"{type(exc).__name__}: {exc}"[:200]
+
     bell = ring_bell(project_root, box, runner=runner, sessions_dir=sessions_dir) if ring else {"rung": False, "reason": "RING_OFF"}
 
     wall_time_s = time.time() - t0
@@ -669,4 +682,5 @@ def run_sentinel_cycle(
         "rsi_error": rsi_error,
         "bell": bell,
         "transition": transition_res,
+        "agy_backlog": agy_backlog,
     }
