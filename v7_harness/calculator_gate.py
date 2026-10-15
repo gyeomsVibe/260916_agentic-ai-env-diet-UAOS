@@ -15,6 +15,7 @@ import sys
 GATED_PREFIX = "v7_harness/"
 LOCAL_AUTHORS = frozenset({"ollama", "local", "cascade"})  # U123: the free Ollama routes that must write the fix first
 REVIEWERS = ("agy", "codex")  # U123: independent reviewers; the conductor and the author never approve alone
+JUDGE_TOOL_NAMES = {"agy": "antigravity", "codex": "codex"}  # U200: same map as judge.JUDGE_TOOL (author names)
 FAILED_OUTCOMES = frozenset({"FAIL", "FAILED", "BLOCKED", "UNUSABLE", "REWORK", "REJECTED"})  # same set as delegation.py
 AUDIT_RE = re.compile(r"^Audit:\s*(relay_[0-9a-f]+)\s*$", re.MULTILINE)  # U123: the Antigravity audit reply id
 # U130 (agy audit relay_92fa8200): new runtime code under these prefixes needs a card whose `card audit` passes.
@@ -25,15 +26,20 @@ def _review_ok(task_dir: Path, bundle_id, ledger_rows) -> bool:
     """U123: PASS by an independent reviewer for this exact bundle; a non-Ollama author also needs a failed Ollama
     run of the same card that really called the model (U122-F1: PROMPT_TOO_LARGE had input_tokens 0)."""
     card = task_dir.name.split("-")[0]
-    for reviewer in REVIEWERS:
+    # U200: a binding `pilot judge` APPROVE (judge_<reviewer>.json) on the same bundle counts like a review PASS.
+    receipts = [(reviewer, name, passing) for reviewer in REVIEWERS
+                for name, passing in ((f"review_{reviewer}.json", "PASS"), (f"judge_{reviewer}.json", "APPROVE"))]
+    for reviewer, name, passing in receipts:
         try:
-            record = json.loads((task_dir / f"review_{reviewer}.json").read_text(encoding="utf-8"))
+            record = json.loads((task_dir / name).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if not isinstance(record, dict) or record.get("verdict") != "PASS":
+        if not isinstance(record, dict) or record.get("verdict") != passing or record.get("error"):
             continue
         if not isinstance(bundle_id, str) or not bundle_id or record.get("bundle_id") != bundle_id:
             continue
+        if record.get("author_worker") in (reviewer, JUDGE_TOOL_NAMES.get(reviewer)):
+            continue  # the author never approves its own bundle
         if record.get("author_worker") in LOCAL_AUTHORS:
             return True
         for row in ledger_rows:
