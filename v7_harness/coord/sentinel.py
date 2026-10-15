@@ -644,6 +644,14 @@ def run_sentinel_cycle(
     except Exception as exc:  # noqa: BLE001 - a broken ledger line must not stop the operator
         rsi_error = f"{type(exc).__name__}: {exc}"[:200]
 
+    # U197: the zero-paid work-transition controller (outbox, retry, P1 escalation, UNKNOWN-desk notice).
+    try:
+        from .transition import run_transitions
+
+        transition_res: dict[str, Any] = run_transitions(project_root, box)
+    except Exception as exc:  # noqa: BLE001 - a broken outbox record must not stop the operator
+        transition_res = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+
     bell = ring_bell(project_root, box, runner=runner, sessions_dir=sessions_dir) if ring else {"rung": False, "reason": "RING_OFF"}
 
     wall_time_s = time.time() - t0
@@ -660,4 +668,5 @@ def run_sentinel_cycle(
         "rsi_review_published": rsi_published,
         "rsi_error": rsi_error,
         "bell": bell,
+        "transition": transition_res,
     }
