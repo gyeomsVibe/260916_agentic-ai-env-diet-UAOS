@@ -231,7 +231,10 @@ class AuditTest(unittest.TestCase):
         run.mkdir(parents=True)
         (run / "review_agy.json").write_text(json.dumps({"verdict": "PENDING"}), encoding="utf-8")
         self.assertEqual(cp.audit(self.desk, "U900", run_dirs=[self.desk / ".coord"])["missing"], ["agy"])
-        (run / "review_agy.json").write_text(json.dumps({"verdict": "REVISE"}), encoding="utf-8")
+        # U192: only a record shaped like a real agy run counts (reviewer, conversation, budget, tokens).
+        (run / "review_agy.json").write_text(json.dumps(
+            {"verdict": "REVISE", "reviewer": "agy", "judge_conversation_id": "conv-1", "cost_gate": "WITHIN",
+             "usage": {"input_tokens": 500}}), encoding="utf-8")
         self.assertTrue(cp.audit(self.desk, "U900", run_dirs=[self.desk / ".coord"])["ok"])
 
     def test_skip_rows_count_but_task_class_not_for_code(self):

@@ -344,7 +344,7 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
                 review = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if isinstance(review, dict) and review.get("verdict") in AGY_VERDICTS:
+            if _real_agy_review(review):
                 agy_evidence.append(f"agy review {path.parent.name} {review['verdict']}")
     skips = [r for r in mine if r.get("kind") == "card_skip"]
     for skip in skips:
@@ -356,3 +356,13 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
             found.append(f"skip {reason}: {skip.get('evidence')}")
     missing = [slot for slot, found in (("ollama", ollama_evidence), ("agy", agy_evidence)) if not found]
     return {"card": card, "ok": not missing, "ollama": ollama_evidence, "agy": agy_evidence, "missing": missing}
+
+
+def _real_agy_review(review) -> bool:
+    """U192: count only a record shaped like review.py's agy run, never a hand-written verdict file."""
+    if not isinstance(review, dict) or review.get("verdict") not in AGY_VERDICTS:
+        return False
+    usage = review.get("usage")
+    tokens = int(usage.get("input_tokens") or 0) if isinstance(usage, dict) else 0
+    return (review.get("reviewer") == "agy" and bool(review.get("judge_conversation_id"))
+            and review.get("cost_gate") == "WITHIN" and tokens > 0)
