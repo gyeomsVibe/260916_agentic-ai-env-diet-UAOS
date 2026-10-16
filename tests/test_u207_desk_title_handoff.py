@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -223,6 +224,64 @@ class AgyRename(Base):
         _cid, db, ann = self._store()
         self.assertEqual("NOT_FOUND", uw.rename_agy_status("unknown-id", TITLE, db=db, annotations_dir=ann.parent,
                                                            backup_dir=self.root / "b"))
+
+
+class PartialConvergence(unittest.TestCase):
+    """Codex REVISE relay_f3895ddb frozen invariants (test SHA 46d04bcd), bodies unchanged; module import adapted."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.db = self.root / '.gemini/antigravity/conversation_summaries.db'
+        self.db.parent.mkdir(parents=True)
+        self.ann = self.db.parent / 'annotations'
+        self.thread = '11111111-1111-4111-8111-111111111111'
+        with closing(sqlite3.connect(self.db)) as con:
+            con.execute('CREATE TABLE conversation_summaries (conversation_id TEXT, title TEXT, preview TEXT)')
+            con.execute('INSERT INTO conversation_summaries VALUES (?, ?, ?)', (self.thread, 'Old', 'Old'))
+            con.commit()
+        self.claimed = uw.claim(self.root, 'antigravity', self.thread, now=datetime(2026, 10, 16), current='Old')['title']
+
+    def test_missing_annotation_store_never_reports_renamed(self):
+        status = uw.rename_agy_status(self.thread, self.claimed, db=self.db,
+                                      annotations_dir=self.ann, backup_dir=self.root / 'backup')
+        if status == 'RENAMED':
+            annotation = self.ann / f'{self.thread}.pbtxt'
+            self.assertTrue(annotation.is_file(), 'RENAMED needs an actual annotation readback')
+            self.assertEqual(self.claimed, uw._agy_annotation_title(annotation))
+
+    def test_failed_annotation_replace_does_not_become_permanently_converged(self):
+        self.ann.mkdir()
+        annotation = self.ann / f'{self.thread}.pbtxt'
+        annotation.write_text('title:"Old"\n', encoding='utf-8')
+        original_replace = uw.os.replace
+
+        def denied_annotation(source, dest):
+            if Path(dest) == annotation:
+                raise PermissionError('disposable annotation failure')
+            return original_replace(source, dest)
+
+        with mock.patch.object(uw.os, 'replace', side_effect=denied_annotation):
+            status = uw.rename_agy_status(self.thread, self.claimed, db=self.db,
+                                          annotations_dir=self.ann, backup_dir=self.root / 'backup')
+        self.assertEqual('PARTIAL', status)
+        self.assertEqual('title:"Old"\n', annotation.read_text(encoding='utf-8'))
+
+        with mock.patch.object(uw.Path, 'home', return_value=self.root):
+            uw.reconcile(self.root, 'antigravity', self.thread)
+        record = json.loads((self.root / '.coord/presence/user_windows.json').read_text(encoding='utf-8'))
+        entry = next(e for e in record['antigravity'] if e['thread'] == self.thread)
+        if entry.get('converged', False):
+            self.assertEqual(self.claimed, uw._agy_annotation_title(annotation),
+                             'DB title alone must not suppress repair while annotation still differs')
+
+    def test_disagreeing_stores_read_as_unknown(self):
+        self.ann.mkdir()
+        (self.ann / f'{self.thread}.pbtxt').write_text('title:"Other"\n', encoding='utf-8')
+        self.assertIsNone(uw._agy_title(self.thread, base=self.db.parent))
+        (self.ann / f'{self.thread}.pbtxt').write_text('title:"Old"\n', encoding='utf-8')
+        self.assertEqual('Old', uw._agy_title(self.thread, base=self.db.parent))
 
 
 if __name__ == "__main__":

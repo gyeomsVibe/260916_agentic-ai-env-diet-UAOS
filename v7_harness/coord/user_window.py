@@ -154,12 +154,13 @@ def rename_agy_status(conversation_id: str, title: str, *, db: Path | None = Non
                     shutil.copy2(source, Path(backup_dir) / f"conversation_summaries_{stamp}.db{suffix}")
             if ann.is_file():
                 shutil.copy2(ann, Path(backup_dir) / f"{conversation_id}_{stamp}.pbtxt")
-        if ann_dir.is_dir():
-            old = ann.read_text(encoding="utf-8") if ann.is_file() else ""
-            line = f'title:"{_pb_escape(title)}"'
-            new = _PB_TITLE.sub(lambda _m: line, old, count=1) if _PB_TITLE.search(old) else f"{line}  {old}"
-            temp = ann_dir / f".{conversation_id}.{stamp}.tmp"
-            temp.write_text(new if new.endswith("\n") else new + "\n", encoding="utf-8")
+        # Codex REVISE relay_f3895ddb: a missing annotation store was reported RENAMED unread; write and read it always.
+        ann_dir.mkdir(parents=True, exist_ok=True)
+        old = ann.read_text(encoding="utf-8") if ann.is_file() else ""
+        line = f'title:"{_pb_escape(title)}"'
+        new = _PB_TITLE.sub(lambda _m: line, old, count=1) if _PB_TITLE.search(old) else f"{line}  {old}"
+        temp = ann_dir / f".{conversation_id}.{stamp}.tmp"
+        temp.write_text(new if new.endswith("\n") else new + "\n", encoding="utf-8")
         sets = "title=?, preview=?" if "preview" in cols else "title=?"
         args = (title, title) if "preview" in cols else (title,)
         con.execute(f"UPDATE conversation_summaries SET {sets} WHERE conversation_id=?", args + (conversation_id,))
@@ -172,8 +173,7 @@ def rename_agy_status(conversation_id: str, title: str, *, db: Path | None = Non
                 return "PARTIAL"  # the summary row changed, the annotation did not: never reported as renamed
         got = con.execute(f"SELECT {'title, preview' if 'preview' in cols else 'title, title'} "
                           "FROM conversation_summaries WHERE conversation_id=?", (conversation_id,)).fetchone()
-        shown = _agy_annotation_title(ann) if ann_dir.is_dir() else title
-        return "RENAMED" if got and got[0] == got[1] == shown == title else "PARTIAL"
+        return "RENAMED" if got and got[0] == got[1] == _agy_annotation_title(ann) == title else "PARTIAL"
     except (sqlite3.Error, OSError):
         try:
             con.rollback()
@@ -230,15 +230,33 @@ def _read_one(uri: str, sql: str, arg: str) -> str | None:
         return None
 
 
+def _agy_title(thread: str, *, base: Path | None = None) -> str | None:
+    """Read-only: the title only when the summary title, preview and annotation agree; any disagreement or a
+    missing store is UNKNOWN (None), so a PARTIAL rename is repaired instead of converged (Codex relay_f3895ddb)."""
+    base = Path(base) if base else Path.home() / ".gemini" / "antigravity"
+    db = base / "conversation_summaries.db"
+    if not db.is_file() or not isinstance(thread, str) or not _AGY_ID.fullmatch(thread):
+        return None
+    try:
+        con = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True, timeout=5)
+        try:
+            cols = [r[1] for r in con.execute("PRAGMA table_info(conversation_summaries)").fetchall()]
+            row = con.execute(f"SELECT title, {'preview' if 'preview' in cols else 'title'} "
+                              "FROM conversation_summaries WHERE conversation_id=?", (thread,)).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    shown = _agy_annotation_title(base / "annotations" / f"{thread}.pbtxt")
+    return row[0] if row and row[0] == row[1] == shown else None
+
+
 def _current_title(tool: str, thread: str) -> str | None:
     """Read-only lookup of the thread's own title: Codex thread name, Antigravity summary title."""
     if tool == "codex":
         return _read_one(f"{_codex_db().as_uri()}?mode=ro", "SELECT name FROM threads WHERE id=?", thread)
     if tool == "antigravity":
-        db = Path.home() / ".gemini" / "antigravity" / "conversation_summaries.db"
-        if db.is_file():
-            return _read_one(f"{db.as_uri()}?mode=ro",
-                             "SELECT title FROM conversation_summaries WHERE conversation_id=?", thread)
+        return _agy_title(thread)
     if tool == "claude":
         return _claude_title(thread)
     return None
