@@ -154,10 +154,14 @@ class Adapters(unittest.TestCase):
     def test_hook_line_for_claude_asks_for_the_rename(self):
         project = self.root / "p"
         (project / ".coord").mkdir(parents=True)
-        line = uw.on_prompt(project, "claude", "s1", "지금부터 여기가 사용자 대상 대화창구이다.", now=NOW)
+        with mock.patch.object(uw, "_current_title", return_value=None):
+            line = uw.on_prompt(project, "claude", "s1", "지금부터 여기가 사용자 대상 대화창구이다.", now=NOW)
         self.assertIn("[사용자 대화창구-261004-1]", line)
         self.assertIn("set_session_title", line)
-        self.assertEqual("", uw.on_prompt(project, "claude", "s1", "고쳐줘", now=NOW))
+        # U207: a non-declaring prompt no longer claims anything new, but it re-issues the rename until the
+        # session's own title shows it (the one-shot line was lost on 10-16); a shown title ends it.
+        with mock.patch.object(uw, "_current_title", return_value="[사용자 대화창구-261004-1]"):
+            self.assertEqual("", uw.on_prompt(project, "claude", "s1", "고쳐줘", now=NOW))
         record = json.loads((project / ".coord" / "presence" / "user_windows.json").read_text(encoding="utf-8"))
         self.assertIn("claude", record)
 
