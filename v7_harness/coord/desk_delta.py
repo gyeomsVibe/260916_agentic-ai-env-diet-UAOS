@@ -200,6 +200,49 @@ def _wake_note(path: Path) -> str:
     return f" [wake INVALID: {diag}]" if cls == "INVALID" else ""
 
 
+def _replay_bound(project: Path, tool: str, session: str | None, letter: Path, memo: dict | None = None) -> bool:
+    if not session or tool not in TOOLS or not _addressed_to(letter, tool):
+        return False
+    card = _payload(letter).get("card", "")
+    if not isinstance(card, str):
+        return False
+    try:
+        if card:
+            from .windows import window_for
+            return window_for(project, card, tool) == session
+        from .desk_sync import desk_identity
+        memo = {} if memo is None else memo
+        if "desk" not in memo:
+            memo["desk"] = desk_identity(project, tool)
+        status, identity = memo["desk"]
+        return status == "PROJECT_BOUND" and identity.get("thread") == session
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _replay_letters(project: Path, tool: str, session: str | None) -> list[Path]:
+    from .mailbox import _is_symlink_or_reparse
+    inbox = project / ".coord" / "mailbox" / "inbox"
+    acked = inbox.parent / "ack"
+    ordered = []
+    memo: dict = {}
+    for letter in inbox.glob("*.json"):
+        try:
+            if not letter.is_file() or _is_symlink_or_reparse(letter) or own_letter(letter, tool):
+                continue
+            if (acked / letter.name).exists() or not _replay_bound(project, tool, session, letter, memo):
+                continue
+            ordered.append((letter.stat().st_mtime_ns, letter.name, letter))
+        except (OSError, ValueError):
+            continue
+    return [entry[2] for entry in sorted(ordered)]
+
+
+def _replay_urgent(letter: Path) -> bool:
+    body = _payload(letter)
+    return body.get("kind") == "P1" or body.get("p1_alert") is True or body.get("verdict_requested") is True
+
+
 def prepare_delta(project: Path, tool: str, session: str | None = None,
                   now: float | None = None) -> tuple[str, Callable[[], None]]:
     """U141-A: build the delta text without advancing anything; call the returned ack() only after it was written.
@@ -223,6 +266,10 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
     unshown_before = [name for name in cursor.get("unshown", []) if isinstance(name, str)] \
         if isinstance(cursor.get("unshown"), list) else []
     items: list[tuple[str, Path | None]] = []
+    replay = _replay_letters(project, tool, session)
+    if replay:
+        head = replay[0]
+        items.append((f"RESUME_PENDING {head.stem}: read stored letter, process in order; coord ack only after disposition. {summary_of(head)}", head))
     # U163: a peer's user-desk change leads the delta; its cursor advances in ack(), after the text was written.
     from v7_harness.coord import desk_sync
 
@@ -242,9 +289,11 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
     recovered: list[Path] = []
     if inbox.is_dir():
         for letter in sorted(inbox.glob("*.json")):
+            if letter in replay and (letter == replay[0] or not _replay_urgent(letter)):
+                continue
             if not letter.is_file() or own_letter(letter, tool):
                 continue
-            fresh = _mtime(letter) > since
+            fresh = _mtime(letter) > since or (letter in replay and _replay_urgent(letter))
             if not fresh and letter.stem not in unshown_before:
                 # U141-A crash recovery: shown before (cursor written) but its receipt was never acked.
                 if had_cursor and letter.stem in pending:
@@ -255,8 +304,14 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
             else:
                 letters.append(letter)
     letters.sort(key=lambda p: (p.stem not in unshown_before, _mtime(p), p.name))
+    urgent_items = []
     for letter in letters:
-        items.append((f"letter {letter.stem}{_wake_note(letter)}: {summary_of(letter)}", letter))
+        item = (f"letter {letter.stem}{_wake_note(letter)}: {summary_of(letter)}", letter)
+        if letter in replay and _replay_urgent(letter):
+            urgent_items.append(item)
+        else:
+            items.append(item)
+    items[1:1] = urgent_items
     items.extend((item, None) for item in absence_items(project, since, tool))
     for actor, group in events.items():
         items.append((f"{len(group)} run event(s) from {actor}, newest {group[-1].stem}: {summary_of(group[-1])}", None))
