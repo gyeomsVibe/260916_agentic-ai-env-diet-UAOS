@@ -1584,10 +1584,19 @@ def _cmd_coord_sentinel(args: argparse.Namespace) -> int:
     return 0
 
 
+# U207-B G2: presence hooks run under a 10 s timeout (global_install) and the runner drops the output of a killed hook.
+# The ack after the emit takes milliseconds but can wait on a held lock, so an ack not started within 6 s is left to the
+# next hook (U141-A shows unacked letters again) and 4 s stay for the cursor write and the exit.
+HOOK_ACK_BUDGET_S = 6.0
+
+
 def cmd_coord_presence(args: argparse.Namespace) -> int:
     """U32b: record one tool's heartbeat, or show all three. Called from each tool's session hooks."""
+    import time
+
     from .coord.presence import conductor, hook_turn_start, mark, read_all
 
+    started = time.monotonic()  # U207-B G2: post-emit work is skipped once the hook used HOOK_ACK_BUDGET_S
     say = getattr(args, "say", "json")
 
     shown = {"user": "", "event": ""}  # U147: the in-app line for 윤겸스 and the hook event that carries it
@@ -1601,6 +1610,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 out["hookSpecificOutput"] = {"hookEventName": "PostToolUse", "additionalContext": line}
             if out:
                 print(json.dumps(out, ensure_ascii=False))
+            sys.stdout.flush()  # U207-B G2: the line leaves the process before any post-emit work can be killed
             return
         if user and say in ("brief", "p1", "none"):
             # U147: Claude Code and Codex show `systemMessage` to the user, not the model (0 tokens); the model's
@@ -1619,6 +1629,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
         elif say == "agy":
             # Antigravity reads one JSON object on stdout; a skip, an error or an unchanged line prints {}.
             print(json.dumps({"injectSteps": [{"ephemeralMessage": line}]}, ensure_ascii=False) if line else "{}")
+        sys.stdout.flush()  # U207-B G2: a pipe is block-buffered; a runner kill after this point loses nothing
 
     if getattr(args, "desk_thread", None) is not None:
         from .coord import desk_sync
@@ -1682,6 +1693,19 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 except Exception:  # noqa: BLE001 - a hook never fails the session
                     pass
             window_line = ""
+            # U207-B G3: an older declared desk of this tool is handed off. It gets one line instead of its desk duties
+            # (letters and their wake receipts, stall reroutes), so work stops landing in yesterday's window.
+            handed_off = ""
+            if args.tool and args.delta:
+                try:
+                    from .coord.user_window import handoff_line
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    event = event if isinstance(event, dict) else {}
+                    handed_off = handoff_line(project, args.tool,
+                                              hook_session(stdin_text) or str(event.get("conversationId") or ""))
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    handed_off = ""
             # U154: only the per-prompt hook global_install writes (`--delta`, all 3 tools) runs U150. Claude's project
             # hook has no --delta and got byte-identical stdin, so it recorded every prompt a second time.
             if args.tool and args.delta:
@@ -1713,7 +1737,8 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 try:
                     from .coord.stall import hook_lines
 
-                    window_line = "\n".join(p for p in (window_line, hook_lines(project, args.tool)) if p)
+                    if not handed_off:
+                        window_line = "\n".join(p for p in (window_line, hook_lines(project, args.tool)) if p)
                 except Exception:  # noqa: BLE001 - a hook never fails the session
                     pass
             if args.tool and args.state:
@@ -1743,7 +1768,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 # U105: removed first-call limit (invocationNum 0) so a letter arriving mid-turn is heard at next call
                 session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
                 # U141-A: the cursor and the wake receipts advance only after the output below was written.
-                text, ack = prepare_delta(project, args.tool, session)
+                text, ack = (handed_off, None) if handed_off else prepare_delta(project, args.tool, session)
                 line = "\n".join(part for part in (line, text) if part)
                 if say != "agy":  # Antigravity's user-visible hook field is UNKNOWN; its line stays model-facing
                     from .coord.board import letters_in, line_is_new, status_line
@@ -1756,7 +1781,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                         pass
             line = "\n".join(part for part in (window_line, line) if part)
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
-            if ack is not None:
+            if ack is not None and time.monotonic() - started < HOOK_ACK_BUDGET_S:
                 try:
                     ack()
                 except Exception:  # noqa: BLE001 - a failed ack shows the same letters again next time; never a crash

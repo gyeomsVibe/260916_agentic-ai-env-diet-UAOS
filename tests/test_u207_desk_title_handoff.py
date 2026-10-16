@@ -284,5 +284,183 @@ class PartialConvergence(unittest.TestCase):
         self.assertEqual('Old', uw._agy_title(self.thread, base=self.db.parent))
 
 
+# U207-B G3 (2026-10-16 report: work kept landing in yesterday's window). Newest declared desk per tool is PRIMARY,
+# older desks are HANDED_OFF and get no desk duties; a pinned desk (letter relay_d9051ebd: conversation 2c90de24
+# [사용자 대화창구-261005-1] keeps its prior process) is never handed off.
+def _declare(project, tool, thread, day, *, current=None):
+    with mock.patch.object(uw, "_current_title", return_value=current), \
+            mock.patch.object(uw, "_codex_names", return_value=[]), \
+            mock.patch.object(uw, "rename_agy_status", return_value="RENAMED"):
+        return uw.on_prompt(project, tool, thread, DECLARE, now=datetime(2026, 10, day, 9, 0, 0))
+
+
+class DeskHandoff(Base):
+    def test_newest_declared_desk_is_primary_and_older_are_handed_off(self):
+        _declare(self.project, "claude", "old", 15)
+        time.sleep(0.01)
+        _declare(self.project, "claude", "new", 16)
+        self.assertEqual("PRIMARY", uw.desk_role(self.project, "claude", "new"))
+        self.assertEqual("HANDED_OFF", uw.desk_role(self.project, "claude", "old"))
+        self.assertEqual("NONE", uw.desk_role(self.project, "claude", "worker"))
+        old = next(e for e in _registry(self.project)["claude"] if e["thread"] == "old")
+        self.assertEqual("new", old.get("handed_off_to"))  # marked in the registry, not only computed
+
+    def test_tools_hand_off_independently(self):
+        _declare(self.project, "codex", "c-old", 15)
+        time.sleep(0.01)
+        _declare(self.project, "claude", "k-new", 16)
+        self.assertEqual("PRIMARY", uw.desk_role(self.project, "codex", "c-old"))
+
+    def test_pinned_desk_is_never_handed_off(self):
+        _declare(self.project, "antigravity", "pinned", 5)
+        self.assertTrue(uw.pin(self.project, "antigravity", "pinned"))
+        time.sleep(0.01)
+        _declare(self.project, "antigravity", "new", 16)
+        self.assertEqual("PINNED", uw.desk_role(self.project, "antigravity", "pinned"))
+        self.assertEqual("PRIMARY", uw.desk_role(self.project, "antigravity", "new"))
+        entry = next(e for e in _registry(self.project)["antigravity"] if e["thread"] == "pinned")
+        self.assertNotIn("handed_off_to", entry)
+        self.assertEqual("", uw.handoff_line(self.project, "antigravity", "pinned"))
+        self.assertFalse(uw.pin(self.project, "antigravity", "not-a-desk"))
+
+    def test_handed_off_desk_gets_no_rename_duty(self):
+        _declare(self.project, "claude", "old", 15)  # never converged: title readback was UNKNOWN
+        time.sleep(0.01)
+        _declare(self.project, "claude", "new", 16)
+        with mock.patch.object(uw, "_current_title", side_effect=AssertionError("no readback for a handed-off desk")):
+            self.assertEqual("", uw.on_prompt(self.project, "claude", "old", "진행상황", now=NOW))
+
+    def test_redeclaring_an_old_window_makes_it_primary_again(self):
+        _declare(self.project, "claude", "a", 15)
+        time.sleep(0.01)
+        _declare(self.project, "claude", "b", 16)
+        time.sleep(0.01)
+        _declare(self.project, "claude", "a", 16)
+        self.assertEqual("PRIMARY", uw.desk_role(self.project, "claude", "a"))
+        self.assertEqual("HANDED_OFF", uw.desk_role(self.project, "claude", "b"))
+        entry = next(e for e in _registry(self.project)["claude"] if e["thread"] == "a")
+        self.assertNotIn("handed_off_to", entry)
+
+    def test_handoff_line_names_the_primary_desk(self):
+        _declare(self.project, "claude", "old", 15)
+        time.sleep(0.01)
+        _declare(self.project, "claude", "new", 16)
+        line = uw.handoff_line(self.project, "claude", "old")
+        self.assertIn("[사용자 대화창구-261016-1]", line)
+        self.assertIn("[사용자 대화창구-261015-1]", line)
+        self.assertEqual("", uw.handoff_line(self.project, "claude", "new"))
+        self.assertEqual("", uw.handoff_line(self.project, "claude", "worker"))
+
+    def test_legacy_registry_without_marks_uses_declaration_time(self):
+        folder = self.project / ".coord" / "presence"
+        folder.mkdir(parents=True)
+        (folder / "user_windows.json").write_text(json.dumps({"claude": [
+            {"thread": "y", "title": "[사용자 대화창구-261015-1]", "date": "261015", "at": 100.0},
+            {"thread": "t", "title": "[사용자 대화창구-261016-1]", "date": "261016", "at": 200.0, "converged": True},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual("HANDED_OFF", uw.desk_role(self.project, "claude", "y"))
+        self.assertEqual("PRIMARY", uw.desk_role(self.project, "claude", "t"))
+
+    def test_unreadable_registry_is_none_never_handed_off(self):
+        folder = self.project / ".coord" / "presence"
+        folder.mkdir(parents=True)
+        (folder / "user_windows.json").write_text("{broken", encoding="utf-8")
+        self.assertEqual("NONE", uw.desk_role(self.project, "claude", "y"))
+
+
+ROOT = Path(__file__).resolve().parent.parent
+# U207-B G2: the runner may stop the hook after it printed (timeout kill). os._exit right after the emit skips the
+# interpreter's own flush exactly as a kill does, so only a line flushed by the emit itself survives.
+KILL_AFTER_EMIT = r"""
+import os, sys
+from v7_harness import cli
+from v7_harness.coord import desk_delta, user_window
+user_window.on_prompt = lambda *a, **k: "USER WINDOW: marker-g2"
+desk_delta.prepare_delta = lambda *a, **k: ("DESK DELTA marker", lambda: os._exit(0))
+cli.main(sys.argv[1:])
+"""
+
+
+def _hook(project, tool, say, payload, *, script=KILL_AFTER_EMIT):
+    import os
+    import subprocess
+    import sys
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8", "UAOS_WORKER")}
+    env["PYTHONPATH"] = str(ROOT)
+    return subprocess.run(
+        [sys.executable, "-c", script, "coord", "presence", "--project", str(project), "--from-hook",
+         "--tool", tool, "--state", "ACTIVE", "--say", say, "--delta"],
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"), capture_output=True, env=env,
+        cwd=str(ROOT), timeout=120)
+
+
+class HookFlush(Base):
+    def setUp(self):
+        super().setUp()
+        (self.project / ".coord" / "PLAN.md").write_text("", encoding="utf-8")
+
+    def test_line_survives_a_stop_right_after_the_emit_for_each_tool(self):
+        cases = (("claude", "none", {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "x"}),
+                 ("codex", "none", {"hook_event_name": "UserPromptSubmit", "session_id": "t1", "prompt": "x"}),
+                 ("antigravity", "agy", {"conversationId": "c1", "invocationNum": 1}))
+        for tool, say, payload in cases:
+            with self.subTest(tool=tool):
+                done = _hook(self.project, tool, say, payload)
+                self.assertEqual(0, done.returncode, done.stderr.decode("utf-8", "replace"))
+                self.assertIn("DESK DELTA marker", done.stdout.decode("utf-8"))
+
+    def test_ack_is_skipped_once_the_hook_used_its_budget(self):
+        script = KILL_AFTER_EMIT.replace("lambda: os._exit(0)", "lambda: os._exit(7)").replace(
+            "cli.main(", "cli.HOOK_ACK_BUDGET_S = 0.0\ncli.main(")
+        done = _hook(self.project, "claude", "none",
+                     {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "x"}, script=script)
+        self.assertEqual(0, done.returncode)  # ack (exit 7) never ran: an unacked delta is shown again next time
+        self.assertIn("DESK DELTA marker", done.stdout.decode("utf-8"))
+
+
+HANDED_OFF_HOOK = r"""
+import sys
+from v7_harness import cli
+from v7_harness.coord import desk_delta, stall
+def boom(*a, **k):
+    raise SystemExit("prepare_delta ran for a handed-off desk")
+desk_delta.prepare_delta = boom
+stall.hook_lines = lambda *a, **k: "STALL reroute vote"
+cli.main(sys.argv[1:])
+"""
+
+
+class HandedOffHook(Base):
+    def setUp(self):
+        super().setUp()
+        (self.project / ".coord" / "PLAN.md").write_text("", encoding="utf-8")
+        folder = self.project / ".coord" / "presence"
+        folder.mkdir(parents=True)
+        (folder / "user_windows.json").write_text(json.dumps({"claude": [
+            {"thread": "y", "title": "[사용자 대화창구-261015-1]", "date": "261015", "at": 100.0, "converged": True},
+            {"thread": "t", "title": "[사용자 대화창구-261016-1]", "date": "261016", "at": 200.0, "converged": True},
+        ]}, ensure_ascii=False), encoding="utf-8")
+
+    def test_handed_off_desk_gets_the_handoff_line_and_no_letters(self):
+        done = _hook(self.project, "claude", "none",
+                     {"hook_event_name": "UserPromptSubmit", "session_id": "y", "prompt": "진행상황"},
+                     script=HANDED_OFF_HOOK)
+        out = done.stdout.decode("utf-8")
+        self.assertEqual(0, done.returncode, done.stderr.decode("utf-8", "replace"))
+        self.assertIn("HANDED-OFF DESK", out)
+        self.assertIn("[사용자 대화창구-261016-1]", out)
+        self.assertNotIn("STALL reroute vote", out)
+
+    def test_primary_desk_still_gets_its_delta(self):
+        script = HANDED_OFF_HOOK.replace("desk_delta.prepare_delta = boom",
+                                         "desk_delta.prepare_delta = lambda *a, **k: ('DESK DELTA primary', lambda: None)")
+        done = _hook(self.project, "claude", "none",
+                     {"hook_event_name": "UserPromptSubmit", "session_id": "t", "prompt": "진행상황"}, script=script)
+        out = done.stdout.decode("utf-8")
+        self.assertIn("DESK DELTA primary", out)
+        self.assertIn("STALL reroute vote", out)
+        self.assertNotIn("HANDED-OFF DESK", out)
+
+
 if __name__ == "__main__":
     unittest.main()

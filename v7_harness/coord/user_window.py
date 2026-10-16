@@ -83,6 +83,8 @@ def claim(project: Path, tool: str, thread: str, *, now: datetime | None = None,
         entries = record.setdefault(tool, [])
         for entry in entries:
             if entry.get("thread") == thread:
+                _mark_primary(entries, entry)  # U207-B: a fresh declaration makes this window the primary again
+                _save(record_path, record)
                 return {"title": entry["title"], "new": False, "tool": tool, "thread": thread}
         date = (now or datetime.now()).strftime("%y%m%d")
         kept = TITLE_RE.search(current or "")
@@ -93,9 +95,8 @@ def claim(project: Path, tool: str, thread: str, *, now: datetime | None = None,
                 numbers.append(int(match.group(2)))
         title = kept.group(0) if kept else f"{TITLE_PREFIX}{date}-{max(numbers) + 1}]"
         entries.append({"thread": thread, "title": title, "date": kept.group(1) if kept else date, "at": time.time()})
-        temp = record_path.with_name(f"{record_path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
-        temp.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(temp, record_path)
+        _mark_primary(entries, entries[-1])
+        _save(record_path, record)
         return {"title": title, "new": not kept, "tool": tool, "thread": thread}
     finally:
         stack.close()
@@ -342,6 +343,8 @@ def reconcile(project: Path, tool: str, thread: str, *, now: datetime | None = N
         if isinstance(record, dict) else None
     if not entry or entry.get("converged") or entry.get("title_state") == "BLOCKED":
         return ""  # converged desks cost no readback at all
+    if desk_role(project, tool, thread) == "HANDED_OFF":
+        return ""  # U207-B: a handed-off desk keeps its title and gets no rename duty
     title = entry["title"]
     if _shows(_current_title(tool, thread), title):
         _entry_change(project, tool, thread, _converge)
@@ -371,3 +374,66 @@ def on_prompt(project: Path, tool: str, thread: str, prompt, *, now: datetime | 
 
     _entry_change(project, tool, thread, restart)
     return _instruction(project, tool, thread, title, now)
+
+
+def desk_role(project: Path, tool: str, thread: str) -> str:
+    """U207-B: PRIMARY is the newest declared desk of a tool, HANDED_OFF an older one (no desk duties), PINNED a desk
+    kept on its prior process (letter relay_d9051ebd), NONE no desk or an unreadable registry (never handed off)."""
+    try:
+        record = json.loads((_presence(project) / "user_windows.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "NONE"
+    entries = [e for e in (record.get(tool) or []) if isinstance(e, dict)] if isinstance(record, dict) else []
+    entry = next((e for e in entries if thread and e.get("thread") == thread), None)
+    if entry is None:
+        return "NONE"
+    if entry.get("pinned"):
+        return "PINNED"
+    newest = max((e for e in entries if not e.get("pinned")), key=lambda e: float(e.get("at") or 0))
+    return "PRIMARY" if newest is entry else "HANDED_OFF"
+
+
+def pin(project: Path, tool: str, thread: str) -> bool:
+    """U207-B: a pinned desk keeps its prior process and is never handed off (letter relay_d9051ebd)."""
+    def mark(entry: dict) -> bool:
+        entry["pinned"] = True
+        entry.pop("handed_off_to", None)
+        entry.pop("handed_off_at", None)
+        return True
+
+    return bool(_entry_change(project, tool, thread, mark))
+
+
+def handoff_line(project: Path, tool: str, thread: str) -> str:
+    """U207-B: the one line a handed-off desk gets instead of its desk duties; empty for every other role."""
+    if desk_role(project, tool, thread) != "HANDED_OFF":
+        return ""
+    try:
+        record = json.loads((_presence(project) / "user_windows.json").read_text(encoding="utf-8"))
+        entries = [e for e in (record.get(tool) or []) if isinstance(e, dict)]
+    except (OSError, ValueError, AttributeError):
+        return ""
+    own = next((e for e in entries if e.get("thread") == thread), None)
+    primary = max((e for e in entries if not e.get("pinned")), key=lambda e: float(e.get("at") or 0), default=None)
+    if own is None or primary is None or primary is own:
+        return ""  # the registry changed between the two reads: say nothing rather than guess
+    return (f"HANDED-OFF DESK: this {tool} window {own.get('title')} was handed off to {primary.get('title')}; "
+            "desk duties (letters, wakes, reroutes, renames) go there. Answer only what 윤겸스 types here, finish an "
+            "already-owned card to a safe point, and take no new work.")
+
+
+def _save(record_path: Path, record: dict) -> None:
+    temp = record_path.with_name(f"{record_path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    temp.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(temp, record_path)
+
+
+def _mark_primary(entries: list, found: dict) -> None:
+    """U207-B: `found` was just declared, so it is the primary desk; every older desk of the tool is marked handed
+    off to it, and a pinned desk never is (letter relay_d9051ebd)."""
+    found.pop("handed_off_to", None)
+    found.pop("handed_off_at", None)
+    found["at"] = time.time()
+    for other in entries:
+        if other is not found and not other.get("pinned") and other.get("handed_off_to") != found.get("thread"):
+            other.update(handed_off_to=found.get("thread"), handed_off_at=found["at"])
