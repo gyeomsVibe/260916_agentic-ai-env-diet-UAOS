@@ -158,6 +158,15 @@ def _end(children, sleep) -> None:
             child.kill()
 
 
+def _version(home) -> str:
+    """The installed runtime version (runtime_install current.json); '' when unreadable."""
+    try:
+        return str(json.loads((Path(home) / ".uaos" / "runtime" / "current.json").read_text(encoding="utf-8"))
+                   .get("version", ""))
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
 def launch(home, python: str | None = None, sleep=time.sleep) -> int:
     """Start one sentinel loop per project and supervise all of them: 0 when no owned loop is left and none failed.
 
@@ -168,17 +177,30 @@ def launch(home, python: str | None = None, sleep=time.sleep) -> int:
     home = Path(home)
     owned = []  # (project, child) pairs this launcher started and has not yet seen supervised elsewhere
     failure = None
+
+    def start(root):
+        log = Path(root) / ".work" / "sentinel" / "sentinel.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        return subprocess.Popen(
+            [python or sys.executable, str(home / ".uaos" / "uaos.py"), "coord", "sentinel", "--project", root,
+             "--loop", "--interval", str(INTERVAL_S), "--write-brief", "--log", str(log)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     try:
+        version = _version(home)
         for root in projects(home):
-            log = Path(root) / ".work" / "sentinel" / "sentinel.log"
-            log.parent.mkdir(parents=True, exist_ok=True)
-            owned.append((root, subprocess.Popen(
-                [python or sys.executable, str(home / ".uaos" / "uaos.py"), "coord", "sentinel", "--project", root,
-                 "--loop", "--interval", str(INTERVAL_S), "--write-brief", "--log", str(log)],
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
+            owned.append((root, start(root)))
         if sys.stdout is not None:  # pythonw has no console
             print(json.dumps({"ok": True, "children": [child.pid for _root, child in owned]}), flush=True)
         while owned and failure is None:
+            # U206: a loop never re-imports its code, so a new runtime install restarts every owned loop on it
+            # (receipt 2026-10-16: the loop started 10-15 22:09 never ran the U200/U203 installs).
+            # An unreadable pointer ('', mid-install) is no new version: it would restart twice (relay_bcc4ae4a, defect 2)
+            current = _version(home)
+            if current and current != version:
+                version = current
+                _end([child for _root, child in owned], sleep)
+                owned = [(root, start(root)) for root, _child in owned]
             for root, child in list(owned):
                 code = child.poll()
                 if code is None:
