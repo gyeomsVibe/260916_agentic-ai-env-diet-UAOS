@@ -84,7 +84,7 @@ def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedul
                     if not isinstance(phases, list) or not all(isinstance(p, dict) for p in phases) or not isinstance(expected, dict):
                         return False
                     matches = [p for p in phases if p.get("phase_id") == card]
-                    keys = ("phase_id", "state", "owner_tool", "owner_session")
+                    keys = ("phase_id", "state", "owner_tool", "owner_session", "worktree")
                     if len(matches) != 1 or any((k in matches[0], matches[0].get(k)) != (k in expected, expected.get(k)) for k in keys):
                         return False
                 except (OSError, ValueError, KeyError, TypeError):
@@ -151,6 +151,19 @@ def _automatic_pending(phase, states) -> bool:
     return _caps_available(phase)
 
 
+def _bound_here(phase: dict, project: Path) -> bool:
+    """U196: a phase that names a worktree is claimable only from that existing checkout (Codex relay_189466e7)."""
+    if "worktree" not in phase:
+        return True
+    where = phase["worktree"]
+    if not isinstance(where, str) or not where:
+        return False
+    try:
+        return Path(where).is_dir() and os.path.samefile(where, project)
+    except OSError:
+        return False
+
+
 def next_step(project: Path, tool: str, claim: bool = False, session: str | None = None,
               now: float | None = None) -> dict[str, Any]:
     project = Path(project)
@@ -199,6 +212,10 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
             if not session:
                 # U146a-R: PID-only ownership is refused; an unknown session claims nothing (a plain read still names it).
                 return {"state": "WAIT", "reason": "a claim needs a session id (U146a-R)", "card": card}
+            if not _bound_here(p, project):
+                # U196: a wrong or missing checkout claims nothing and writes no claim file
+                return {"state": "WAIT", "code": "WORKTREE_MISMATCH", "card": card,
+                        "reason": "phase.worktree is not this existing checkout"}
             # The claim lives beside the schedule, so every worktree sees the same claims (R5).
             claims = path.parent / "next" / "claims"
             sha = None

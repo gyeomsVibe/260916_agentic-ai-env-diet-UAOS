@@ -1,6 +1,6 @@
-# U196-REROUTE-BINDING — handoff (Claude usage limit, 2026-10-16)
-- State: local (Ollama) run2 SUCCEEDED, acceptance_exit=0, verdict_hint=PASS, promotion DRY_RUN_PASSED; NOT yet approved into source (judge-only --approve).
-- Bundle: 926884b608c7de0f406541e884ae5002d48762ff2ae39aa54e62e42d2c45e4e1, work-dir /d/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.claude/worktrees/affectionate-volhard-3f8f4d/.work/u196/run2, manual /d/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.claude/worktrees/affectionate-volhard-3f8f4d/.work/u196/manual2.md
-- Change: next_card._bound_here + claim returns WAIT/WORKTREE_MISMATCH when phase.worktree is not the claimant's existing checkout (samefile). Phases without 'worktree' unchanged.
-- Repro test: tests/test_u196_worktree_binding.py (red before: 9 failed; green in staged run).
-- Left: Codex approve bundle (pilot run --approve) -> Antigravity review -> card audit -> PR -> exact-head verdict -> coord merge -> runtime_install --apply -> install --check drift=[] -> frozen test (sys.path line pointed at new runtime) -> RESULT line.
+# U196-REROUTE-BINDING — result
+- Change: next_card._bound_here; a claim returns WAIT/WORKTREE_MISMATCH unless phase.worktree is the claimant's existing checkout (samefile); the claim lock also re-checks `worktree` (atomic reassignment refused). Phases without `worktree` unchanged.
+- Bundle 38ccf4d0 (Codex apply4, APPLIED); staged next_card.py sha256 2e56491c… equals the bundle stage byte-for-byte (CR stripped).
+- Verdicts: Codex judge 01a14388 APPROVE; Antigravity 5eaff82f PASS; combined audit relay_c34b1088 PASS; card audit U196 ok, missing [].
+- Tests: Codex full pytest 2283 passed / 6 skipped exit 0; author focused set 89 passed exit 0 (.work/u196/accept_final.log).
+- Receipt: .coord/reviews/U196-reviewed-release-policy-block-20261016.json. Scope: worktree substep only; native-identity scope not DONE.
