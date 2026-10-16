@@ -673,6 +673,14 @@ def run_sentinel_cycle(
     except Exception as exc:  # noqa: BLE001 - a broken stall state must not stop the operator
         stall_res = f"{type(exc).__name__}: {exc}"[:200]
 
+    # U205: wake the owner of a ready step nobody started; the U166/U203 scan covers only waiting states
+    try:
+        from .owner_wake import wake_owners
+
+        owner_res: Any = wake_owners(project_root, box, now=time.time())
+    except Exception as exc:  # noqa: BLE001 - a broken schedule must not stop the operator
+        owner_res = f"{type(exc).__name__}: {exc}"[:200]
+
     bell = ring_bell(project_root, box, runner=runner, sessions_dir=sessions_dir) if ring else {"rung": False, "reason": "RING_OFF"}
 
     wall_time_s = time.time() - t0
@@ -691,4 +699,5 @@ def run_sentinel_cycle(
         "bell": bell,
         "transition": transition_res,
         "agy_backlog": agy_backlog,
+        "owner_wake": owner_res,
     }
