@@ -27,6 +27,9 @@ from .presence import TOOLS
 # Half the Claude main-session cache lifetime (1 h, global rules): a reroute starts before a resumed waiting session
 # pays a full cache rebuild, and a normal review round trip (minutes) never trips it.
 MAX_WAIT_S = 1800
+# U203: a ballot open for two vote windows (a vote expires after MAX_WAIT_S) without every ACTIVE tool is held
+# by an idle tool, not a deciding one; its missing vote no longer holds the reroute (Raft-style election timeout).
+QUORUM_TIMEOUT_S = 2 * MAX_WAIT_S
 # Who can do each kind of step, in order of preference. merge: 윤겸스's order (merge_route.MERGERS). verdict: Codex
 # conducts, Antigravity is the independent judge when it is away. letter: any peer that can read and act on it.
 # implement: Claude is the default implementer (global rules), then Antigravity, then Codex.
@@ -156,7 +159,7 @@ def action(wait: dict[str, Any], owner: str) -> str:
     return f"{owner} takes the step"
 
 
-def scan(project: Path, tool: str, *, now: float | None = None,
+def scan(project: Path, tool: str | None, *, now: float | None = None,
          desk: dict[str, dict[str, Any]] | None = None, max_wait_s: int = MAX_WAIT_S) -> dict[str, Any]:
     from .next_card import coord_root
     from .stream import _exclusive
@@ -222,23 +225,30 @@ def scan(project: Path, tool: str, *, now: float | None = None,
             if (not isinstance(ballot, dict) or ballot.get("owner") != owners[0]
                     or ballot.get("since") != wait["since"] or not isinstance(ballot.get("by"), dict)):
                 ballot = {"owner": owners[0], "since": wait["since"], "by": {}}
+            ballot.setdefault("opened", moment)  # U203: when this wait instance first had a ballot
             ballot["by"] = {t: ts for t, ts in ballot["by"].items()
                             if isinstance(ts, (int, float)) and moment - ts < max_wait_s}
-            ballot["by"][tool] = moment
+            if tool:  # U203: the sentinel scans without a vote of its own
+                ballot["by"][tool] = moment
             votes[wait["item"]] = ballot
             voters = sorted(ballot["by"])
             entry.update({"owner": owners[0], "action": action(wait, owners[0]), "voters": voters,
                           "present": present})
             result["stalled"].append(entry)
-            if schedule is not None and present and set(present) <= set(voters):
+            timed_out = moment - float(ballot["opened"]) >= QUORUM_TIMEOUT_S
+            if schedule is not None and present and (set(present) <= set(voters) or timed_out):
                 note = "U166 reroute: waiting is a failure"
                 original = next((p for p in schedule.get("phases") or [] if isinstance(p, dict)
                                  and wait["item"] == f"phase:{p.get('phase_id')}"), None)
                 if original is not None:
                     # Reassign the waiting phase itself, so its dependents stay linked and the tool that was waited
                     # on cannot take the same step again when it returns (Codex judge U166-APPLY3, finding 2).
-                    original["rerouted_from"] = {k: original.get(k) for k in ("owner_tool", "state", "waiting_on")}
+                    original["rerouted_from"] = {k: original.get(k) for k in
+                                                 ("owner_tool", "owner_session", "state", "waiting_on")}
                     original.pop("waiting_on", None)
+                    # U203: the old owner's session would bind the transition wake to a thread the new owner
+                    # cannot ack
+                    original.pop("owner_session", None)
                     original.update({"state": "READY", "owner_tool": owners[0], "action": entry["action"],
                                      "agreed_by": present, "note": note})
                     phase_id = str(original["phase_id"])

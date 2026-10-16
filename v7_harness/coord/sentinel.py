@@ -665,6 +665,14 @@ def run_sentinel_cycle(
     except Exception as exc:  # noqa: BLE001 - a broken backlog entry must not stop the operator
         agy_backlog = f"{type(exc).__name__}: {exc}"[:200]
 
+    # U203: the resident loop also runs the U166 stall scan, so a reroute does not wait for some tool's next turn
+    try:
+        from . import stall
+
+        stall_res: Any = stall.scan(project_root, None)["adopted"]
+    except Exception as exc:  # noqa: BLE001 - a broken stall state must not stop the operator
+        stall_res = f"{type(exc).__name__}: {exc}"[:200]
+
     bell = ring_bell(project_root, box, runner=runner, sessions_dir=sessions_dir) if ring else {"rung": False, "reason": "RING_OFF"}
 
     wall_time_s = time.time() - t0
