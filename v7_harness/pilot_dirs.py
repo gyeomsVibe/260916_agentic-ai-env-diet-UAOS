@@ -14,5 +14,8 @@ def discover(project: Path) -> list[Path]:
     candidates = [project / ".coord" / "pilot", project / ".coord"]
     work = project / ".work"
     if work.is_dir():
-        candidates += sorted(child for child in work.iterdir() if child.is_dir())
+        children = sorted(child for child in work.iterdir() if child.is_dir())
+        candidates += children
+        # U210: work dirs also nest one level deeper, `.work/<a>/<b>` (e.g. .work/u210/run6).
+        candidates += sorted(nested for child in children for nested in child.iterdir() if nested.is_dir())
     return [directory for directory in candidates if (directory / "runs").is_dir()]
