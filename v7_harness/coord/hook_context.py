@@ -94,6 +94,14 @@ def hook_session(stdin_text: str) -> str | None:
     return value.strip()[:200] if isinstance(value, str) and value.strip() else None
 
 
+def stage_work_dir(path: str | Path) -> Path | None:
+    """U211: the pilot work dir when `path` is a stage `<work-dir>/stage/<task>` (the work dir holds `runs/`), else None."""
+    path = Path(path)
+    if path.parent.name == "stage" and (path.parent.parent / "runs").is_dir():
+        return path.parent.parent
+    return None
+
+
 def shared_desk(project: str | Path) -> Path:
     """U59: a linked git worktree shares the main checkout's desk (presence, mailbox, watch files).
 
@@ -103,6 +111,10 @@ def shared_desk(project: str | Path) -> Path:
     one desk per repository is the main checkout. A submodule (`.git/modules/...`) or a plain folder is unchanged.
     """
     path = Path(project)
+    # U211: a stage's copied .coord is not a desk; its hooks write to the project that owns the work dir.
+    work = stage_work_dir(path)
+    if work is not None:
+        return find_project([work]) or path
     marker = path / ".git"
     try:
         if not marker.is_file():
@@ -130,7 +142,11 @@ def find_project(candidates: Iterable[str | Path], max_depth: int = 25) -> Path 
             continue
         for _ in range(max_depth):
             if (current / PLAN).is_file():
-                return shared_desk(current)
+                work = stage_work_dir(current)
+                if work is None:
+                    return shared_desk(current)
+                current = work
+                continue
             if current.parent == current:
                 break
             current = current.parent
