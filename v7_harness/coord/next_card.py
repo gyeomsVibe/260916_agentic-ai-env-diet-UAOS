@@ -30,7 +30,10 @@ def coord_root(project: Path) -> Path:
     project = Path(project)
     # U182: a worktree's top folder always holds `.git`; a folder that has its own .coord but no `.git` is a project
     # nested inside a larger repository (Lotto receipt 2026-10-11) and keeps its own schedule and mailbox.
-    if (project / ".coord").is_dir() and not (project / ".git").exists():
+    from v7_harness.coord.hook_context import stage_work_dir
+
+    # U211: a pilot stage carries a copied .coord without .git but belongs to the repository that holds its work dir.
+    if (project / ".coord").is_dir() and not (project / ".git").exists() and stage_work_dir(project) is None:
         return project
     try:
         done = subprocess.run(["git", "-C", str(project), "rev-parse", "--path-format=absolute", "--git-common-dir"],
