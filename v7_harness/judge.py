@@ -323,7 +323,7 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     }
     if verdict == "APPROVE" and apply:
         # The unchanged approval gate does the promotion and re-checks digest, scope and the recorded cost gate.
-        cmd = [sys.executable, "-m", "v7_harness.cli", "pilot", "run", "--task", task_id, "--worker", author,
+        cmd = [sys.executable, "-m", "v7_harness.cli", "pilot", "run", "--task", task_id, "--worker", "local" if author == "ollama" else author,
                "--source", str(source), "--work-dir", str(work_dir), "--manual", str(manual_path),
                "--approve", bundle_id, "--coord-actor", JUDGE_TOOL[judge]]
         done = approver(cmd, cwd=str(Path(__file__).resolve().parents[1]), capture_output=True, timeout=900)
