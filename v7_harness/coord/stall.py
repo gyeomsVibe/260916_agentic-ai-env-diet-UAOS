@@ -107,6 +107,8 @@ def _phase_waits(schedule: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if phase.get("blocker_kind") in ("SAFETY_GATE", "SCOPE_DECISION", "HUMAN_AUTH"):
             continue
+        if phase.get("implementation_go") is False or phase.get("actuator_verdict") == "STOP_NO_IMPLEMENTATION_GO":
+            continue
         text = f"{phase['phase_id']} {phase.get('human', '')} {phase.get('note', '')}".lower()
         if state == "HUMAN" and HUMAN_ONLY_RE.search(text):
             continue
