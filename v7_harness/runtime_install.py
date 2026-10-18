@@ -92,15 +92,27 @@ def verify(home: Path, version: str) -> dict[str, Any]:
     return manifest
 
 
-def _replace(src: Path, dst: Path) -> None:
+def _retry(fn):
     for attempt in range(REPLACE_TRIES):
         try:
-            os.replace(src, dst)
-            return
+            return fn()
         except PermissionError:
             if attempt == REPLACE_TRIES - 1:
                 raise
             time.sleep(REPLACE_SLEEP_S)
+
+
+def _replace(src: Path, dst: Path) -> None:
+    _retry(lambda: os.replace(src, dst))
+
+
+def _read_launcher(path: Path) -> str | None:
+    """U217: opening the launcher while another installer's os.replace swaps it raises PermissionError on Windows
+    (3 of 20 runs of 8 parallel installers); retry with the same bound as _replace. None when there is no launcher."""
+    try:
+        return _retry(lambda: path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -195,7 +207,7 @@ def plan(home: Path, repo: Path = REPO_ROOT) -> dict[str, Any]:
     root = runtime_dir(home) / version
     launcher = Path(home) / ".uaos" / "uaos.py"
     current = read_current(home).get("version")
-    old_launcher = launcher.read_text(encoding="utf-8") if launcher.is_file() else None
+    old_launcher = _read_launcher(launcher)
     return {"version": version, "digest": digest, "files": len(files), "runtime": str(root),
             "runtime_action": "UNCHANGED" if (root / MANIFEST).is_file() else "CREATE",
             "current_before": current, "current_action": "UNCHANGED" if current == version else "SET",
@@ -240,13 +252,13 @@ def _set_current(home: Path, version: str) -> None:
 
 def _write_launcher(home: Path, report: dict[str, Any]) -> None:
     launcher = Path(home) / ".uaos" / "uaos.py"
-    if report["launcher_action"] == "UNCHANGED" or (launcher.is_file()
-                                                     and launcher.read_text(encoding="utf-8") == launcher_text()):
+    old = None if report["launcher_action"] == "UNCHANGED" else _read_launcher(launcher)
+    if report["launcher_action"] == "UNCHANGED" or old == launcher_text():
         return
-    if launcher.is_file():  # same backup root as global_install, so one place holds every UAOS home backup
+    if old is not None:  # same backup root as global_install, so one place holds every UAOS home backup
         backup = Path(home) / ".uaos-backups" / f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}" / "uaos.py"
         backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(launcher, backup)
+        _retry(lambda: shutil.copy2(launcher, backup))
         report["launcher_backup"] = str(backup)
     _write_atomic(launcher, launcher_text())
 
