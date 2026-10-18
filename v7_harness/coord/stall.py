@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import ingress
 from .merge_route import MERGERS
 from .presence import TOOLS
 
@@ -299,12 +300,18 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
                 first = min(float(seen.get(wait["item"], moment)), written, wait.pop("declared", None) or moment)
                 wait["since"] = seen[wait["item"]] = first
         changed_schedule = False
+        result["ingress"] = []
         for wait in waits:
             age = moment - float(wait["since"])
             done = adopted.get(wait["item"])
+            # U215: no ingress 10 s after dispatch probes the receiver; a LIMITED one is replanned now, not at 30 min.
+            record = desk.get(wait["waiting_on"]) or {}
+            if (decision := ingress.decide(wait, record, moment)) != "WAIT":
+                result["ingress"].append({"item": wait["item"], "decision": decision})
             # An adoption covers only the wait instance it was made for; a phase that waits again later is a new
             # instance with a new start and is rerouted again (Codex judge U166-APPLY4, finding 2).
-            if age < max_wait_s or (isinstance(done, dict) and done.get("since") == wait["since"]):
+            if age < ingress.limit(wait, record, moment, max_wait_s) or (
+                    isinstance(done, dict) and done.get("since") == wait["since"]):
                 continue
             owners = route(wait, desk)
             entry = {"item": wait["item"], "kind": wait["kind"], "waiting_on": wait["waiting_on"],
