@@ -84,9 +84,12 @@ def _write_json(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
-def _letter_waits(project: Path) -> list[dict[str, Any]]:
+def _letter_waits(project: Path, schedule: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     found = []
     root = project / QUEUED
+    answered = _answered(project, _watermark(project, time.time()))
+    ended = {str(p.get("phase_id")) for p in (schedule if isinstance(schedule, dict) else {}).get("phases") or []
+             if isinstance(p, dict) and p.get("state") in TERMINAL}
     for target_dir in sorted(p for p in root.glob("*") if p.is_dir()):
         target = target_dir.name
         for letter in sorted(target_dir.glob("*.json")):
@@ -100,6 +103,10 @@ def _letter_waits(project: Path) -> list[dict[str, Any]]:
             # Only a letter that asks for a verdict is a step someone waits on; a status note or ACK is not
             # (relay_45a03503, defect 1), and U120 already uses this token as the wake word.
             if "VERDICT_REQUESTED=YES" not in str(payload.get("message", "")):
+                continue
+            body = _payload(project / INBOX / letter.name) or payload
+            if ((project / ACK / letter.name).exists() or letter.stem in answered
+                    or str(body.get("card", "")) in ended):
                 continue
             found.append({"item": f"letter:{target}:{letter.stem}", "kind": "verdict", "waiting_on": target,
                           "author": str(payload.get("actor", "")), "since": since, "pr": ""})
@@ -151,7 +158,8 @@ def _dispatched_at(project: Path, message_id: str) -> float | None:
     except (OSError, ValueError):
         return None
     stamp = record.get("timestamp_ns") if isinstance(record, dict) else None
-    ok = isinstance(stamp, int) and not isinstance(stamp, bool) and stamp > 0
+    ok = (isinstance(stamp, int) and not isinstance(stamp, bool) and stamp > 0
+          and record.get("state", "DISPATCHED") == "DISPATCHED")
     return stamp / 1e9 if ok else None
 
 
@@ -181,7 +189,8 @@ def _inbox_waits(project: Path, schedule: dict[str, Any] | None, moment: float) 
     answered, found = _answered(project, mark), []
     for path in sorted((project / INBOX).glob("*.json")):
         body, since = _payload(path), _dispatched_at(project, path.stem)
-        if path.name.startswith("evt_") or body is None or since is None or since < mark or path.stem in answered:
+        if (path.name.startswith("evt_") or body is None or since is None or since < mark
+                or path.stem in answered or (project / ACK / path.name).exists()):
             continue
         asked = body.get("verdict_requested") is True or "VERDICT_REQUESTED=YES" in str(body.get("message", ""))
         target = canonical(str(body.get("requested_target") or body.get("to") or ""))
@@ -284,7 +293,7 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
         if not all(isinstance(x, dict) for x in (seen, votes, adopted)):
             result["error"] = "stall state corrupt"
             return result
-        letters = {w["item"]: w for w in _inbox_waits(project, schedule, moment) + _letter_waits(project)}
+        letters = {w["item"]: w for w in _inbox_waits(project, schedule, moment) + _letter_waits(project, schedule)}
         waits = list(letters.values()) + (_phase_waits(schedule) if schedule is not None else [])
         live = {w["item"] for w in waits}
         seen = {k: v for k, v in seen.items() if k in live}
