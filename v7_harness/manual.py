@@ -99,6 +99,12 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _pin_matches(pin: str, path: Path) -> bool:
+    """U216-R4: a pin of the bytes or of the LF text (git blob under core.autocrlf, gitattributes) is the same input."""
+    data = path.read_bytes()
+    return pin.lower() in {hashlib.sha256(data).hexdigest(), hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()}
+
+
 def _safe_relative(item: str) -> bool:
     candidate = item.replace("\\", "/")
     return bool(candidate) and not candidate.startswith("/") and ".." not in PurePosixPath(candidate).parts \
@@ -184,7 +190,7 @@ def lint(text: str, project: Path) -> ManualReport:
             report.errors.append(f"INPUT_MISSING:{rel}")
         elif pinned is None:
             report.errors.append(f"INPUT_UNPINNED:{rel} (add sha256=<hex>)")
-        elif pinned.group(1).lower() != _sha256(target):
+        elif not _pin_matches(pinned.group(1), target):
             report.errors.append(f"INPUT_HASH_MISMATCH:{rel}")
 
     allow = contract.get("allow", [])

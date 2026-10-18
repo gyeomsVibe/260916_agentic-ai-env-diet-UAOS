@@ -281,7 +281,8 @@ def _record(project: Path, row: dict[str, Any]) -> None:
 def dispatch(project: Path, *, message_id: str, actor: str, message: str, runner: Any = subprocess.run,
              timeout_s: int = 240, now: float | None = None, card: str = "", audit: bool = False) -> dict[str, Any]:
     now = time.time() if now is None else now
-    if AUTO_TAG in message:
+    # U216-R2: only an auto reply starts with the tag (_send_reply); a tag quoted inside a body (an audit diff) is data.
+    if message.lstrip().startswith(AUTO_TAG):
         return {"state": "SKIPPED_LOOP"}
     # U193 (Codex REVISE relay_b44a0472): one owner per request spans the replay check, reservation, provider call,
     # kept record and send. Two parallel calls both passed the replay check and both paid the provider; a busy owner
