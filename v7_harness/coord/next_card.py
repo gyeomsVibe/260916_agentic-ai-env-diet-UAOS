@@ -23,6 +23,18 @@ MAX_REVIEW_STACK = 3
 # U146a-R: a claim belongs to a session id and lapses after this long without renewal. 7200 s is the longest background
 # `coord watch` (7,200,000 ms cap); a session silent for longer is gone, so its card may be taken.
 CLAIM_TTL_S = 7200
+# U220: letters to an owner that sit unread longer than this mark it saturated. Measured 2026-10-19 on this project's
+# acked ACTIONABLE letters, dispatch to ack: codex n=227 p50 285 s, p75 680 s; claude n=22 p50 146 s. 600 s is past
+# most normal round trips and below the stall reroute's MAX_WAIT_S (1800 s). Provisional: re-measure, not optimized.
+ASSIST_AGE_S = 600
+# U220: two such letters mean the owner's queue grows faster than it drains (receipt: three relays in one Codex turn).
+ASSIST_BACKLOG = 2
+# U220-R4: the resource kinds an assist can prove disjoint; any other kind fails closed (Codex relay_11836ec0).
+RESOURCE_KINDS = ("file", "worktree", "branch", "db", "port")
+# U220-R5 (Codex relay_4c15703d): file and worktree both name physical paths, so they share one containment domain.
+RESOURCE_DOMAIN = {"file": "path", "worktree": "path", "branch": "branch", "db": "db", "port": "port"}
+# U220: steps that never move by assist; judging and merging keep their own routes (non-author judge, merger order).
+NO_ASSIST_WORDS = ("verdict", "review", "judge", "merge")
 
 
 def coord_root(project: Path) -> Path:
@@ -61,7 +73,7 @@ def _review_depth(pid: str, by_id: dict[str, dict], seen: frozenset = frozenset(
 
 
 def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedule: Path | None = None, expected: dict | None = None,
-           expected_schedule_sha: str | None = None) -> bool:
+           expected_schedule_sha: str | None = None, assist_for: str | None = None, revalidate=None) -> bool:
     """U146a-R: take `card` for this session. A hook process exits right after it claims, so a PID never owned
     anything (PR112 counterexample); the session id does, until CLAIM_TTL_S passes without renewal.
 
@@ -72,7 +84,7 @@ def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedul
     from v7_harness.coord.stream import StreamBusy, _exclusive
 
     path = claims / f"{card}.json"
-    record = {"session": session, "tool": tool, "at": now}
+    record = {"session": session, "tool": tool, "at": now, **({"assist_for": assist_for} if assist_for else {})}
     claims.mkdir(parents=True, exist_ok=True)
     try:
         with _exclusive(claims / ".lock"):
@@ -92,6 +104,9 @@ def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedul
                         return False
                 except (OSError, ValueError, KeyError, TypeError):
                     return False
+            # U220-R: an assist claim re-decides saturation and resource exclusion here, under the lock
+            if revalidate is not None and not revalidate():
+                return False
             try:
                 held = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -225,13 +240,16 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
             if p.get("state") == "PENDING":
                 import hashlib
                 sha = hashlib.sha256(raw).hexdigest()
-            if not _claim(claims, card, tool, session, time.time() if now is None else now, schedule=path, expected=p,
-                          expected_schedule_sha=sha):
+            moment = time.time() if now is None else now
+            if not _claim(claims, card, tool, session, moment, schedule=path, expected=p, expected_schedule_sha=sha,
+                          revalidate=lambda card=card: _no_assist_held(claims, tool, card, moment)):
                 claimed_out = True
                 continue
             return {"state": "NEXT", "card": card, "owner": p.get("owner_tool"), "claimed": True}
         return {"state": "NEXT", "card": card, "owner": p.get("owner_tool")}
     others = [p for p in candidates if p.get("owner_tool") not in (tool, "all")]
+    if others and (helped := _assist(path, project, tool, others, claim, session, now, phases)) is not None:
+        return helped
     if others:
         return {"state": "HANDOFF", "card": str(others[0].get("phase_id")), "owner": others[0].get("owner_tool")}
     remaining = [p for p in phases if p.get("state") != "DONE"]
@@ -246,3 +264,238 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
     if not open_cards:
         return {"state": "HUMAN", "items": [p.get("human") or str(p.get("phase_id")) for p in remaining]}
     return {"state": "WAIT", "cards": open_cards}
+
+
+def _live_claims(claims: Path, now: float) -> dict[str, dict]:
+    """U220: card -> claim record for every claim with a session that is still inside CLAIM_TTL_S."""
+    live = {}
+    for path in claims.glob("*.json"):
+        try:
+            held = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        at = held.get("at") if isinstance(held, dict) else None
+        if isinstance(at, (int, float)) and not isinstance(at, bool) and now - at < CLAIM_TTL_S and held.get("session"):
+            live[path.stem] = held
+    return live
+
+
+def _letter_backlog(root: Path, owner: str, now: float) -> int:
+    """U220: ACTIONABLE letters dispatched to `owner` between ASSIST_AGE_S and CLAIM_TTL_S ago, neither acked nor
+    answered. A letter older than CLAIM_TTL_S belongs to a session that is gone, not a busy one (real inbox
+    2026-10-19: 43 stale letters to claude would mark it busy forever), and skipping it by mtime keeps the scan cheap.
+    U220-R: a letter bound to a native session counts only while that session is live on the owner's desk record."""
+    from .desk_delta import canonical
+    from .presence import _path
+    from .stall import ACK, INBOX, _answered, _dispatched_at, _payload, _reply_to
+
+    try:
+        sessions = json.loads(_path(root, owner).read_text(encoding="utf-8")).get("sessions")
+    except (OSError, ValueError, AttributeError):
+        sessions = None
+    live = {s for s, until in (sessions.items() if isinstance(sessions, dict) else ())
+            if isinstance(until, (int, float)) and until > now}
+    old, superseded = [], set()
+    for path in (root / INBOX).glob("*.json"):
+        try:
+            if now - path.stat().st_mtime >= CLAIM_TTL_S:
+                continue
+        except OSError:
+            continue
+        body, since = _payload(path), _dispatched_at(root, path.stem)
+        if body is None or since is None or not ASSIST_AGE_S <= now - since < CLAIM_TTL_S:
+            continue  # a future or invalid dispatch time fails the window too
+        if body.get("native_receiver") and body["native_receiver"] not in live:
+            continue
+        named = body.get("supersedes")
+        named = [named] if isinstance(named, str) else named if isinstance(named, list) else []
+        superseded |= {s for s in named if isinstance(s, str)}
+        # U220-R2 (Codex relay_52c2dbec): an ACK or a reply is history, not new work for the owner
+        if body.get("kind") == "ACK" or _reply_to(body):
+            continue
+        if body.get("wake_class") == "ACTIONABLE" and canonical(str(body.get("requested_target") or "")) == owner:
+            old.append(path)
+    old = [p for p in old if p.stem not in superseded]
+    if len(old) < ASSIST_BACKLOG:
+        return len(old)
+    answered = _answered(root, now - CLAIM_TTL_S)
+    return sum(p.stem not in answered and not (root / ACK / p.name).exists() for p in old)
+
+
+def _assistable(phase: dict, tool: str, live: dict) -> bool:
+    """U220: a ready implement card of another tool that no session holds and nothing reserves for a person, a
+    session, a judge or a merger."""
+    from .stall import CAPABILITY, HUMAN_ONLY_RE
+
+    if phase.get("owner_tool") in (tool, "all") or tool not in CAPABILITY["implement"] or phase.get("assist") is False:
+        return False
+    if phase.get("state") not in CANDIDATE or "owner_session" in phase or "human" in phase:
+        return False
+    text = f"{phase.get('phase_id', '')} {phase.get('note', '')} {phase.get('waiting_on', '')}"
+    if str(phase.get("phase_id")) in live or HUMAN_ONLY_RE.search(text):
+        return False
+    return not any(word in text.lower() for word in NO_ASSIST_WORDS)
+
+
+def _assist(path: Path, project: Path, tool: str, others: list[dict], claim: bool, session: str | None,
+            now: float | None, phases: list) -> dict[str, Any] | None:
+    """U220 work stealing: an idle tool takes a saturated owner's ready implement card. Authority does not move: the
+    card ends at REVIEW and its owner or the conductor judges it. A claim re-decides everything under the claim lock."""
+    moment = time.time() if now is None else now
+    claims, root = path.parent / "next" / "claims", path.parent.parent
+    if not _helper_ready(root, project, tool, moment):
+        return None
+    by_id = {str(p.get("phase_id")): p for p in phases}
+    live, busy = _live_claims(claims, moment), {}
+    for p in others:
+        owner, card = str(p.get("owner_tool")), str(p.get("phase_id"))
+        if not _assistable(p, tool, live) or not _admissible(p, phases) or not _free(p, tool, live, by_id, root):
+            continue
+        if owner not in busy:
+            busy[owner] = _saturated(root, owner, live, moment)
+        if not busy[owner]:
+            continue
+        found = {"state": "NEXT", "card": card, "owner": owner, "assist_for": owner}
+        if not claim:
+            return found
+
+        def recheck(owner=owner, card=card) -> bool:
+            # U220-R2: re-read the schedule under the claim lock, so a dependency, cap or state change, an owner claim
+            # or an ack that lands while the helper decides refuses the claim
+            fresh = _live_claims(claims, moment)
+            if not _helper_ready(root, project, tool, moment):  # U220-R3: helper state and QUIET_LOCK at commit too
+                return False
+            try:
+                fresh_phases = json.loads(path.read_bytes().decode("utf-8"))["phases"]
+            except (OSError, ValueError, KeyError, TypeError):
+                return False
+            if not isinstance(fresh_phases, list) or not all(isinstance(x, dict) for x in fresh_phases):
+                return False
+            mine = [x for x in fresh_phases if x.get("phase_id") == card]
+            fresh_by_id = {str(x.get("phase_id")): x for x in fresh_phases}
+            return (len(mine) == 1 and mine[0].get("owner_tool") == owner and _assistable(mine[0], tool, fresh)
+                    and _admissible(mine[0], fresh_phases) and _free(mine[0], tool, fresh, fresh_by_id, root)
+                    and _saturated(root, owner, fresh, moment))
+
+        if session and _bound_here(p, project) and _claim(claims, card, tool, session, moment, schedule=path,
+                                                         expected=p, assist_for=owner, revalidate=recheck):
+            return {**found, "claimed": True}
+    return None
+
+
+def _resources(phase: dict | None, project: Path) -> set[tuple[str, str]] | None:
+    """U220-R4 (Codex relay_11836ec0): what a phase may touch, as typed identities (kind, identity). Entries come from
+    `resources`, else `allowed_files`, plus the phase's worktree and branch. An entry is `kind:value` for a kind in
+    RESOURCE_KINDS; an untyped entry is a file. Files resolve against one base, the phase's worktree else the project
+    root, to a real path (symlinks followed), so an absolute and a project-relative name of one file are one identity.
+    None (unknown disjointness, fail closed) for no list, a malformed entry, an unknown kind, a non-numeric port or a
+    file or worktree outside the project."""
+    phase = phase or {}
+    value = phase.get("resources", phase.get("allowed_files"))
+    if not isinstance(value, list) or not value or not all(isinstance(r, str) and r for r in value):
+        return None
+    try:
+        root = Path(project).resolve()
+        base = root
+        if "worktree" in phase:
+            if not isinstance(phase["worktree"], str) or not phase["worktree"]:
+                return None
+            base = (root / phase["worktree"]).resolve()
+            value = [*value, f"worktree:{phase['worktree']}"]
+        if "branch" in phase:
+            if not isinstance(phase["branch"], str) or not phase["branch"]:
+                return None
+            value = [*value, f"branch:{phase['branch']}"]
+        out = set()
+        for entry in value:
+            kind, _, rest = entry.partition(":")
+            if len(kind) < 2 or not rest:  # a drive letter (C:\...) or no colon: an untyped file
+                kind, rest = "file", entry
+            if kind not in RESOURCE_KINDS or not rest.strip():
+                return None
+            if kind in ("file", "worktree"):
+                parts = Path(rest).parts
+                # a glob names everything under its literal prefix (conservative)
+                cut = next((i for i, part in enumerate(parts) if any(c in part for c in "*?[")), len(parts))
+                real = ((root if kind == "worktree" else base) / Path(*parts[:cut])).resolve() if cut else base
+                if real != root and root not in real.parents:
+                    return None
+                out.add((kind, os.path.normcase(str(real))))
+            elif kind == "port":
+                if not rest.strip().isdigit():
+                    return None
+                out.add((kind, str(int(rest))))
+            else:  # branch and db names compare case-insensitively (a false overlap only refuses)
+                out.add((kind, rest.strip().casefold()))
+        return out
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def _overlap(mine: set, theirs: set) -> bool:
+    """U220-R5: two resources overlap when they are one identity of one domain, or in the path domain (file and
+    worktree) one path contains the other (a directory or worktree covers its files, whatever their kind)."""
+    for kind, a in mine:
+        for other, b in theirs:
+            if RESOURCE_DOMAIN[kind] != RESOURCE_DOMAIN[other]:
+                continue
+            if a == b or (RESOURCE_DOMAIN[kind] == "path" and (a.startswith(b + os.sep) or b.startswith(a + os.sep))):
+                return True
+    return False
+
+
+def _free(phase: dict, tool: str, live: dict, by_id: dict, project: Path) -> bool:
+    """U220-R (Codex relay_43bbc628, relay_52c2dbec): one active step per platform, so a helper tool that holds any live
+    claim takes nothing; and no resource shared with a card that a session runs now. A running card that declares no
+    resources may touch anything, so it blocks every assist (fail closed)."""
+    mine = _resources(phase, project)
+    if mine is None or any(r.get("tool") == tool for r in live.values()):
+        return False
+    for card in live:
+        theirs = _resources(by_id.get(card), project)
+        if theirs is None or _overlap(mine, theirs):
+            return False
+    return True
+
+
+def _admissible(phase: dict, phases: list) -> bool:
+    """U220-R2 (Codex relay_52c2dbec): admission fails closed on a duplicate or empty id, a malformed or unmet
+    dependency, an exhausted or malformed cap, a protected history and a missing contract (acceptance command)."""
+    pid = phase.get("phase_id")
+    if not isinstance(pid, str) or not pid or [p.get("phase_id") for p in phases].count(pid) != 1:
+        return False
+    if any(key in phase for key in ("gate_failed", "rerouted_from", "parked_at", "blocker_reason", "blocker")):
+        return False
+    cmd = phase.get("acceptance_cmd")
+    if not isinstance(cmd, str) or not cmd.strip() or not _caps_available(phase):
+        return False
+    deps = phase.get("depends_on", [])
+    if not isinstance(deps, list) or not all(isinstance(d, str) and d for d in deps):
+        return False
+    states = {p.get("phase_id"): p.get("state") for p in phases}
+    return all([p.get("phase_id") for p in phases].count(d) == 1 and states[d] in SATISFIED for d in deps)
+
+
+def _saturated(root: Path, owner: str, live: dict, now: float) -> bool:
+    """U220-R: the owner is ACTIVE on the desk now and runs another claimed card or has a backlog of current unread
+    letters. A LIMITED, ABSENT or UNKNOWN owner is left to the succession and stall routes (fail closed)."""
+    from .presence import TOOLS, read
+
+    if owner not in TOOLS or read(root, owner, now=now).get("state") != "ACTIVE":
+        return False
+    return any(r.get("tool") == owner for r in live.values()) or _letter_backlog(root, owner, now) >= ASSIST_BACKLOG
+
+
+def _helper_ready(root: Path, project: Path, tool: str, now: float) -> bool:
+    """U220-R2: an assist needs a helper the desk knows as ACTIVE and a checkout no pilot run holds (QUIET_LOCK).
+    U220-R3: checked before the decision and again under the claim lock."""
+    from .presence import read
+
+    return read(root, tool, now=now).get("state") == "ACTIVE" and not (Path(project) / ".work" / "QUIET_LOCK").exists()
+
+
+def _no_assist_held(claims: Path, tool: str, card: str, now: float) -> bool:
+    """U220-R3 (Codex relay_9dbab448): while any session of `tool` runs an assist, the tool takes no own card either,
+    so one platform never runs two steps. Own cards without assists keep their session contract unchanged."""
+    return not any(r.get("tool") == tool and r.get("assist_for") and held != card
+                   for held, r in _live_claims(claims, now).items())
