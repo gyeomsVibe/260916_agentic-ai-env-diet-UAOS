@@ -52,6 +52,14 @@ HUMAN_ONLY_RE = re.compile(
 STATE_DIR = Path(".coord") / "stall"
 SCHEDULE = Path(".coord") / "master_schedule.json"
 QUEUED = Path(".coord") / "mailbox" / "delivery" / "queued"
+# U214: a dispatched letter waits in INBOX until `coord ack` moves it to ACK; deliver stamps the dispatch moment once
+# in the ACCEPTED receipt; dispatched waits count only from the WATERMARK written at the first scan.
+INBOX = Path(".coord") / "mailbox" / "inbox"
+ACK = Path(".coord") / "mailbox" / "ack"
+ACCEPTED = Path(".coord") / "mailbox" / "delivery" / "accepted"
+WATERMARK = STATE_DIR / "watermark.json"
+TERMINAL = ("DONE", "CANCELLED")
+AGY_REPLY = re.compile(r"\[agy-auto\] re ([A-Za-z0-9_]+)")
 
 
 def _item_id(item: str) -> str:
@@ -94,6 +102,91 @@ def _letter_waits(project: Path) -> list[dict[str, Any]]:
                 continue
             found.append({"item": f"letter:{target}:{letter.stem}", "kind": "verdict", "waiting_on": target,
                           "author": str(payload.get("actor", "")), "since": since, "pr": ""})
+    return found
+
+
+def _watermark(project: Path, moment: float) -> float:
+    """U214: the explicit start of dispatched waits, written once at the first scan, so the inbox history before it
+    never bursts into reroutes (Antigravity CE1). An unreadable or malformed watermark counts no letter at all."""
+    path = project / WATERMARK
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get("since")
+    except FileNotFoundError:
+        _write_json(path, {"since": moment})
+        return moment
+    except (OSError, ValueError, AttributeError):
+        return float("inf")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else float("inf")
+
+
+def _payload(path: Path) -> dict[str, Any] | None:
+    """U214: the payload of one mailbox letter; None when it is unreadable or has no payload object."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    body = record.get("payload") if isinstance(record, dict) else None
+    return body if isinstance(body, dict) else None
+
+
+def _reply_to(body: dict[str, Any]) -> str:
+    """U214: the letter id a reply answers: payload `in_reply_to`, the same key in a JSON message, or `[agy-auto] re`."""
+    value, message = body.get("in_reply_to"), str(body.get("message", ""))
+    if not value and message.lstrip().startswith("{"):
+        try:
+            inner = json.loads(message)
+        except ValueError:
+            inner = None
+        value = inner.get("in_reply_to") if isinstance(inner, dict) else None
+    if not value and (match := AGY_REPLY.match(message)):
+        value = match.group(1)
+    return value if isinstance(value, str) else ""
+
+
+def _dispatched_at(project: Path, message_id: str) -> float | None:
+    """U214: the dispatch moment deliver wrote once in the accepted receipt; a file mtime moves on rewrite or copy."""
+    try:
+        record = json.loads((project / ACCEPTED / f"{message_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    stamp = record.get("timestamp_ns") if isinstance(record, dict) else None
+    ok = isinstance(stamp, int) and not isinstance(stamp, bool) and stamp > 0
+    return stamp / 1e9 if ok else None
+
+
+def _answered(project: Path, mark: float) -> set[str]:
+    """U214: ids answered by any reply written since the watermark, read or not yet read (inbox and ack)."""
+    found = set()
+    for folder in (INBOX, ACK):
+        for path in (project / folder).glob("*.json"):
+            try:
+                fresh = path.stat().st_mtime >= mark
+            except OSError:
+                continue
+            body = _payload(path) if fresh else None
+            if body is not None:
+                found.add(_reply_to(body))
+    return found
+
+
+def _inbox_waits(project: Path, schedule: dict[str, Any] | None, moment: float) -> list[dict[str, Any]]:
+    """U214: deliver dispatches at once, so a sent verdict request waits in the inbox until it is acked, answered
+    (in_reply_to) or its card's phase is terminal; only letters dispatched after the watermark count."""
+    from .desk_delta import canonical
+
+    mark = _watermark(project, moment)
+    ended = {str(p.get("phase_id")) for p in (schedule or {}).get("phases") or []
+             if isinstance(p, dict) and p.get("state") in TERMINAL}
+    answered, found = _answered(project, mark), []
+    for path in sorted((project / INBOX).glob("*.json")):
+        body, since = _payload(path), _dispatched_at(project, path.stem)
+        if path.name.startswith("evt_") or body is None or since is None or since < mark or path.stem in answered:
+            continue
+        asked = body.get("verdict_requested") is True or "VERDICT_REQUESTED=YES" in str(body.get("message", ""))
+        target = canonical(str(body.get("requested_target") or body.get("to") or ""))
+        if body.get("wake_class") == "ACTIONABLE" and asked and target and str(body.get("card", "")) not in ended:
+            found.append({"item": f"letter:{target}:{path.stem}", "kind": "verdict", "waiting_on": target,
+                          "author": str(body.get("actor", "")), "since": since, "pr": ""})
     return found
 
 
@@ -190,7 +283,8 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
         if not all(isinstance(x, dict) for x in (seen, votes, adopted)):
             result["error"] = "stall state corrupt"
             return result
-        waits = _letter_waits(project) + (_phase_waits(schedule) if schedule is not None else [])
+        letters = {w["item"]: w for w in _inbox_waits(project, schedule, moment) + _letter_waits(project)}
+        waits = list(letters.values()) + (_phase_waits(schedule) if schedule is not None else [])
         live = {w["item"] for w in waits}
         seen = {k: v for k, v in seen.items() if k in live}
         # A phase has waited at least since the schedule file was last written: it was already in its waiting state

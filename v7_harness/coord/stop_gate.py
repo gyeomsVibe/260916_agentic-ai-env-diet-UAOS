@@ -86,7 +86,25 @@ def progress_signature(project: Path) -> list:
     return [head, schedule_mtime, max(mtimes) if mtimes else None, len(mtimes)]
 
 
-def pending_letters(project: Path, tool: str, now: float | None = None) -> list[str]:
+def _foreign(root: Path, tool: str, session: str | None, body: dict) -> bool:
+    from v7_harness.coord import windows
+
+    window, card = body.get("native_receiver") or body.get("window"), body.get("card")
+    if not window and not card:
+        return False
+    if not session:
+        return False  # no session to compare: show the letter; the bound ACK guard keeps it from being erased
+    if window and window != session:
+        return True
+    if not card:
+        return False
+    try:
+        return windows.window_for(root, str(card), tool) != session
+    except (OSError, ValueError, TypeError, AttributeError):
+        return True
+
+
+def pending_letters(project: Path, tool: str, now: float | None = None, session: str | None = None) -> list[str]:
     """U210: ids of fresh ACTIONABLE letters addressed to `tool` that are still in the inbox (not yet acked)."""
     from v7_harness.coord import desk_delta
 
@@ -102,16 +120,19 @@ def pending_letters(project: Path, tool: str, now: float | None = None) -> list[
             fresh = moment - path.stat().st_mtime <= LETTER_FRESH_S
         except OSError:
             fresh = False
-        if target == tool and body.get("wake_class") == "ACTIONABLE" and fresh:
+        if target == tool and body.get("wake_class") == "ACTIONABLE" and fresh and not _foreign(next_card.coord_root(Path(project)), tool, session, body):
             found.append(path.stem)
     return found
 
 
-def letter_hold(project: Path, tool: str, now: float | None = None) -> dict[str, Any] | None:
+def letter_hold(project: Path, tool: str, now: float | None = None, session: str | None = None) -> dict[str, Any] | None:
     """U210: an unread letter is owed work even when the schedule names no card (relay_9f21437a receipt); each letter
     holds once, so a letter left unacked never spins the gate."""
-    letters = pending_letters(project, tool, now=now)
-    guard = Path(project) / ".coord" / "presence" / f"stop_gate_{tool}_letters.json"
+    import hashlib
+
+    letters = pending_letters(project, tool, now=now, session=session)
+    scope = hashlib.sha256(session.encode("utf-8")).hexdigest()[:12] if session else "nosession"
+    guard = Path(project) / ".coord" / "presence" / f"stop_gate_{tool}_letters_{scope}.json"
     try:
         held = json.loads(guard.read_text(encoding="utf-8")).get("held", [])
     except (OSError, ValueError, AttributeError):
@@ -141,7 +162,7 @@ def gate(project: Path, tool: str, session: str | None = None, now: float | None
 
     if presence.read(project, tool, now=now).get("state") in NO_BUDGET_STATES:
         return None  # R7: no claim and no paid re-entry for a tool without budget
-    hold = letter_hold(project, tool, now=now)
+    hold = letter_hold(project, tool, now=now, session=session)
     if hold is not None:
         return hold
     step = next_card.next_step(project, tool, claim=True, session=session, now=now)

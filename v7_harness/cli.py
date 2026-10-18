@@ -2137,7 +2137,12 @@ def cmd_coord_ack(args: argparse.Namespace) -> int:
     from .coord.mailbox import Mailbox, MailboxRejected
 
     box = Mailbox(Path(args.project) / ".coord" / "mailbox")
-    claim = box.claim(args.message_id, consumer_id=args.consumer)
+    consumer = args.consumer
+    if consumer == "commander":
+        consumer = (os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
+                    or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("ANTIGRAVITY_SESSION_ID")
+                    or consumer)
+    claim = box.claim(args.message_id, consumer_id=consumer)
     if claim is None:
         already = (box.ack_dir / f"{args.message_id}.json").is_file()
         print(json.dumps({"ok": already, "id": args.message_id,
