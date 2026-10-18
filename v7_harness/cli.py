@@ -925,6 +925,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_thrift.add_argument("--stop-condition", default="")
     p_coord_thrift.set_defaults(func=cmd_coord_thrift)
 
+    p_coord_today = p_coord_subs.add_parser("today", help="U213: the day briefing (version, progress, next step)")
+    p_coord_today.add_argument("--project", default=".", help="Project root or a folder inside it (default: .)")
+    p_coord_today.add_argument("--tool", choices=["codex", "claude", "antigravity"], default="claude")
+    p_coord_today.set_defaults(func=cmd_coord_today)
+
     p_coord_init = p_coord_subs.add_parser("init")
     p_coord_init.add_argument("--project", default=".", help="Project to prepare for UAOS (default: .)")
     p_coord_init.set_defaults(func=cmd_coord_init)
@@ -1619,7 +1624,8 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             if line:
                 out["hookSpecificOutput"] = {"hookEventName": shown["event"] or "UserPromptSubmit",
                                              "additionalContext": line}
-            print(json.dumps(out, ensure_ascii=False))
+            # U213: ASCII-escaped JSON, so a reader that decodes stdout with the Windows code page (cp949) still parses
+            print(json.dumps(out))
         elif say == "json":
             print(json.dumps(data, ensure_ascii=False))
         elif say in ("brief", "p1", "none") and line:
@@ -1755,6 +1761,25 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 alert = retention_alert(project)
                 if retention_alert_is_new(project, alert):
                     line = line + " " + alert
+                try:  # U213: the day briefing reaches 윤겸스 as systemMessage once per session, never the model
+                    from .coord.day_brief import brief_once, day_brief
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    event = event if isinstance(event, dict) else {}
+                    if event.get("source") != "compact" and brief_once(project, args.tool or "", hook_session(stdin_text)):
+                        shown["user"], shown["event"] = day_brief(project, args.tool, presence), "SessionStart"
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    pass
+            elif say == "agy":
+                try:  # U213: Antigravity's user desk opens its next reply with the briefing
+                    from .coord.day_brief import agy_brief
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    event = event if isinstance(event, dict) else {}
+                    brief = agy_brief(project, str(event.get("conversationId") or ""), presence)
+                    line = "\n".join(part for part in (line, brief) if part)
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    pass
             elif say == "p1" and not p1_is_new(project, line):
                 line = ""  # U46-P1: an unchanged P1 set is ACK_ONLY; it was repeated on every prompt
             if say == "none":
@@ -2062,6 +2087,20 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
 INBOX_ROUTINE_KINDS = frozenset({"RUN"})
 # 200 characters keep a letter's who/what/verdict; the full text stays in the letter and under `--all`.
 INBOX_SUMMARY_LIMIT = 200
+
+
+def cmd_coord_today(args: argparse.Namespace) -> int:
+    """U213: print the day briefing the SessionStart hook shows, for "진행상황을 브리핑해라" at any time."""
+    from .coord.day_brief import day_brief
+    from .coord.hook_context import find_project
+    from .coord.presence import read_all
+
+    project = find_project([args.project])
+    if project is None:
+        print(f"NOT_A_UAOS_PROJECT: no .coord/PLAN.md at or above {args.project}")
+        return 1
+    print(day_brief(project, args.tool, read_all(project)))
+    return 0
 
 
 def cmd_coord_inbox(args: argparse.Namespace) -> int:
