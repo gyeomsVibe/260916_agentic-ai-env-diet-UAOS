@@ -567,8 +567,6 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                         replayed_summary["error_detail"] = f"COST_GATE_NOT_WITHIN:{saved.get('cost_gate')}"
                         return replayed_summary
                     saved_bundle_id = saved.get("bundle_id")
-                    if saved.get("promotion") == "APPLIED" and config.approve_bundle_id == saved_bundle_id:
-                        return replayed_summary
                     if config.approve_bundle_id != saved_bundle_id:
                         replayed_summary["promotion"] = "APPROVAL_MISMATCH"
                         return replayed_summary
@@ -583,8 +581,13 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                         excludes=source_excludes,
                     )
                     replay_bundle = replay_workspace.create_patch_bundle()
+                    # U216-R3: an applied bundle is checked against the working files, never trusted from the summary:
+                    # no diff = still applied (replay); the base again = re-apply; else SOURCE_DRIFTED, nothing written.
+                    if saved.get("promotion") == "APPLIED" and not replay_bundle.items:
+                        return replayed_summary
                     if replay_bundle.bundle_id != saved_bundle_id:
-                        replayed_summary["promotion"] = "APPROVAL_MISMATCH"
+                        drifted = saved.get("promotion") == "APPLIED"
+                        replayed_summary["promotion"] = "SOURCE_DRIFTED" if drifted else "APPROVAL_MISMATCH"
                         return replayed_summary
                     apply_promotion(
                         source_dir=Path(config.source_dir),
