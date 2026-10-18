@@ -203,7 +203,11 @@ def _wake_note(path: Path) -> str:
 def _replay_bound(project: Path, tool: str, session: str | None, letter: Path, memo: dict | None = None) -> bool:
     if not session or tool not in TOOLS or not _addressed_to(letter, tool):
         return False
-    card = _payload(letter).get("card", "")
+    body = _payload(letter)
+    bound = body.get("native_receiver") or body.get("window")
+    if bound and bound != session:
+        return False
+    card = body.get("card", "")
     if not isinstance(card, str):
         return False
     try:
@@ -292,6 +296,9 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
             if letter in replay and (letter == replay[0] or not _replay_urgent(letter)):
                 continue
             if not letter.is_file() or own_letter(letter, tool):
+                continue
+            from .stop_gate import _foreign
+            if _foreign(project, tool, session, _payload(letter)):
                 continue
             fresh = _mtime(letter) > since or (letter in replay and _replay_urgent(letter))
             if not fresh and letter.stem not in unshown_before:

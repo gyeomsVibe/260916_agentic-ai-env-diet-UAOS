@@ -104,6 +104,8 @@ def _digest(actor: str, message: str, card: str = "", window: str | None = None,
     elif target is not None:
         key = json.dumps(["uaos-relay-v2", actor, message, card, window or "" if card else "", target],
                          ensure_ascii=False, separators=(",", ":"))
+    if window and not card:
+        key = json.dumps(["uaos-relay-native-v1", key, window], ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
@@ -369,6 +371,9 @@ def _payload(actor: str, message: str, digest: str, target: str | None, card: st
             "requested_target": target or "auto"}
     if card:  # U115: only a card letter carries these keys, so a letter without --card keeps today's bytes
         body.update(card=card, window=window)
+    elif window and target != "antigravity":  # U214: an explicit native thread binds the letter to that receiver
+        # (cause 1); U115 keys stay card-only, and Antigravity's headless auto-reply acks under its own id (relay_2d46a6ae).
+        body["native_receiver"] = window
     # U141-A: the structured wake fields the watcher classifies. They are written only when given, so an untagged
     # letter keeps today's bytes and stays LEGACY.
     for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested), ("verdict", verdict),
@@ -1170,6 +1175,8 @@ def _deliver_unlocked(
         # The claim serializes competing dispatchers. The original is returned
         # to inbox after the attempt; only recipient coord ack may settle it.
         envelope = f"[UAOS relay id={message_id} digest={digest}]\n{message}"
+        if window:
+            envelope += f"\nNative receiver {window}: after disposition, run coord ack --id {message_id} --consumer {window}."
         if target != "claude":
             envelope += (f"\nAfter processing, run coord ack --id {message_id} for this project. "
                          "The sender keeps this message in the inbox until ACK.")
@@ -1270,7 +1277,7 @@ def deliver(
             queued_for, target = target, None  # U134-C: queued below until the tool's next ACTIVE turn
     # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
-    window = None
+    window = thread or None
     if card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published

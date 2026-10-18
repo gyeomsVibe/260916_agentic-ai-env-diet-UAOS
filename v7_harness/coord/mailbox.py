@@ -266,6 +266,14 @@ class Mailbox:
         return True
 
     def ack(self, claim: ClaimedMessage) -> Path:
+        data = _read_message(claim.claimed_path) if claim.claimed_path.exists() else None
+        payload = data.get("payload") if isinstance(data, dict) else claim.payload
+        # U214: only a native-bound letter is guarded; a U115 card letter's window is a route hint its dispatcher acks
+        # under its own consumer id.
+        receiver = payload.get("native_receiver") if isinstance(payload, dict) else None
+        if receiver and receiver != claim.consumer_id:
+            self.nack(claim)
+            raise MailboxRejected(f"RECEIVER_MISMATCH: {claim.message_id}")
         ack_file = self.ack_dir / f"{claim.message_id}.json"
         if not claim.claimed_path.exists():
             if ack_file.is_file():
