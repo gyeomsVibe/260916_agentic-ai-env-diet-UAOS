@@ -56,7 +56,7 @@ NOTES = (
 )
 HOOK_MARK = "coord presence"
 # U146-B: the installer also owns the Stop gate, so a re-apply replaces it instead of adding a second copy.
-HOOK_MARKS = (HOOK_MARK, "coord stop-gate --tool")
+HOOK_MARKS = (HOOK_MARK, "coord stop-gate --tool", "coord listen --tool")
 # U103-O: the olla whole-read gates the installer adds when `olla` is on PATH; only these exact commands are ours.
 # U107: hook-plan is the per-prompt split hint Antigravity gets from `olla hook-agy PreInvocation`.
 OLLA_HOOKS = ("olla hook-read", "olla hook-shell", "olla hook-plan")
@@ -338,6 +338,14 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                     "Stop": [{"hooks": [{"type": "command", "timeout": STOP_TIMEOUT_S,
                                          "command": stop_command(python, launcher, "claude")}]}],
                 }
+                # Startup is fast bootstrap (first response waits); only Stop owns the long listener.
+                # Independent of the project-owned Stop gate, with no permission-gate changes.
+                for event in ("SessionStart", "Stop"):
+                    listener = {"hooks": [{"type": "command", "timeout": 10 if event == "SessionStart" else 86410,
+                        "asyncRewake": True, "command":
+                        f'{uaos_command(python, launcher)} coord listen --tool claude --from-hook'}]}
+                    # Keep the existing managed Stop safety gate last for adapter compatibility.
+                    wanted[event].insert(0, listener) if event == "Stop" else wanted[event].append(listener)
                 if shutil.which("olla"):
                     # U108: Claude's Bash gets Codex's shell gate; `cat big.py` used to pass where Read was refused.
                     wanted["PreToolUse"] = [

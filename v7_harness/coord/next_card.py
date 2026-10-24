@@ -102,6 +102,8 @@ def _claim(claims: Path, card: str, tool: str, session: str, now: float, schedul
                     keys = ("phase_id", "state", "owner_tool", "owner_session", "worktree")
                     if len(matches) != 1 or any((k in matches[0], matches[0].get(k)) != (k in expected, expected.get(k)) for k in keys):
                         return False
+                    if any(matches[0].get(k) for k in ("blocker_kind", "gate_failed", "human")):
+                        return False
                 except (OSError, ValueError, KeyError, TypeError):
                     return False
             # U220-R: an assist claim re-decides saturation and resource exclusion here, under the lock
@@ -212,6 +214,8 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
                 candidates.append(p)
             continue
         if p.get("state") not in CANDIDATE:
+            continue
+        if any(p.get(k) for k in ("blocker_kind", "gate_failed", "human")):
             continue
         if not all(state_of.get(d) in SATISFIED for d in p.get("depends_on") or []):
             continue
