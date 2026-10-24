@@ -24,6 +24,10 @@ FILE_FOLDERS = (".coord/tasks", ".coord/notes")
 GIT_TIMEOUT_S = 10
 # Without a cursor, look back one hour.
 FIRST_LOOK_S = 3600
+# U223: a new session's first look lists letters addressed to the tool for a day, not an hour.
+# Receipt: a consult letter 72 minutes older than the next session was never shown and the tiki-taka stalled.
+# Hidden unacked letters are only counted, with no ids, so a backlog cannot flood the delta.
+ADDRESSED_FIRST_LOOK_S = 86400
 # Keeps the injected context short; the rest is counted, not dropped silently.
 MAX_LINES = 12
 # Characters of each item shown; the path gives the rest.
@@ -135,6 +139,12 @@ def _mtime(path: Path) -> float:
 def _addressed_to(path: Path, tool: str) -> bool:
     body = _payload(path)
     return canonical(body.get("requested_target") or body.get("to") or "") == tool
+
+def _first_look_addressed(letter: Path, inbox: Path, tool: str, now: float) -> str | None:
+    """U223: an unacked letter to the tool is "fresh" for a day, then "backlog"."""
+    if not _addressed_to(letter, tool) or (inbox.parent / "ack" / letter.name).exists():
+        return None
+    return "fresh" if _mtime(letter) > now - ADDRESSED_FIRST_LOOK_S else "backlog"
 
 
 def ack_receipts(project: Path, tool: str, letters: list[Path]) -> None:
@@ -291,9 +301,11 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
     inbox = project / ".coord" / "mailbox" / "inbox"
     letters: list[Path] = []
     recovered: list[Path] = []
+    hidden = 0
     if inbox.is_dir():
         for letter in sorted(inbox.glob("*.json")):
             if letter in replay and (letter == replay[0] or not _replay_urgent(letter)):
+                hidden += letter != replay[0]
                 continue
             if not letter.is_file() or own_letter(letter, tool):
                 continue
@@ -301,6 +313,9 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
             if _foreign(project, tool, session, _payload(letter)):
                 continue
             fresh = _mtime(letter) > since or (letter in replay and _replay_urgent(letter))
+            look = None if fresh or letter.stem in unshown_before else _first_look_addressed(letter, inbox, tool, now)
+            fresh = fresh or (look == "fresh" and not had_cursor)
+            hidden += look is not None and not fresh
             if not fresh and letter.stem not in unshown_before:
                 # U141-A crash recovery: shown before (cursor written) but its receipt was never acked.
                 if had_cursor and letter.stem in pending:
@@ -319,6 +334,8 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
         else:
             items.append(item)
     items[1:1] = urgent_items
+    if hidden:
+        items.insert(min(len(items), MAX_LINES - 1), (f"UNACKED_BACKLOG {hidden} letter(s) to {tool}: run coord inbox, dispose, coord ack", None))
     items.extend((item, None) for item in absence_items(project, since, tool))
     for actor, group in events.items():
         items.append((f"{len(group)} run event(s) from {actor}, newest {group[-1].stem}: {summary_of(group[-1])}", None))
