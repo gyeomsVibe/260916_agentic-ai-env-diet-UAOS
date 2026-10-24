@@ -201,7 +201,12 @@ def _open_codex(project: Path, title: str, prompt: str, rpc: Callable[[str, dict
 def _open_antigravity(project: Path, prompt: str, runner: Callable[..., Any]) -> tuple[str, int | None]:
     done = runner([shutil.which("agy") or "agy", "-p", prompt, "--output-format", "json"], cwd=str(project),
                   capture_output=True, text=True, encoding="utf-8", timeout=AGY_TIMEOUT_S)
-    envelope = json.loads(done.stdout)
+    raw = done.stdout or ""
+    try:
+        envelope = json.loads(raw)
+    except ValueError:
+        match = re.search(r"\{.*\}", raw, re.S)
+        envelope = json.loads(match.group(0)) if match else {}
     tokens = (envelope.get("usage") or {}).get("input_tokens")
     return str(envelope["conversation_id"]), tokens if type(tokens) is int and tokens >= 0 else None
 

@@ -230,6 +230,11 @@ def read(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any
     expires_at = record.get("expires_at")
     if record.get("state") not in STATES or isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
         return unknown
+    if tool == "codex" and record["state"] in ("ACTIVE", "LIMITED"):
+        blocked = codex_quota_block(_epoch(record.get("observed_at")), moment)
+        if blocked is not None:
+            return {"tool": tool, "state": "LIMITED", "observed_at": record.get("observed_at"),
+                    "expires_at": blocked["until"], "evidence": blocked}
     if expires_at <= moment:
         return {**unknown, "observed_at": record.get("observed_at"), "expires_at": expires_at}
     if tool == "codex" and record["state"] == "ACTIVE":

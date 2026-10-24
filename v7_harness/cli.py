@@ -2436,7 +2436,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive"})
+_DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window"})
 
 
 if __name__ == "__main__":
