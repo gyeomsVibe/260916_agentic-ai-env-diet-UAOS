@@ -1154,6 +1154,8 @@ def _deliver_unlocked(
         # U117: a watcher that wakes its own session takes real deltas too; U64's headless turn stays for the rest.
         need_wake = _requires_wake(message) if wants_turn is None else wants_turn
         if watcher_live(desk, "claude") and (not need_wake or watcher_wakes(desk, "claude")):
+            _clear_owned_pending(pending, pending_owner)
+            pending.unlink(missing_ok=True)
             return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
         # U74-D: an explicit ACK_ONLY never spends a paid turn, even with no watcher (global relay rule). The letter

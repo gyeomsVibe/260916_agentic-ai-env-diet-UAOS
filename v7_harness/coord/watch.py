@@ -363,7 +363,10 @@ def _native_eligible(project, message_id, body, session, now):
         return False
     if body.get('requested_target') != 'claude' or body.get('delta') == 'ACK_ONLY':
         return False
-    if _foreign(project, 'claude', session, body):
+    from . import windows as _windows
+    unbound_card = (body.get('card') and not (body.get('native_receiver') or body.get('window'))
+                    and _windows.window_for(project, str(body['card']), 'claude') is None)
+    if not unbound_card and _foreign(project, 'claude', session, body):
         return False
     try:
         stamp = (project / '.coord/mailbox/inbox' / f'{message_id}.json').stat().st_mtime

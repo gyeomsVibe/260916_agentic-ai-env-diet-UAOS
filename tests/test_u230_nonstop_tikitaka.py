@@ -141,6 +141,27 @@ class NonstopTikiTakaTest(unittest.TestCase):
         self.assertTrue(out["ok"], out)
         self.assertTrue(any("agy letter relay_test123 PASS" in x for x in out["agy"]))
 
+    def test_rc6_rc7_queued_interactive_clears_pending_and_native_accepts_unbound_card(self):
+        from v7_harness.coord.watch import _native_eligible
+        from v7_harness.coord import windows
+        proj = self.root / "proj_rc6"
+        (proj / ".coord" / "presence").mkdir(parents=True)
+        presence.mark(proj, "claude", "ACTIVE")
+        (proj / ".coord" / "presence" / "user_desk_claude.json").write_text(
+            json.dumps({"thread": "desk-s1", "at": time.time() - 10}), encoding="utf-8"
+        )
+        windows.record_window(proj, "U231", "antigravity", "agy-conv-1")
+        beat = watch_file(proj, "claude")
+        beat.write_text(json.dumps({"tool": "claude", "token": "t", "pid": 1, "expires_at": time.time() + 300,
+                                    "wakes_session": True}), encoding="utf-8")
+        res = deliver(proj, message="ACTIONABLE_DELTA: merged", actor="antigravity", target="claude",
+                      card="U231", wake_class="ACTIONABLE", verdict="PASS", delta="merged")
+        self.assertEqual("QUEUED_INTERACTIVE", res.reason)
+        pending = proj / ".coord" / "mailbox" / "delivery" / "pending" / f"{res.message_id}.json"
+        self.assertFalse(pending.exists())
+        letter = json.loads((proj / ".coord" / "mailbox" / "inbox" / f"{res.message_id}.json").read_text(encoding="utf-8"))
+        self.assertTrue(_native_eligible(proj, res.message_id, letter["payload"], "desk-s1", time.time()))
+
 
 if __name__ == "__main__":
     unittest.main()
