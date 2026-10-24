@@ -862,6 +862,13 @@ def build_parser() -> argparse.ArgumentParser:
     # U141-A: structured (default) wakes only on an ACTIONABLE letter, once per letter, one watcher per target.
     p_coord_watch.add_argument("--policy", default="structured", choices=["structured", "legacy"])
     p_coord_watch.set_defaults(func=cmd_coord_watch)
+    p_coord_listen = p_coord_subs.add_parser("listen", help="Fast Claude startup bootstrap; native Stop asyncRewake listener")
+    p_coord_listen.add_argument("--tool", required=True, choices=["claude", "codex", "antigravity"])
+    p_coord_listen.add_argument("--from-hook", action="store_true", required=True)
+    p_coord_listen.set_defaults(func=cmd_coord_listen)
+    p_worker_route = p_coord_subs.add_parser("worker-route", help="Plan a bounded shared worker route; never execute")
+    p_worker_route.add_argument("--task-file", required=True, help="JSON object with task and availability objects")
+    p_worker_route.set_defaults(func=cmd_coord_worker_route)
 
     # U146-A: the nonstop chain. `next` names the tool's next card, `stop-gate` is the Claude Stop hook, and
     # `push-check` reads the user's standing push grant.
@@ -1851,6 +1858,30 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
     presence = read_all(project)
     _emit({"ok": True, "presence": presence, "conductor": conductor(presence)})
     return 0
+
+
+def cmd_coord_worker_route(args: argparse.Namespace) -> int:
+    from .worker_routing import plan
+    try:
+        data = json.loads(Path(args.task_file).read_text(encoding='utf-8'))
+        result = plan(data.get('task'), data.get('availability')) if isinstance(data, dict) else plan(None, None)
+    except (OSError, ValueError):
+        result = plan(None, None)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result['status'] == 'READY' else 1
+
+
+def cmd_coord_listen(args: argparse.Namespace) -> int:
+    from .coord import continuity, hook_context
+    try:
+        payload = json.loads(hook_context.read_stdin())
+        code, record = continuity.run_hook(payload, args.tool)
+    except (OSError, ValueError, TypeError):
+        return 0  # Invalid context never creates a paid wake.
+    if code == 2:
+        print(f"UAOS ACTIONABLE letter {record['id']}: open, disposition, then coord ack; no auto-approval.",
+              file=sys.stderr, flush=True)
+    return code
 
 
 def cmd_coord_watch(args: argparse.Namespace) -> int:

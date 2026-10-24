@@ -12,8 +12,8 @@ What keeps it inside its lane:
   PC, where `--bare` never reads the OAuth login (a claude.ai / Pro subscription) and needs an API key, which UAOS will
   not read or inject. The safe/restricted pair is a hypothesis for hook suppression and root confinement until one
   approved real call proves it (docs/40);
-- `--max-budget-usd` from the contract's `remote_budget_usd` is a hard cap before spending; without it the worker
-  refuses to start (NO_USD_CAP). Dollars are never inferred from tokens;
+- `--max-budget-usd` from the contract's `remote_budget_usd` is a spending threshold that can overshoot, not a
+  pre-spend hard cap; without it the worker refuses to start (NO_USD_CAP). Dollars are never inferred from tokens;
 - the parent session's markers are removed and UAOS_WORKER=claude is set, so hooks and logs never take the worker
   for the commander;
 - every token kind and the dollar cost are reported, so the pilot's cost gate (B85) sees the whole spend.
