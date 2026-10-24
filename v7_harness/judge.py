@@ -184,7 +184,8 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     if judge == "codex":
         why = "codex judges its own contract (U47-J6)"
     else:
-        away, why = codex_away(desk if desk is not None else read_all(Path(project or source).resolve()))
+        from .coord.hook_context import shared_desk
+        away, why = codex_away(desk if desk is not None else read_all(Path(shared_desk(Path(project or source).resolve()))))
         if not away:
             raise JudgeRefused(why)
     manual_text = manual_path.read_text(encoding="utf-8")
@@ -294,7 +295,8 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
                     from .coord.presence import mark
 
                     marked_at = time.time()
-                    mark(Path(project or source).resolve(), JUDGE_TOOL[judge], "LIMITED",
+                    from .coord.hook_context import shared_desk
+                    mark(Path(shared_desk(Path(project or source).resolve())), JUDGE_TOOL[judge], "LIMITED",
                          ttl_s=quota_ttl(provider_message), now=marked_at, lease=True,  # U47-A1b
                          lease_source="provider")  # U134-R F3: a provider's 429 answer outlives a turn start
                     presence_marked = "LIMITED"

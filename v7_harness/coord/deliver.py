@@ -118,6 +118,16 @@ def _requires_wake(message: str) -> bool:
     return any(pattern.search(upper) for pattern in _WAKE_RES)
 
 
+def _wants_wake(message: str, *, wake_class: str | None = None, verdict: str | None = None,
+                verdict_requested: bool | None = None) -> bool:
+    if wake_class in ("NOTICE", "ACK_ONLY") or verdict_requested is False or _ACK_RE.search(
+            _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()):
+        return False
+    if wake_class == "ACTIONABLE" or bool(verdict) or verdict_requested is True:
+        return True
+    return _requires_wake(message)
+
+
 # ── 비밀 검사 ────────────────────────────────────────────────
 def _check_secrets(text: str) -> None:
     for pat in SECRET_PATTERNS:
@@ -284,6 +294,8 @@ def _deliver_to_claude_locked(
     try:
         cp = execute(argv_list, **kwargs)
     except (subprocess.TimeoutExpired, OSError) as exc:
+        if session_path and resume:
+            session_path.unlink(missing_ok=True)
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), "")
 
     rc = getattr(cp, "returncode", 1)
@@ -291,6 +303,8 @@ def _deliver_to_claude_locked(
     stderr = getattr(cp, "stderr", "") or ""
 
     if rc != 0:
+        if session_path and resume:
+            session_path.unlink(missing_ok=True)
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:rc={rc}", tuple(argv_list), stderr[:500])
 
     # Claude CLI JSON 응답에서 result 추출
@@ -1110,6 +1124,7 @@ def _deliver_unlocked(
     card: str = "",
     window: str = "",
     identity_digest: str | None = None,
+    wants_turn: bool | None = None,
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -1137,7 +1152,8 @@ def _deliver_unlocked(
     if target == "claude":
         from v7_harness.coord.watch import watcher_live, watcher_wakes
         # U117: a watcher that wakes its own session takes real deltas too; U64's headless turn stays for the rest.
-        if watcher_live(desk, "claude") and (not _requires_wake(message) or watcher_wakes(desk, "claude")):
+        need_wake = _requires_wake(message) if wants_turn is None else wants_turn
+        if watcher_live(desk, "claude") and (not need_wake or watcher_wakes(desk, "claude")):
             return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
         # U74-D: an explicit ACK_ONLY never spends a paid turn, even with no watcher (global relay rule). The letter
@@ -1311,7 +1327,9 @@ def deliver(
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
-    if target == "claude" and _requires_wake(message) and not pending.is_file():
+    wants_turn = _wants_wake(message, wake_class=explicit.get("wake_class"), verdict=explicit.get("verdict"),
+                             verdict_requested=explicit.get("verdict_requested"))
+    if target == "claude" and wants_turn and not pending.is_file():
         try:
             _write_receipt(pending, {"message_id": message_id, "target": "claude", "state": "PENDING"})
         except FileExistsError:
@@ -1377,7 +1395,7 @@ def deliver(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", identity_digest=digest)
+                                 card=card, window=window or "", identity_digest=digest, wants_turn=wants_turn)
     finally:
         _release_guard(guard, owner)
 

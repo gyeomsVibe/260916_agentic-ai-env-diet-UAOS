@@ -339,13 +339,31 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
             if row.get("state") == "ANSWERED" and row.get("conversation_id") == conv:
                 agy_evidence.append(f"agy reply {row.get('reply_id')}")
     for run_dir in [desk / ".coord"] if run_dirs is None else run_dirs:
-        for path in sorted(Path(run_dir).glob(f"runs/{card}-*/review_agy.json")):
+        for path in sorted({*Path(run_dir).glob(f"runs/{card}-*/review_agy.json"),
+                            *Path(run_dir).glob(f"runs/{card}/review_agy.json")}):
             try:
                 review = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if _real_agy_review(review, path.parent.name):
                 agy_evidence.append(f"agy review {path.parent.name} {review['verdict']}")
+        for path in sorted({*Path(run_dir).glob(f"runs/{card}-*/judge_agy.json"),
+                            *Path(run_dir).glob(f"runs/{card}/judge_agy.json")}):
+            try:
+                judged = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(judged, dict) and judged.get("verdict") == "APPROVE":
+                agy_evidence.append(f"agy judge {path.parent.name} APPROVE")
+    for folder in (desk / ".coord" / "mailbox" / "inbox", desk / ".coord" / "mailbox" / "ack"):
+        for path in sorted(folder.glob("relay_*.json")) if folder.is_dir() else ():
+            try:
+                payload = (json.loads(path.read_text(encoding="utf-8")) or {}).get("payload") or {}
+            except (OSError, ValueError, AttributeError):
+                continue
+            if (isinstance(payload, dict) and payload.get("actor") == "antigravity"
+                    and payload.get("card") == card and payload.get("verdict") in AGY_VERDICTS):
+                agy_evidence.append(f"agy letter {path.stem} {payload['verdict']}")
     skips = [r for r in mine if r.get("kind") == "card_skip"]
     for skip in skips:
         slot, reason = skip.get("skip_slot"), skip.get("skip_reason")
