@@ -940,6 +940,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_init = p_coord_subs.add_parser("init")
     p_coord_init.add_argument("--project", default=".", help="Project to prepare for UAOS (default: .)")
     p_coord_init.set_defaults(func=cmd_coord_init)
+    _add_docs_parsers(subparsers)
 
     p_coord_inbox = p_coord_subs.add_parser("inbox")
     p_coord_inbox.add_argument("--project", default=".", help="Project root (default: .)")
@@ -2097,10 +2098,14 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
     if not project_manual.is_file():
         project_manual.write_text(PROJECT_MANUAL_TEMPLATE, encoding="utf-8")
         created.append(".coord/PROJECT_MANUAL.md")
-    for folder in (".coord/tasks", ".coord/mailbox", ".work"):
+    for folder in (".coord/tasks", ".coord/mailbox", ".work", "docs"):
         if not (project / folder).is_dir():
             (project / folder).mkdir(parents=True)
             created.append(folder + "/")
+    from .docs_manager import ensure_doc_index
+    if not (project / "docs" / "00_DOCUMENT_INDEX.md").is_file():
+        ensure_doc_index(project)
+        created.append("docs/00_DOCUMENT_INDEX.md")
     task_tpl = project / ".coord" / "tasks" / "contract_template.md"
     if not task_tpl.is_file():
         from .manual import new_manual
@@ -2127,6 +2132,7 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
             handle.write(prefix + "# UAOS runtime state (coord init)\n" + "\n".join(missing) + "\n")
     print(json.dumps({"ok": True, "created": created, "gitignore_added": missing,
                       "contract_manuals": ".coord/tasks/<work_id>-manual.md",
+                      "docs_index": "docs/00_DOCUMENT_INDEX.md",
                       "next": ["coord presence --tool <codex|claude|antigravity> --state ACTIVE",
                                "fill .coord/PROJECT_MANUAL.md (big picture) before the first delegation",
                                "pilot manual new ... then pilot manual lint ... then pilot run --manual ..."]},
@@ -2468,6 +2474,57 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
 _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window"})
+
+
+
+
+def _add_docs_parsers(subparsers) -> None:
+    """Register the `docs new|sync|next-num` subcommands (U222)."""
+    p_docs = subparsers.add_parser("docs", help="UAOS documentation and auto-numbering management")
+    subs = p_docs.add_subparsers(dest="docs_cmd", required=True)
+    p_new = subs.add_parser("new", help="Create a new auto-numbered document and register in index")
+    p_new.add_argument("title", help="Document title")
+    p_new.add_argument("--slug", default=None, help="Custom filename slug")
+    p_new.add_argument("--category", default="", help="Document category")
+    p_new.add_argument("--tool", default="", help="Authoring tool name")
+    p_new.set_defaults(func=cmd_docs_new)
+    p_sync = subs.add_parser("sync", help="Synchronize docs/00_DOCUMENT_INDEX.md with all docs")
+    p_sync.set_defaults(func=cmd_docs_sync)
+    p_next = subs.add_parser("next-num", help="Print next sequential number prefix")
+    p_next.set_defaults(func=cmd_docs_next_num)
+    for each in (p_new, p_sync, p_next):
+        each.add_argument("--project", default=".", help="Project directory (default: .)")
+
+
+def cmd_docs_new(args: argparse.Namespace) -> int:
+    """Create a new auto-numbered document and register in docs/00_DOCUMENT_INDEX.md."""
+    from .docs_manager import register_new_doc
+    project = Path(args.project)
+    path = register_new_doc(project, title=args.title, slug=args.slug,
+                            category=args.category, author_tool=args.tool)
+    rel = str(path.relative_to(project).as_posix())
+    print(json.dumps({"ok": True, "created": rel, "path": str(path)}, ensure_ascii=False))
+    return 0
+
+
+
+
+def cmd_docs_next_num(args: argparse.Namespace) -> int:
+    """Calculate and return the next sequential document number and prefix."""
+    from .docs_manager import allocate_next_doc_number
+    num, prefix = allocate_next_doc_number(Path(args.project))
+    print(json.dumps({"ok": True, "next_number": num, "prefix": prefix}, ensure_ascii=False))
+    return 0
+
+
+
+
+def cmd_docs_sync(args: argparse.Namespace) -> int:
+    """Audit and synchronize docs/00_DOCUMENT_INDEX.md table with existing documents."""
+    from .docs_manager import sync_doc_index
+    count = sync_doc_index(Path(args.project))
+    print(json.dumps({"ok": True, "synced_count": count, "index": "docs/00_DOCUMENT_INDEX.md"}, ensure_ascii=False))
+    return 0
 
 
 if __name__ == "__main__":
