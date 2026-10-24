@@ -1604,7 +1604,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
     started = time.monotonic()  # U207-B G2: post-emit work is skipped once the hook used HOOK_ACK_BUDGET_S
     say = getattr(args, "say", "json")
 
-    shown = {"user": "", "event": ""}  # U147: the in-app line for 윤겸스 and the hook event that carries it
+    shown = {"user": "", "event": "", "native_title": "", "native_event": ""}
 
     def _emit(data: dict[str, Any], line: str = "") -> None:
         user = shown["user"]
@@ -1616,6 +1616,17 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             if out:
                 print(json.dumps(out, ensure_ascii=False))
             sys.stdout.flush()  # U207-B G2: the line leaves the process before any post-emit work can be killed
+            return
+        if shown["native_title"] and shown["native_event"] in ("SessionStart", "UserPromptSubmit"):
+            out = dict(data) if say == "json" else {}
+            out["hookSpecificOutput"] = {"hookEventName": shown["native_event"],
+                                         "sessionTitle": shown["native_title"]}
+            if line:
+                out["hookSpecificOutput"]["additionalContext"] = line
+            if user:
+                out["systemMessage"] = user
+            print(json.dumps(out))  # native control still works with --say none and no user briefing
+            sys.stdout.flush()
             return
         if user and say in ("brief", "p1", "none"):
             # U147: Claude Code and Codex show `systemMessage` to the user, not the model (0 tokens); the model's
@@ -1732,6 +1743,16 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                         prompt = turns[-1][0] if turns else None
                         thread = str(event.get("conversationId") or "")
                     window_line = on_prompt(project, args.tool, thread, prompt)
+                    from .coord.desk_title import reconcile_title
+
+                    native = reconcile_title(project, args.tool, thread, event)
+                    if args.tool == "claude" or native["instruction"]:
+                        window_line = "\n".join(p for p in window_line.splitlines()
+                                                if not p.startswith("USER WINDOW:"))
+                    window_line = "\n".join(p for p in (window_line, native["instruction"]) if p)
+                    if args.tool == "claude":
+                        shown["native_title"] = native.get("title") or ""
+                        shown["native_event"] = str(event.get("hook_event_name") or "")
                     # U150-B: an error report reaches the other two tools; a repeat of it becomes P1.
                     from .coord.repeat_error import on_prompt as error_lines
 
