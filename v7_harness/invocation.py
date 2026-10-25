@@ -249,15 +249,31 @@ def evaluate_roi_metrics(db=None, *, window=100):
     rows = _review_rows(db, window)
     total = len(rows)
     succeeded = sum(row["outcome"] == "SUCCEEDED" for row in rows)
-    local_calls = sum(row["model"] == LOCAL_MODEL for row in rows)
-    paid_calls = total - local_calls
+    first_by_work = {}
+    local_calls = paid_calls = unknown_route_calls = 0
+    for row in rows:
+        first_by_work.setdefault(row["work_id"], row)
+        try:
+            meta = json.loads(row.get("metadata") or "{}")
+        except ValueError:
+            meta = {}
+        provider = meta.get("provider") if isinstance(meta, dict) else None
+        model = str(row.get("model") or "")
+        if provider == "ollama" or model in (LOCAL_MODEL, "qwen2.5:1.5b", "nomic-embed-text"):
+            local_calls += 1
+        elif provider == "claude_cli_unverified" or model == HAIKU or model.startswith("claude-"):
+            paid_calls += 1
+        else:
+            unknown_route_calls += 1
+    first_succeeded = sum(r["outcome"] == "SUCCEEDED" for r in first_by_work.values())
     return {
         "schema": "uaos-rsi-roi-v1",
         "window_attempts": total,
         "succeeded_attempts": succeeded,
-        "first_pass_yield": (succeeded / total) if total else 0.0,
+        "first_pass_yield": (first_succeeded / len(first_by_work)) if first_by_work else 0.0,
         "local_calls": local_calls,
         "paid_calls": paid_calls,
+        "unknown_route_calls": unknown_route_calls,
         "local_offload_ratio": (local_calls / total) if total else 0.0,
         "quota_saving": "UNMEASURED",
         "auto_adopt": False,
