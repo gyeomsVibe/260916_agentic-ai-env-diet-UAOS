@@ -2530,7 +2530,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return usage_main(arguments[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "coord_subcommand", None) in _DESK_COMMANDS and getattr(args, "project", None):
+    if (getattr(args, "coord_subcommand", None) in _DESK_COMMANDS or getattr(args, "docs_cmd", None)) and getattr(args, "project", None):
         from .coord.hook_context import shared_desk
 
         desk = shared_desk(args.project)
@@ -2556,6 +2556,8 @@ def _add_docs_parsers(subparsers) -> None:
     p_new.add_argument("--slug", default=None, help="Custom filename slug")
     p_new.add_argument("--category", default="", help="Document category")
     p_new.add_argument("--tool", default="", help="Authoring tool name")
+    p_new.add_argument("--ext", default="md", help="File extension (md or html)")
+    p_new.add_argument("--from-file", dest="from_file", default=None, help="Copy body from existing file")
     p_new.set_defaults(func=cmd_docs_new)
     p_sync = subs.add_parser("sync", help="Synchronize docs/00_DOCUMENT_INDEX.md with all docs")
     p_sync.set_defaults(func=cmd_docs_sync)
@@ -2569,8 +2571,10 @@ def cmd_docs_new(args: argparse.Namespace) -> int:
     """Create a new auto-numbered document and register in docs/00_DOCUMENT_INDEX.md."""
     from .docs_manager import register_new_doc
     project = Path(args.project)
+    src = Path(args.from_file) if getattr(args, "from_file", None) else None
     path = register_new_doc(project, title=args.title, slug=args.slug,
-                            category=args.category, author_tool=args.tool)
+                            category=args.category, author_tool=args.tool,
+                            ext=getattr(args, "ext", "md"), source_file=src)
     rel = str(path.relative_to(project).as_posix())
     print(json.dumps({"ok": True, "created": rel, "path": str(path)}, ensure_ascii=False))
     return 0

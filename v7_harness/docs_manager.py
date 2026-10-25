@@ -105,23 +105,27 @@ def parse_doc_filename(filename: str) -> tuple[Optional[int], str, str]:
 
 
 def extract_doc_title(file_path: Path) -> str:
-    """Extract the first H1 title from a markdown file, or default to filename."""
+    """Extract the first H1 title from markdown or <title>/<h1> from HTML, or default to filename."""
     if not file_path.is_file():
         return file_path.name
     try:
-        with file_path.open("r", encoding="utf-8", errors="ignore") as f:
-            for _ in range(30):
-                line = f.readline()
-                if not line:
-                    break
-                s = line.strip()
-                if s.startswith("# "):
-                    return s[2:].strip().replace("|", "/")
+        text = file_path.read_text(encoding="utf-8", errors="ignore")[:8192]
+        if file_path.suffix.lower() in (".html", ".htm"):
+            m = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+            if not m:
+                m = re.search(r"<h1[^>]*>(.*?)</h1>", text, re.IGNORECASE | re.DOTALL)
+            if m:
+                clean = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+                if clean:
+                    return clean.replace("|", "/")
+        for line in text.splitlines()[:30]:
+            s = line.strip()
+            if s.startswith("# "):
+                return s[2:].strip().replace("|", "/")
     except Exception:
         pass
-    # Fallback to sanitized filename
     _, _, base = parse_doc_filename(file_path.name)
-    return base.replace(".md", "").replace("_", " ")
+    return re.sub(r"\.(md|html?)$", "", base, flags=re.IGNORECASE).replace("_", " ")
 
 
 def scan_docs(project_root: Path) -> list[DocEntry]:
@@ -133,12 +137,10 @@ def scan_docs(project_root: Path) -> list[DocEntry]:
         if entry.is_dir():
             continue
         fname = entry.name
-        is_idx = (fname == INDEX_FILENAME)
+        is_idx = fname in (INDEX_FILENAME, "00_DOCUMENT_HUB.html")
         num, prefix, base = parse_doc_filename(fname)
         stat = entry.stat()
         mtime_kst = datetime.fromtimestamp(stat.st_mtime, tz=KST)
-        
-        # Check if filename contains explicit date
         m_date = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
         if m_date:
             try:
@@ -147,7 +149,6 @@ def scan_docs(project_root: Path) -> list[DocEntry]:
                     mtime_kst = fn_dt
             except Exception:
                 pass
-
         title = extract_doc_title(entry)
         entries.append(DocEntry(
             path=entry,
@@ -160,7 +161,6 @@ def scan_docs(project_root: Path) -> list[DocEntry]:
             is_index=is_idx
         ))
 
-    # Sort entries: index first, then by number if present, else by created_at_kst
     def sort_key(e: DocEntry):
         if e.is_index:
             return (-1, datetime.min.replace(tzinfo=KST), e.filename)
@@ -199,16 +199,20 @@ def register_new_doc(
     category: str = "",
     author_tool: str = "",
     content: str = "",
-    target_date: Optional[datetime] = None
+    target_date: Optional[datetime] = None,
+    ext: str = "md",
+    source_file: Optional[Path] = None,
 ) -> Path:
-    """Create a new numbered document, write content, and register in 00_DOCUMENT_INDEX.md."""
+    """Create a new numbered document, write content, and register in 00_DOCUMENT_INDEX.md and 00_DOCUMENT_HUB.html."""
     docs_dir = ensure_docs_dir(project_root)
     ensure_doc_index(project_root)
 
     next_num, prefix = allocate_next_doc_number(project_root, target_date)
-    
+    clean_ext = ext.lstrip(".").lower() or "md"
+    if clean_ext not in ("md", "html"):
+        raise ValueError("ext must be md or html")
+
     if not slug:
-        # Create safe slug from title
         safe_slug = re.sub(r"[^\w\-\uac00-\ud7a3]", "_", title).strip("_")
         safe_slug = re.sub(r"_+", "_", safe_slug)
         if not safe_slug:
@@ -218,14 +222,15 @@ def register_new_doc(
         if re.search(r'[<>:"/\\|?*\x00-\x1f]', safe_slug):
             raise ValueError("slug must be a single safe filename component")
 
-    filename = f"{prefix}{safe_slug}.md"
+    filename = f"{prefix}{safe_slug}.{clean_ext}"
     doc_path = docs_dir / filename
 
     now = target_date or datetime.now(KST)
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
-    # Default content template if empty
-    if not content:
+    if source_file is not None:
+        content = Path(source_file).read_text(encoding="utf-8")
+    elif not content:
         content = f"""# {title}
 
 - 작성일시: {now_str} (KST)
@@ -241,9 +246,9 @@ def register_new_doc(
 
     with doc_path.open("x", encoding="utf-8") as handle:
         handle.write(content)
-    
-    # Update index table
+
     append_to_doc_index(project_root, next_num, filename, now_str[:16], title)
+    sync_doc_index(project_root)
     return doc_path
 
 
@@ -277,13 +282,12 @@ def append_to_doc_index(project_root: Path, doc_num: int, filename: str, date_st
 
 @_serialized_doc_write
 def sync_doc_index(project_root: Path) -> int:
-    """Audit docs/ directory and synchronize 00_DOCUMENT_INDEX.md table completely."""
+    """Audit docs/ directory and synchronize 00_DOCUMENT_INDEX.md and 00_DOCUMENT_HUB.html."""
     docs_dir = ensure_docs_dir(project_root)
     index_path = ensure_doc_index(project_root)
     entries = scan_docs(project_root)
 
     non_index = [e for e in entries if not e.is_index]
-    # Re-sort strictly by number, then created_at
     non_index.sort(key=lambda x: (x.number if x.number is not None else 9999, x.created_at_kst))
 
     now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
@@ -293,11 +297,21 @@ def sync_doc_index(project_root: Path) -> int:
     )
 
     rows = []
+    html_rows = []
     for e in non_index:
         num_str = f"{e.number:02d}" if e.number is not None else "--"
         dt_str = e.created_at_kst.strftime("%Y-%m-%d %H:%M")
         rows.append(f"| {num_str} | [{e.filename}]({e.filename}) | {dt_str} | {e.title} |")
+        html_rows.append(f"<tr><td>{num_str}</td><td><a href='{e.filename}'>{e.filename}</a></td><td>{dt_str}</td><td>{e.title}</td></tr>")
 
     full_content = header + "\n".join(rows) + "\n"
     index_path.write_text(full_content, encoding="utf-8")
+    hub_path = docs_dir / "00_DOCUMENT_HUB.html"
+    hub_html = (
+        f"<!DOCTYPE html><html lang='ko'><head><meta charset='utf-8'><title>UAOS Document Hub - {project_root.resolve().name}</title></head>"
+        f"<body><h1>UAOS-RSI Unified Document Hub ({len(rows)})</h1><table>"
+        + "".join(html_rows)
+        + "</table></body></html>\n"
+    )
+    hub_path.write_text(hub_html, encoding="utf-8")
     return len(rows)
