@@ -145,17 +145,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--add-dir", dest="workspace", required=True)
     parser.add_argument("--model", default=None)
     parser.add_argument("--max-budget-usd", dest="max_budget_usd", default=None)
+    parser.add_argument("--require-model", dest="require_model", default=None)
     args, _unknown = parser.parse_known_args(argv)
     args.prompt = resolve_prompt(args.prompt)
     timeout_s = int(str(args.print_timeout).rstrip("s") or 600)
     model = args.model or DEFAULT_MODEL
 
-    def envelope(status: str, response: str, usage: dict, error: str = "") -> int:
+    def envelope(status: str, response: str, usage: dict, error: str = "", extra: dict | None = None) -> int:
         # U68: ASCII escapes, not ensure_ascii=False. On Windows the pilot's pipe is cp949, and an answer holding
         # U+2014 raised UnicodeEncodeError after the paid call (U67-C1), leaving no envelope. JSON escapes decode back
         # to the same text under any stdout encoding.
-        print(json.dumps({"status": status, "response": response, "usage": usage, "conversation_id": "claude-worker",
-                          "error": error}, ensure_ascii=True))
+        payload = {"status": status, "response": response, "usage": usage, "conversation_id": "claude-worker",
+                   "error": error}
+        payload.update(extra or {})
+        print(json.dumps(payload, ensure_ascii=True))
         return 0 if status == "SUCCESS" else 1
 
     try:
@@ -190,7 +193,22 @@ def main(argv: list[str] | None = None) -> int:
         usage["usd_cap_overshoot_microusd"] = overshoot
     if result.get("is_error") and result.get("subtype") not in ("error_max_turns",):
         return envelope("ERROR", "", usage, str(result.get("subtype") or result.get("result") or "claude error")[:300])
-    return envelope("SUCCESS", str(result.get("result") or "").strip()[:2000] or "(claude ended without a summary)", usage)
+    extra = None
+    if args.require_model:
+        mismatch = model_mismatch(result, args.require_model)
+        if mismatch:
+            return envelope("FAILED", "", usage, mismatch)
+        extra = {"resolved_models": sorted(str(key) for key in (result.get("modelUsage") or {}))}
+    return envelope("SUCCESS", str(result.get("result") or "").strip()[:2000] or "(claude ended without a summary)", usage,
+                    extra=extra)
+
+
+
+
+def model_mismatch(result: dict, pinned: str) -> str:
+    """U236a: under --require-model every modelUsage key must be the pinned full id; anything else fails closed."""
+    keys = sorted(str(key) for key in (result.get("modelUsage") or {}))
+    return "" if keys == [pinned] else f"MODEL_MISMATCH: expected {pinned}, got {keys}"
 
 
 if __name__ == "__main__":

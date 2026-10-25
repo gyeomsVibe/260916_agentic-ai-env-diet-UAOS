@@ -231,6 +231,9 @@ def lint(text: str, project: Path) -> ManualReport:
             usd = -1.0
         if usd <= 0 or usd != usd:
             report.errors.append("REMOTE_WITHOUT_USD_CAP: worker claude needs remote_budget_usd > 0")
+        # U236a: an alias resolves per provider, so an exact pin needs the full model id.
+        if str(contract.get("model_pin") or "") == "exact" and str(contract.get("model") or "") in ("", "haiku", "sonnet", "opus"):
+            report.errors.append("MODEL_ALIAS: model_pin exact needs a full model id")
 
     blocks = dictated_paths(text)
     if worker == "apply" and not blocks:
