@@ -243,5 +243,26 @@ def main(argv=None):
         return 1
 
 
+
+
+def evaluate_roi_metrics(db=None, *, window=100):
+    rows = _review_rows(db, window)
+    total = len(rows)
+    succeeded = sum(row["outcome"] == "SUCCEEDED" for row in rows)
+    local_calls = sum(row["model"] == LOCAL_MODEL for row in rows)
+    paid_calls = total - local_calls
+    return {
+        "schema": "uaos-rsi-roi-v1",
+        "window_attempts": total,
+        "succeeded_attempts": succeeded,
+        "first_pass_yield": (succeeded / total) if total else 0.0,
+        "local_calls": local_calls,
+        "paid_calls": paid_calls,
+        "local_offload_ratio": (local_calls / total) if total else 0.0,
+        "quota_saving": "UNMEASURED",
+        "auto_adopt": False,
+    }
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
