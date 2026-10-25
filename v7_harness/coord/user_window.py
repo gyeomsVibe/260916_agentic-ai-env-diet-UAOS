@@ -367,6 +367,11 @@ def on_prompt(project: Path, tool: str, thread: str, prompt, *, now: datetime | 
               current: str | None = None) -> str:
     if not thread:
         return ""
+    try:
+        from v7_harness.control_ux import auto_render_control_ux
+        auto_render_control_ux(project, tool, str(prompt or ""))
+    except Exception:
+        pass
     if not is_declaration(prompt):
         return reconcile(project, tool, thread, now=now)
     current = current if current is not None else _current_title(tool, thread)
