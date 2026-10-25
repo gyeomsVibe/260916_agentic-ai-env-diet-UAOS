@@ -820,6 +820,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_boot.add_argument("--launch", action="store_true", help="Start one sentinel loop per project and wait")
     p_coord_boot.set_defaults(func=cmd_coord_boot)
 
+    p_coord_title_vote = p_coord_subs.add_parser("title-vote", help="U234: cast this tool's own desk-title vote")
+    p_coord_title_vote.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_title_vote.add_argument("--tool", choices=["codex", "claude", "antigravity"], default=None)
+    p_coord_title_vote.add_argument("--topic", default=None, help="1-16 characters, no brackets or controls")
+    p_coord_title_vote.add_argument("--schedule-sha256", default=None, help="Semantic digest the voter read")
+    p_coord_title_vote.add_argument("--status", action="store_true", help="Print the current digest and accepted topic; casts no vote")
+    p_coord_title_vote.set_defaults(func=cmd_coord_title_vote)
+
     p_coord_presence = p_coord_subs.add_parser("presence")
     p_coord_presence.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_presence.add_argument("--tool", choices=["codex", "claude", "antigravity"], default=None)
@@ -1549,6 +1557,25 @@ def cmd_coord_boot(args: argparse.Namespace) -> int:
     result = boot_task.plan(home)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1
+
+
+def cmd_coord_title_vote(args: argparse.Namespace) -> int:
+    """U234: one native tool casts its own vote; --status only reads (never creates the store)."""
+    from .coord import title_consensus as tc
+    project = Path(args.project)
+    try:
+        if args.status:
+            _, topic = tc.accepted_topic(project)
+            result = {"ok": True, "schedule_sha256": tc.schedule_digest(project), "accepted_topic": topic}
+        else:
+            if not (args.tool and args.topic and args.schedule_sha256):
+                raise ValueError("--tool, --topic and --schedule-sha256 are required to vote")
+            result = {"ok": True, **tc.cast_vote(project, args.tool, args.topic, args.schedule_sha256)}
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
 
 
 def cmd_coord_sentinel(args: argparse.Namespace) -> int:
