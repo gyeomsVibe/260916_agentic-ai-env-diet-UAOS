@@ -96,3 +96,23 @@ def _remote(task, availability, total):
     result = _answer('claude', 'EXPLICIT_CAPPED_HAIKU_REQUIRES_PILOT_ADMISSION', model=HAIKU)
     result.update(estimated)
     return result
+
+
+def select_pool_worker(task: dict, availability: dict) -> dict:
+    """Resolve 3-tool worker pool dispatch spec (local Ollama coder vs bounded Haiku 5.5 subagent)."""
+    decision = dict(plan(task, availability))
+    worker = decision.get('worker')
+    if worker == 'local':
+        decision['model'] = 'qwen2.5-coder:7b'
+        decision['subagent'] = None
+        decision['require_exact_model'] = False
+        decision['model_pin'] = 'none'
+    elif worker == 'claude' and decision.get('model') == HAIKU:
+        decision['subagent'] = 'uaos-haiku-worker'
+        decision['require_exact_model'] = True
+        decision['model_pin'] = 'exact'
+    else:
+        decision['subagent'] = None
+        decision['require_exact_model'] = False
+        decision['model_pin'] = 'none'
+    return decision
