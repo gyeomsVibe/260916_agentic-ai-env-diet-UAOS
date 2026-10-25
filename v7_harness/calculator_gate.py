@@ -179,7 +179,22 @@ def audit_errors(message: str, gated_paths: list[str], agy_auto_path: Path) -> l
             continue
         if isinstance(row, dict) and row.get("state") == "ANSWERED" and row.get("reply_id") == match.group(1):
             return []
+    if _native_agy_pass(Path(agy_auto_path).parent.parent, match.group(1)):
+        return []
     return [f"AUDIT_FIRST: {match.group(1)} is not an answered Antigravity reply"]
+
+
+def _native_agy_pass(mailbox: Path, message_id: str) -> bool:
+    # U235: a native Antigravity session's PASS verdict letter counts; reading only the auto-responder ledger deadlocked both tools.
+    for folder in ("ack", "inbox"):
+        try:
+            letter = json.loads((mailbox / folder / f"{message_id}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        payload = letter.get("payload") if isinstance(letter, dict) else None
+        if isinstance(payload, dict) and payload.get("actor") == "antigravity" and payload.get("verdict") == "PASS":
+            return True
+    return False
 
 
 def _current_branch() -> str:
