@@ -368,8 +368,9 @@ def on_prompt(project: Path, tool: str, thread: str, prompt, *, now: datetime | 
     if not thread:
         return ""
     try:
-        from v7_harness.control_ux import auto_render_control_ux
-        auto_render_control_ux(project, tool, str(prompt or ""))
+        if not (Path(project) / ".work" / "QUIET_LOCK").is_file():
+            from v7_harness.control_ux import auto_render_control_ux
+            auto_render_control_ux(project, tool, str(prompt or ""))
     except Exception:
         pass
     if not is_declaration(prompt):
@@ -378,10 +379,13 @@ def on_prompt(project: Path, tool: str, thread: str, prompt, *, now: datetime | 
     existing = _codex_names() if tool == "codex" else []
     got = claim(project, tool, thread, now=now, existing=existing, current=current)
     topic = _topic_from_text(prompt)
+    from .desk_title import _schedule_topic
+    shared_now = _schedule_topic(Path(project)) or ""
 
-    def own(entry: dict) -> dict:  # U237: only this window's own declaration sets its topic, and only once
-        if topic and not entry.get("topic"):
+    def own(entry: dict) -> dict:  # U237/U243: declaration records own topic and current shared_topic baseline
+        if topic:
             entry["topic"] = topic
+        entry["shared_topic"] = shared_now
         return dict(entry)
 
     title = _full_title(project, _entry_change(project, tool, thread, own), current) or got["title"]
