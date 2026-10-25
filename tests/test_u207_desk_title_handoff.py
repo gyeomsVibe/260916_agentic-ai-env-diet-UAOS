@@ -60,7 +60,8 @@ class Reconcile(Base):
         self.assertEqual(uw.MAX_EMITS, sum(1 for line in lines if TITLE in line))
         entry = _registry(self.project)["claude"][0]
         self.assertFalse(entry.get("converged"))
-        self.assertEqual("BLOCKED", entry.get("title_state"))
+        # U237 (2026-10-25): UNKNOWN readback alone is never BLOCKED; the cap above still holds
+        self.assertEqual("UNVERIFIED", entry.get("title_state"))
 
     def test_session_that_is_not_a_desk_gets_nothing_and_writes_nothing(self):
         with mock.patch.object(uw, "_current_title", side_effect=AssertionError("no readback for a non-desk")):
