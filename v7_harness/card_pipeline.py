@@ -475,3 +475,14 @@ def check_done(checkout, pr_url, head, runtime=None, uaos_home=None, pr_reader=N
         return problems
     problems = _remote_problems(checkout, pr_url, head, pr_reader or merge_route.pr_view)
     return problems + _runtime_problems(runtime, uaos_home, runtime_verify or runtime_install.verify)
+
+
+def sync_project_hub(checkout) -> dict[str, Any]:
+    """U240: synchronize docs/00_DOCUMENT_INDEX.md and docs/00_DOCUMENT_HUB.html at card or project finish."""
+    from v7_harness.docs_manager import ensure_doc_index, ensure_docs_dir, sync_doc_index
+
+    root = Path(checkout)
+    index_md = ensure_doc_index(root)
+    sync_doc_index(root)
+    hub_html = ensure_docs_dir(root) / "00_DOCUMENT_HUB.html"
+    return {"ok": True, "index_md": str(index_md), "hub_html": str(hub_html)}
