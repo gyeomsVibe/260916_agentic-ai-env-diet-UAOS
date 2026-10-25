@@ -79,6 +79,11 @@ def collect_control_ux_snapshot(project: Path | str, *, now: float | None = None
 
 
 def render_control_ux_html(snapshot: dict, output_path: Path | str | None = None) -> str:
+    tools = snapshot.get("tools") or {}
+    boxes = "".join(
+        f"<div class='box'><b>{html.escape(t.upper())}</b>{html.escape(str((tools.get(t) or {}).get('state') or 'UNKNOWN'))}</div>"
+        for t in TOOLS
+    )
     rows = "".join(
         f"<tr><td>{html.escape(str(p.get('phase_id', '')))}</td>"
         f"<td>{html.escape(str(p.get('title', '')))}</td>"
@@ -91,11 +96,18 @@ def render_control_ux_html(snapshot: dict, output_path: Path | str | None = None
         for b in snapshot.get("background_tasks", [])
     )
     doc = (
-        f"<!DOCTYPE html><html lang='ko'><head><meta charset='UTF-8'><title>{SCHEMA}</title></head>"
-        f"<body><h1>UAOS-RSI Main Control UX/UI ({SCHEMA})</h1>"
-        "<div class='banner'><strong>ANTIGRAVITY = 사용자와의 메인 대화창구 (Primary User-Facing Control Desk)</strong></div>"
+        f"<!DOCTYPE html><html lang='ko'><head><meta charset='UTF-8'><title>{SCHEMA}</title>"
+        "<style>body{margin:0;padding:10px 12px;background:#0b1020;color:#e2e8f0;font:12px/1.4 sans-serif}"
+        ".banner{border-left:4px solid #38bdf8;padding-left:8px;margin-bottom:8px;font-weight:700}"
+        ".row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}"
+        ".box{background:#131c31;border:1px solid #263554;border-radius:6px;padding:6px 8px}.box b{color:#38bdf8;display:block}"
+        "details{background:#131c31;border:1px solid #263554;border-radius:6px;padding:5px 8px}summary{cursor:pointer;font-weight:600;color:#bae6fd}"
+        "table{width:100%;border-collapse:collapse;margin-top:6px}th,td{border:1px solid #334155;padding:4px 6px;text-align:left}</style></head>"
+        f"<body><div class='banner'><strong>ANTIGRAVITY = 사용자와의 메인 대화창구 ({SCHEMA})</strong></div>"
+        f"<div class='row'>{boxes}</div>"
+        "<details><summary>Master Schedule &amp; Background Tasks (Click to expand)</summary>"
         f"<table><thead><tr><th>ID</th><th>Title</th><th>Owner</th><th>State</th></tr></thead><tbody>{rows}</tbody></table>"
-        f"<ul>{bgs}</ul></body></html>"
+        f"<ul>{bgs}</ul></details></body></html>"
     )
     if output_path is not None:
         target = Path(output_path)
