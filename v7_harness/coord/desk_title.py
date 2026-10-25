@@ -46,6 +46,10 @@ def _native_event(tool: str, thread: str, event: dict) -> bool:
 
 
 def _schedule_topic(project: Path) -> str | None:
+    from .title_consensus import accepted_topic  # U234 dedicated store wins over legacy master votes
+    exists, topic = accepted_topic(project)
+    if exists:
+        return topic
     schedule = _json(project / ".coord" / "master_schedule.json")
     consensus, phases = schedule.get("desk_title"), schedule.get("phases")
     if not isinstance(consensus, dict) or not isinstance(phases, list) or not phases:
