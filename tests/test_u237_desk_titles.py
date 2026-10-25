@@ -19,7 +19,7 @@ from v7_harness.coord import desk_title as dt
 from v7_harness.coord import user_window as uw
 
 NOW = datetime(2026, 10, 25, 9, 0, 0)
-PREFIX = "[사용자 대화창구-261025-1]"
+PREFIX = "[261025-1]"
 SHARED = "창구·호출기록 개선"
 DECLARE = "이제부터 이대화창이 사용자 대상 대화창구이다."
 

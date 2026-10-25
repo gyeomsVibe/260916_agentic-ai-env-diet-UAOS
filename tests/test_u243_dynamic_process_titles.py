@@ -11,7 +11,7 @@ from v7_harness.coord import desk_title as dt
 from v7_harness.coord import user_window as uw
 
 NOW = datetime(2026, 10, 26, 3, 50, 0)
-PREFIX = "[사용자 대화창구-261026-1]"
+PREFIX = "[261026-1]"
 OLD_TOPIC = "창구·호출기록 개선"
 NEW_TOPIC = "메인컨트롤UX·3도구병렬"
 DECLARE = "지금부터 여기가 사용자 대상 대화창구이다."

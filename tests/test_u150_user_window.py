@@ -1,6 +1,6 @@
-"""U150-C: a user-window declaration renames that window `[사용자 대화창구-YYMMDD-N]` in every tool.
+"""U150-C: a user-window declaration renames that window `[YYMMDD-N]` in every tool.
 
-Receipt (2026-10-04): Codex already names its user windows this way (state_5.sqlite names `[사용자 대화창구-261004-1]`,
+Receipt (2026-10-04): Codex already names its user windows this way (state_5.sqlite names `[261004-1]`,
 `-2`), Claude did it by hand, and Antigravity's app showed nothing. One shared core decides the title; each tool's
 adapter writes it where that tool's UI reads it. Fixtures are temp copies; no real app store is touched.
 """
@@ -27,7 +27,7 @@ class Declaration(unittest.TestCase):
             self.assertTrue(uw.is_declaration(text), text)
 
     def test_other_prompts_are_not(self):
-        for text in ("메시지 ID 충돌 결함 고쳐줘", "", None, "[사용자 대화창구-261002-1] 창의 작업 종료 확인",
+        for text in ("메시지 ID 충돌 결함 고쳐줘", "", None, "[261002-1] 창의 작업 종료 확인",
                      "대화창구 목록 보여줘"):
             self.assertFalse(uw.is_declaration(text), text)
 
@@ -51,9 +51,9 @@ class Claim(unittest.TestCase):
         a = uw.claim(self.project, "claude", "s1", now=NOW)
         b = uw.claim(self.project, "claude", "s2", now=NOW)
         c = uw.claim(self.project, "codex", "t1", now=NOW)
-        self.assertEqual("[사용자 대화창구-261004-1]", a["title"])
-        self.assertEqual("[사용자 대화창구-261004-2]", b["title"])
-        self.assertEqual("[사용자 대화창구-261004-1]", c["title"])
+        self.assertEqual("[261004-1]", a["title"])
+        self.assertEqual("[261004-2]", b["title"])
+        self.assertEqual("[261004-1]", c["title"])
         self.assertTrue(a["new"])
 
     def test_same_window_keeps_its_title(self):
@@ -65,17 +65,17 @@ class Claim(unittest.TestCase):
     def test_seed_continues_after_existing_titles(self):
         # A tool's own store may already hold today's -1 and -2 (Codex did); the next one is -3.
         got = uw.claim(self.project, "codex", "t9", now=NOW,
-                       existing=["[사용자 대화창구-261004-1]", "[사용자 대화창구-261004-2] x", "[U42] other"])
-        self.assertEqual("[사용자 대화창구-261004-3]", got["title"])
+                       existing=["[261004-1]", "[261004-2] x", "[U42] other"])
+        self.assertEqual("[261004-3]", got["title"])
 
     def test_existing_permanent_title_is_bound_not_renumbered(self):
         # Codex REWORK 94075087: a thread already named -1 yesterday must keep -1, not become today's -N.
         uw.claim(self.project, "codex", "t0", now=NOW)
-        got = uw.claim(self.project, "codex", "t1", now=NOW, current="[사용자 대화창구-261002-1] UAOS-RSI")
-        self.assertEqual("[사용자 대화창구-261002-1]", got["title"])
+        got = uw.claim(self.project, "codex", "t1", now=NOW, current="[261002-1] UAOS-RSI")
+        self.assertEqual("[261002-1]", got["title"])
         self.assertFalse(got["new"])
         nxt = uw.claim(self.project, "codex", "t2", now=NOW)
-        self.assertEqual("[사용자 대화창구-261004-2]", nxt["title"])
+        self.assertEqual("[261004-2]", nxt["title"])
 
     def test_parallel_claims_never_share_a_number(self):
         titles, errors = [], []
@@ -108,30 +108,30 @@ class Adapters(unittest.TestCase):
         self.assertFalse(hasattr(uw, "rename_codex"))
         project = self.root / "p"
         (project / ".coord").mkdir(parents=True)
-        with mock.patch.object(uw, "_codex_names", return_value=["[사용자 대화창구-261004-2]"]):
+        with mock.patch.object(uw, "_codex_names", return_value=["[261004-2]"]):
             line = uw.on_prompt(project, "codex", "t1", "지금부터 여기가 사용자 대상 대화창구이다.", now=NOW)
-        self.assertIn("[사용자 대화창구-261004-3]", line)
+        self.assertIn("[261004-3]", line)
 
     def test_already_titled_window_gets_no_rename_line(self):
         project = self.root / "p"
         (project / ".coord").mkdir(parents=True)
         with mock.patch.object(uw, "_codex_names", return_value=[]):
             line = uw.on_prompt(project, "codex", "t1", "지금부터 여기가 사용자 대상 대화창구이다.", now=NOW,
-                                current="[사용자 대화창구-261003-4] x")
+                                current="[261003-4] x")
         self.assertEqual("", line)
         record = json.loads((project / ".coord" / "presence" / "user_windows.json").read_text(encoding="utf-8"))
-        self.assertEqual("[사용자 대화창구-261003-4]", record["codex"][0]["title"])
+        self.assertEqual("[261003-4]", record["codex"][0]["title"])
 
     def test_current_title_is_read_only_from_agy_store(self):
         db = self.root / "conversation_summaries.db"
         con = sqlite3.connect(db)
         con.execute("create table conversation_summaries (conversation_id text, title text)")
-        con.execute("insert into conversation_summaries values ('c1', '[사용자 대화창구-261004-1]')")
+        con.execute("insert into conversation_summaries values ('c1', '[261004-1]')")
         con.commit()
         con.close()
         got = uw._read_one(f"{db.as_uri()}?mode=ro",
                            "SELECT title FROM conversation_summaries WHERE conversation_id=?", "c1")
-        self.assertEqual("[사용자 대화창구-261004-1]", got)
+        self.assertEqual("[261004-1]", got)
 
     def test_injected_text_never_declares(self):
         self.assertFalse(uw.is_declaration("[UAOS relay id=x] 지금부터 여기가 사용자 대상 대화창구이다."))
@@ -144,9 +144,9 @@ class Adapters(unittest.TestCase):
         con.commit()
         con.close()
         backup_dir = self.root / "backup"
-        self.assertTrue(uw.rename_agy("c1", "[사용자 대화창구-261004-1]", db=db, backup_dir=backup_dir))
+        self.assertTrue(uw.rename_agy("c1", "[261004-1]", db=db, backup_dir=backup_dir))
         con = sqlite3.connect(db)
-        self.assertEqual("[사용자 대화창구-261004-1]",
+        self.assertEqual("[261004-1]",
                          con.execute("select title from conversation_summaries").fetchone()[0])
         con.close()
         self.assertEqual(1, len(list(backup_dir.glob("conversation_summaries*.db"))))
@@ -156,11 +156,11 @@ class Adapters(unittest.TestCase):
         (project / ".coord").mkdir(parents=True)
         with mock.patch.object(uw, "_current_title", return_value=None):
             line = uw.on_prompt(project, "claude", "s1", "지금부터 여기가 사용자 대상 대화창구이다.", now=NOW)
-        self.assertIn("[사용자 대화창구-261004-1]", line)
+        self.assertIn("[261004-1]", line)
         self.assertIn("set_session_title", line)
         # U207: a non-declaring prompt no longer claims anything new, but it re-issues the rename until the
         # session's own title shows it (the one-shot line was lost on 10-16); a shown title ends it.
-        with mock.patch.object(uw, "_current_title", return_value="[사용자 대화창구-261004-1]"):
+        with mock.patch.object(uw, "_current_title", return_value="[261004-1]"):
             self.assertEqual("", uw.on_prompt(project, "claude", "s1", "고쳐줘", now=NOW))
         record = json.loads((project / ".coord" / "presence" / "user_windows.json").read_text(encoding="utf-8"))
         self.assertIn("claude", record)

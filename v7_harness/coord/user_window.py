@@ -27,8 +27,8 @@ from pathlib import Path
 
 from v7_harness.coord.deliver import is_human_prompt, typed_prompt
 
-TITLE_PREFIX = "[사용자 대화창구-"
-TITLE_RE = re.compile(r"\[사용자 대화창구-(\d{6})-(\d+)\]")
+TITLE_PREFIX = "["
+TITLE_RE = re.compile(r"\[(?:사용자 대화창구-)?(\d{6})-(\d+)\]")
 # Words 윤겸스 used in every real declaration (Codex thread first prompts 09-26..10-04, this session's first prompt);
 # typos ("지금부타") included because they were typed.
 _DESIGNATION = ("여기", "이대화창", "이 대화창", "지금부터", "지금부타", "이제부터")
@@ -49,8 +49,8 @@ LOCK_WAIT_S = 10.0  # a hook must not hang a session; 10 s is far beyond 8 paral
 
 def is_declaration(text) -> bool:
     text = typed_prompt(text)  # U176: the harness's own leading reminder is not what was typed
-    if not is_human_prompt(text) or "대화창구" not in text or TITLE_PREFIX in text:
-        return False  # a "[사용자 대화창구-…]" mention refers to an existing window, it does not open one
+    if not is_human_prompt(text) or "대화창구" not in text or "[사용자 대화창구-" in text or TITLE_RE.search(text):
+        return False  # a "[YYMMDD-N]" or "[사용자 대화창구-…]" mention refers to an existing window, it does not open one
     # U159: one prompt can declare the window and then list requirements that name errors (Codex relay_89ccebf3);
     # a declaration is one sentence, so a repair word only rejects the sentence it is in.
     for sentence in re.split(r"[\n.!?。]+", text):
@@ -66,7 +66,7 @@ def _presence(project: Path) -> Path:
 
 def claim(project: Path, tool: str, thread: str, *, now: datetime | None = None,
           existing: list[str] | None = None, current: str | None = None) -> dict:
-    """`current` is the thread's title in its own tool; a permanent one is bound as is, never renumbered."""
+    """`current` is the thread's title in its own tool; a permanent one is bound as [YYMMDD-N], never renumbered."""
     folder = _presence(project)
     folder.mkdir(parents=True, exist_ok=True)
     record_path, lock = folder / "user_windows.json", folder / "user_windows.lock"
@@ -83,6 +83,9 @@ def claim(project: Path, tool: str, thread: str, *, now: datetime | None = None,
         entries = record.setdefault(tool, [])
         for entry in entries:
             if entry.get("thread") == thread:
+                m = TITLE_RE.search(str(entry.get("title") or ""))
+                if m:
+                    entry["title"] = f"[{m.group(1)}-{m.group(2)}]"
                 _mark_primary(entries, entry)  # U207-B: a fresh declaration makes this window the primary again
                 _save(record_path, record)
                 return {"title": entry["title"], "new": False, "tool": tool, "thread": thread}
@@ -93,7 +96,7 @@ def claim(project: Path, tool: str, thread: str, *, now: datetime | None = None,
             match = TITLE_RE.search(title or "")
             if match and match.group(1) == date:
                 numbers.append(int(match.group(2)))
-        title = kept.group(0) if kept else f"{TITLE_PREFIX}{date}-{max(numbers) + 1}]"
+        title = f"[{kept.group(1)}-{kept.group(2)}]" if kept else f"[{date}-{max(numbers) + 1}]"
         entries.append({"thread": thread, "title": title, "date": kept.group(1) if kept else date, "at": time.time()})
         _mark_primary(entries, entries[-1])
         _save(record_path, record)
@@ -274,7 +277,7 @@ def _codex_names() -> list[str]:
         con = sqlite3.connect(f"{_codex_db().as_uri()}?mode=ro", uri=True, timeout=5)
         try:
             return [row[0] for row in con.execute(
-                "SELECT name FROM threads WHERE name LIKE '[사용자 대화창구-%'") if row[0]]
+                "SELECT name FROM threads WHERE name LIKE '[%'") if row[0] and TITLE_RE.search(row[0])]
         finally:
             con.close()
     except sqlite3.Error:

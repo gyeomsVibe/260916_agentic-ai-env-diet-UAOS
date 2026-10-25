@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import user_window as uw
 
-ADAPTER_VERSION = "U237_NATIVE2"  # U237: a new version resets every desk's native budget once (BLOCKED included)
+ADAPTER_VERSION = "U244_SHORT1"  # U244: resets every desk's native budget once to transition to [YYMMDD-N]
 TOOLS = {"codex", "claude", "antigravity"}
 MAX_NATIVE_EMITS = 3  # one native attempt and two bounded repairs per desired title
 MAX_TOPIC_CHARS = 16  # deliberately short sidebar label, agreed schedule content only
@@ -82,6 +82,9 @@ def _emit_count(entry: dict) -> int:
 
 
 def _take_native(entry: dict, desired: str, current: str | None, adopted: str | None = None) -> str:
+    m = uw.TITLE_RE.fullmatch(str(entry.get("title") or ""))
+    if m:
+        entry["title"] = f"[{m.group(1)}-{m.group(2)}]"
     if adopted:
         entry["topic"] = adopted  # U237/U243: self-named or updated schedule topic becomes this window's topic
         if "shared_topic" in entry:
@@ -157,14 +160,13 @@ def _own_suffix(prefix: str, current: str | None, shared: str | None) -> str | N
 
 
 def _desired_parts(project: Path, entry: dict, current: str | None) -> tuple[str | None, str | None]:
-    """U237/U243: (desired title, topic to adopt). When the shared schedule topic changes after declaration,
-    transition to the new process topic; otherwise keep own topic and guard stale desired_title from false adoption."""
+    """U237/U243/U244: (desired title, topic to adopt). Normalizes prefix to [YYMMDD-N] across all 3 tools."""
     from .title_consensus import valid_topic
     raw = entry.get("title")
     match = uw.TITLE_RE.fullmatch(raw) if isinstance(raw, str) else None
     if not match:
         return None, None
-    prefix = match.group(0)
+    prefix = f"[{match.group(1)}-{match.group(2)}]"
     shared = _schedule_topic(project)
     if shared and "shared_topic" in entry and shared != entry.get("shared_topic"):
         return f"{prefix} {shared}", shared

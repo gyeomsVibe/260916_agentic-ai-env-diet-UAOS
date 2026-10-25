@@ -37,8 +37,8 @@ class ConsensusAcceptance(unittest.TestCase):
         self.agree()
         self.assertEqual(self.reader._schedule_topic(self.root), '창구·호출기록 개선')
         for tool in ('codex', 'claude', 'antigravity'):
-            entry = dict(title='[사용자 대화창구-261024-1]', tool=tool)
-            self.assertEqual(self.reader._desired_title(self.root, entry, None), '[사용자 대화창구-261024-1] 창구·호출기록 개선')
+            entry = dict(title='[261024-1]', tool=tool)
+            self.assertEqual(self.reader._desired_title(self.root, entry, None), '[261024-1] 창구·호출기록 개선')
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_two_votes_duplicate_and_invalid_callers_cannot_create_quorum(self):
@@ -73,7 +73,7 @@ class ConsensusAcceptance(unittest.TestCase):
         self.assertIsNone(self.reader._schedule_topic(self.root))
         with self.assertRaises(ValueError):
             self.vote('codex', '새 일정', expected=old_hash)
-        entry = dict(title='[사용자 대화창구-261024-1]', desired_title='[사용자 대화창구-261024-1] 새 일정')
+        entry = dict(title='[261024-1]', desired_title='[261024-1] 새 일정')
         self.assertEqual(self.reader._desired_title(self.root, entry, None), entry['desired_title'])
         self.agree('새 일정')
         self.assertEqual(self.reader._schedule_topic(self.root), '새 일정')

@@ -1,6 +1,6 @@
 """U207-A: a declared user desk keeps getting its rename instruction until the tool's own store shows the title.
 
-Receipt (2026-10-16, 윤겸스 report with screenshots): the new desk [사용자 대화창구-261016-1] kept its old title in Claude and
+Receipt (2026-10-16, 윤겸스 report with screenshots): the new desk [261016-1] kept its old title in Claude and
 Antigravity. The claim registry was right; the rename was a one-shot hook line (lost once = lost for good) and the
 Antigravity write was opt-in and off. Codex verdict relay_b12ae490 / Antigravity audit relay_4791eecf gates:
 readback per exact session, UNKNOWN is never a match, bounded re-issue, AGY backup of DB and annotation, atomic
@@ -22,7 +22,7 @@ from v7_harness.coord import user_window as uw
 
 NOW = datetime(2026, 10, 16, 10, 0, 0)
 DECLARE = "이제부터 이대화창이 사용자 대상 대화창구이다."
-TITLE = "[사용자 대화창구-261016-1]"
+TITLE = "[261016-1]"
 
 
 def _registry(project):
@@ -287,7 +287,7 @@ class PartialConvergence(unittest.TestCase):
 
 # U207-B G3 (2026-10-16 report: work kept landing in yesterday's window). Newest declared desk per tool is PRIMARY,
 # older desks are HANDED_OFF and get no desk duties; a pinned desk (letter relay_d9051ebd: conversation 2c90de24
-# [사용자 대화창구-261005-1] keeps its prior process) is never handed off.
+# [261005-1] keeps its prior process) is never handed off.
 def _declare(project, tool, thread, day, *, current=None):
     with mock.patch.object(uw, "_current_title", return_value=current), \
             mock.patch.object(uw, "_codex_names", return_value=[]), \
@@ -347,8 +347,8 @@ class DeskHandoff(Base):
         time.sleep(0.01)
         _declare(self.project, "claude", "new", 16)
         line = uw.handoff_line(self.project, "claude", "old")
-        self.assertIn("[사용자 대화창구-261016-1]", line)
-        self.assertIn("[사용자 대화창구-261015-1]", line)
+        self.assertIn("[261016-1]", line)
+        self.assertIn("[261015-1]", line)
         self.assertEqual("", uw.handoff_line(self.project, "claude", "new"))
         self.assertEqual("", uw.handoff_line(self.project, "claude", "worker"))
 
@@ -356,8 +356,8 @@ class DeskHandoff(Base):
         folder = self.project / ".coord" / "presence"
         folder.mkdir(parents=True)
         (folder / "user_windows.json").write_text(json.dumps({"claude": [
-            {"thread": "y", "title": "[사용자 대화창구-261015-1]", "date": "261015", "at": 100.0},
-            {"thread": "t", "title": "[사용자 대화창구-261016-1]", "date": "261016", "at": 200.0, "converged": True},
+            {"thread": "y", "title": "[261015-1]", "date": "261015", "at": 100.0},
+            {"thread": "t", "title": "[261016-1]", "date": "261016", "at": 200.0, "converged": True},
         ]}, ensure_ascii=False), encoding="utf-8")
         self.assertEqual("HANDED_OFF", uw.desk_role(self.project, "claude", "y"))
         self.assertEqual("PRIMARY", uw.desk_role(self.project, "claude", "t"))
@@ -438,8 +438,8 @@ class HandedOffHook(Base):
         folder = self.project / ".coord" / "presence"
         folder.mkdir(parents=True)
         (folder / "user_windows.json").write_text(json.dumps({"claude": [
-            {"thread": "y", "title": "[사용자 대화창구-261015-1]", "date": "261015", "at": 100.0, "converged": True},
-            {"thread": "t", "title": "[사용자 대화창구-261016-1]", "date": "261016", "at": 200.0, "converged": True},
+            {"thread": "y", "title": "[261015-1]", "date": "261015", "at": 100.0, "converged": True},
+            {"thread": "t", "title": "[261016-1]", "date": "261016", "at": 200.0, "converged": True},
         ]}, ensure_ascii=False), encoding="utf-8")
 
     def test_handed_off_desk_gets_the_handoff_line_and_no_letters(self):
@@ -449,7 +449,7 @@ class HandedOffHook(Base):
         out = done.stdout.decode("utf-8")
         self.assertEqual(0, done.returncode, done.stderr.decode("utf-8", "replace"))
         self.assertIn("HANDED-OFF DESK", out)
-        self.assertIn("[사용자 대화창구-261016-1]", out)
+        self.assertIn("[261016-1]", out)
         self.assertNotIn("STALL reroute vote", out)
 
     def test_primary_desk_still_gets_its_delta(self):
