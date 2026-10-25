@@ -82,8 +82,10 @@ def _emit_count(entry: dict) -> int:
 
 
 def _take_native(entry: dict, desired: str, current: str | None, adopted: str | None = None) -> str:
-    if adopted and not entry.get("topic"):
-        entry["topic"] = adopted  # U237: the window named itself; that topic is its own from now on
+    if adopted:
+        entry["topic"] = adopted  # U237/U243: self-named or updated schedule topic becomes this window's topic
+        if "shared_topic" in entry:
+            entry["shared_topic"] = adopted
     if entry.get("adapter_version") != ADAPTER_VERSION or entry.get("desired_title") != desired:
         entry.update(adapter_version=ADAPTER_VERSION, desired_title=desired, native_emits=0,
                      converged=False, title_state="NATIVE_PENDING")
@@ -155,8 +157,8 @@ def _own_suffix(prefix: str, current: str | None, shared: str | None) -> str | N
 
 
 def _desired_parts(project: Path, entry: dict, current: str | None) -> tuple[str | None, str | None]:
-    """U237: (desired title, topic to adopt). The suffix is this window's own topic; the shared accepted topic is
-    only a fallback for a window without one, so windows no longer all show one project-wide topic."""
+    """U237/U243: (desired title, topic to adopt). When the shared schedule topic changes after declaration,
+    transition to the new process topic; otherwise keep own topic and guard stale desired_title from false adoption."""
     from .title_consensus import valid_topic
     raw = entry.get("title")
     match = uw.TITLE_RE.fullmatch(raw) if isinstance(raw, str) else None
@@ -164,8 +166,10 @@ def _desired_parts(project: Path, entry: dict, current: str | None) -> tuple[str
         return None, None
     prefix = match.group(0)
     shared = _schedule_topic(project)
+    if shared and "shared_topic" in entry and shared != entry.get("shared_topic"):
+        return f"{prefix} {shared}", shared
     own = entry.get("topic") if valid_topic(entry.get("topic")) else None
-    adopted = None if own else _own_suffix(prefix, current, shared)
+    adopted = None if (own or current == entry.get("desired_title")) else _own_suffix(prefix, current, shared)
     topic = own or adopted or shared
     if topic:
         return f"{prefix} {topic}", adopted
