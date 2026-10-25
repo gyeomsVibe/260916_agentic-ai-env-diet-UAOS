@@ -1,5 +1,17 @@
 # UAOS-Diet v7: Unified Agentic AI Orchestration System - AI Environment Diet v7
 
+## 업데이트 (v7.5.8 / UAOS-RSI v0.5.1, 2026-10-26)
+
+- **3→2→1 한도 장애전환 및 단독 생존 자율 완결 (`U249`, `v7_harness/coord/failover_closeout.py`)**: 운영 중 1개 도구가 사용량 제한(`LIMITED`/`ABSENT`)으로 멈추면 남은 2개 도구가 즉시 스케줄을 재편성(`TWO_TOOL_CONTINUITY`)하고, 1개 도구만 남으면(`SOLE_SURVIVOR_AUTONOMOUS`) 대기 중인 `REVIEW` 단계를 복귀 재검토(`needs_return_review`) 조건부로 승격해 끝까지 자율 마무리.
+- **비백그라운드 5초 초과 대기 선점 및 스케줄 자연 종료 (`FOREGROUND_WAIT_LIMIT_S = 5.0`)**: 백그라운드 감시(`coord watch`)가 아닌 포그라운드 대기가 5.0초 이상 길어지면 전수검토 후 다음 `READY` 작업을 즉시 선점하거나, 전체 스케줄 완료 시 `SCHEDULE-CLOSEOUT-<id>.json` 영수증을 발행하고 `stop_gate`를 해제해 자연 종료.
+- **REA(Reverse Engineer Anything) 커스텀 아키텍처 통합 (`U245`~`U248`, [ZDNet 기사](https://zdnet.co.kr/view/?no=20261019165618) · [morluto/rea](https://github.com/morluto/rea))**:
+  - `U245` (`v7_harness/evidence_ledger.py`): 기사·GitHub 1차 출처 필수 인용 게이트(`MISSING_PRIMARY_SOURCE` 자동 반려) 및 `OBSERVED`/`DERIVED`/`INFERRED`/`UNKNOWN` 4등급 인식론적 원장.
+  - `U246` (`v7_harness/analysis_view.py`): `parent_evidence_id` 기반 Summary-First 슬라이싱 프로젝터(`inspect_analysis_view`).
+  - `U247` (`v7_harness/rea_bridge.py`): `STATIC_ONLY` 정적 역설계 브리지 및 재현 의무 원장(`build_reconstruction_obligation_ledger`)·계약 매뉴얼 생성기.
+  - `U248` (`v7_harness/process_supervisor.py`): 프로세스 타임아웃 시 `SIGTERM` → `finalization_ms` 유예 → `SIGKILL` 단계적 종료 및 유한 타입 명세 재현 검증(`verify_reconstruction`).
+- **OpenRig & AgentCodeGUI 전수 해부 반영 ([mvschwarz/openrig](https://github.com/mvschwarz/openrig) · [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/AgentCodeGUI))**: 6,236개 파일·10,030개 공개 심볼 전수 감사([docs/92](docs/92_MIA_Library_Full_Audit_OpenRig_AgentCodeGUI_Report.html)) 및 REA 상세 참조보고서([docs/86](docs/86_REA_역설계도구_분석_및_UAOS-RSI_업그레이드_계획.md), [docs/93](docs/93_MIA_REA_Reverse_Engineer_Anything_Deep_Audit_and_UAOS_RSI_Master_Schedule.html)) 수록.
+- **3대 도구 전역 창 제목 `[YYMMDD-N] <프로세스명>` 자동 동기화 및 메인 컨트롤 UX (`U241`~`U244`)**: Antigravity·Claude Code·Codex 3대 도구의 대화창 제목 자동 변환 및 `<details>` 기반 Zero-JS 컨트롤 대시보드 가동.
+
 ## 업데이트 (v7.5.4, 2026-10-05)
 
 - **3대 도구 자율 병합 순위(v7.5.4) 정본화**: PR 병합을 사람에게 넘기지 않고 **1순위 Antigravity, 2순위 Codex**로 정식 내규화 완료.
