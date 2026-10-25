@@ -13,6 +13,8 @@ import time
 import unicodedata
 from pathlib import Path
 
+from .hook_context import shared_desk
+
 TOOLS = ("codex", "claude", "antigravity")
 MAX_TOPIC_CHARS = 16  # same short sidebar label limit as desk_title
 BUSY_TIMEOUT_S = 10.0  # three real voters serialize well under this; longer waits mean a stuck writer
@@ -20,7 +22,8 @@ DB_NAME = "title_consensus.sqlite3"
 
 
 def _root(project: Path) -> Path:
-    return Path(project).resolve()
+    # U234 rework: a linked worktree votes into the main checkout's shared desk, the store shared_desk names.
+    return shared_desk(project).resolve()
 
 
 def db_path(project: Path) -> Path:
