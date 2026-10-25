@@ -10,8 +10,8 @@ work_id: U236A-A1
 worker: apply
 goal: pilot passes --require-model only for worker claude with model_pin exact, and lint rejects an alias under model_pin exact
 inputs:
-- v7_harness/cli.py
-- v7_harness/manual.py
+- v7_harness/cli.py sha256=2181673ece5e58544988232d2825e922d14a02931a2c01a4cac61cd891769ea7
+- v7_harness/manual.py sha256=3c8df23913d4593575deb8aafef781d8f235b685a5e52acb8bad3222db468441
 - tests/test_u236a_model_pin.py sha256=54441760f3e03595d249e5b257fb190e209e0937742cc52ecbfc053684321dd6
 allow:
 - v7_harness/cli.py

@@ -363,7 +363,12 @@ def cmd_pilot_run(args: argparse.Namespace) -> int:
     usd_cap = str(contract.get("remote_budget_usd") or "") if contract else ""
 
     def _with_cap(command: list[str], worker: str) -> list[str]:
-        return [*command, "--max-budget-usd", usd_cap] if worker == "claude" and usd_cap else command
+        if worker != "claude":
+            return command
+        # U236a: `model_pin: exact` makes the worker fail closed unless the run used exactly the contract's model id.
+        if contract and str(contract.get("model_pin") or "") == "exact" and contract.get("model"):
+            command = [*command, "--require-model", str(contract["model"])]
+        return [*command, "--max-budget-usd", usd_cap] if usd_cap else command
 
     agy_cmd = _with_cap(agy_cmd, chosen)
 
