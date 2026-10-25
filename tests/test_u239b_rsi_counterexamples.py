@@ -1,4 +1,4 @@
-"""U239B fixed acceptance: Codex counterexamples for evaluate_roi_metrics."""
+"""U239B/U239C fixed acceptance: Codex counterexamples for evaluate_roi_metrics."""
 from pathlib import Path
 import tempfile
 import unittest
@@ -101,6 +101,46 @@ class U239BRsiCounterexampleTests(unittest.TestCase):
             self.assertEqual(metrics["local_calls"], 0)
             self.assertEqual(metrics["paid_calls"], 0)
             self.assertEqual(metrics["unknown_route_calls"], 1)
+
+    def test_retry_is_not_first_pass_when_first_failure_falls_outside_window(self):
+        from v7_harness.invocation import evaluate_roi_metrics, finish_attempt, start_attempt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "calls.sqlite3"
+            for work, outcome in [("A", "FAILED"), ("A", "SUCCEEDED"), ("B", "SUCCEEDED")]:
+                attempt = start_attempt(
+                    caller="codex",
+                    project=root,
+                    work_id=work,
+                    purpose="local_draft",
+                    model="qwen2.5-coder:7b",
+                    input_sha256="a" * 64,
+                    db=db,
+                )
+                finish_attempt(attempt, outcome=outcome, db=db)
+            self.assertEqual(0.5, evaluate_roi_metrics(db=db, window=2)["first_pass_yield"])
+
+    def test_different_projects_with_same_work_id_remain_distinct(self):
+        from v7_harness.invocation import evaluate_roi_metrics, finish_attempt, start_attempt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "calls.sqlite3"
+            for name, outcome in [("project-a", "FAILED"), ("project-b", "SUCCEEDED")]:
+                project = root / name
+                project.mkdir()
+                attempt = start_attempt(
+                    caller="codex",
+                    project=project,
+                    work_id="U01",
+                    purpose="local_draft",
+                    model="qwen2.5-coder:7b",
+                    input_sha256="a" * 64,
+                    db=db,
+                )
+                finish_attempt(attempt, outcome=outcome, db=db)
+            self.assertEqual(0.5, evaluate_roi_metrics(db=db, window=10)["first_pass_yield"])
 
 
 if __name__ == "__main__":

@@ -249,10 +249,14 @@ def evaluate_roi_metrics(db=None, *, window=100):
     rows = _review_rows(db, window)
     total = len(rows)
     succeeded = sum(row["outcome"] == "SUCCEEDED" for row in rows)
-    first_by_work = {}
+    with _connect(db) as con:
+        hist = con.execute("SELECT project, work_id, outcome FROM attempts ORDER BY started_at ASC, id ASC").fetchall()
+    first_ever = {}
+    for r in hist:
+        first_ever.setdefault((r["project"], r["work_id"]), r["outcome"])
+    work_keys = {(row["project"], row["work_id"]) for row in rows}
     local_calls = paid_calls = unknown_route_calls = 0
     for row in rows:
-        first_by_work.setdefault(row["work_id"], row)
         try:
             meta = json.loads(row.get("metadata") or "{}")
         except ValueError:
@@ -265,12 +269,12 @@ def evaluate_roi_metrics(db=None, *, window=100):
             paid_calls += 1
         else:
             unknown_route_calls += 1
-    first_succeeded = sum(r["outcome"] == "SUCCEEDED" for r in first_by_work.values())
+    first_succeeded = sum(first_ever.get(k) == "SUCCEEDED" for k in work_keys)
     return {
         "schema": "uaos-rsi-roi-v1",
         "window_attempts": total,
         "succeeded_attempts": succeeded,
-        "first_pass_yield": (first_succeeded / len(first_by_work)) if first_by_work else 0.0,
+        "first_pass_yield": (first_succeeded / len(work_keys)) if work_keys else 0.0,
         "local_calls": local_calls,
         "paid_calls": paid_calls,
         "unknown_route_calls": unknown_route_calls,
