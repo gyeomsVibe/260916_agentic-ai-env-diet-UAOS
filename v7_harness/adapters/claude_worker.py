@@ -35,6 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from v7_harness.adapters.long_prompt import resolve_prompt, split_for_stdin  # noqa: E402
+import hashlib
+import math
 
 DEFAULT_MODEL = os.environ.get("CLAUDE_WORKER_MODEL", "sonnet")
 MAX_TURNS = os.environ.get("CLAUDE_WORKER_MAX_TURNS", "30")
@@ -150,8 +152,13 @@ def main(argv: list[str] | None = None) -> int:
     args.prompt = resolve_prompt(args.prompt)
     timeout_s = int(str(args.print_timeout).rstrip("s") or 600)
     model = args.model or DEFAULT_MODEL
+    attempt, journal_result, journal_failure = None, {}, None
 
     def envelope(status: str, response: str, usage: dict, error: str = "", extra: dict | None = None) -> int:
+        try:
+            _journal_finish(attempt, status, journal_result, journal_failure)
+        except Exception:  # durable terminal-write failure cannot be reported as worker success
+            status, response, error = "ERROR", "", "INVOCATION_JOURNAL_TERMINAL_FAILED"
         # U68: ASCII escapes, not ensure_ascii=False. On Windows the pilot's pipe is cp949, and an answer holding
         # U+2014 raised UnicodeEncodeError after the paid call (U67-C1), leaving no envelope. JSON escapes decode back
         # to the same text under any stdout encoding.
@@ -169,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
         return envelope("ERROR", "", {}, "NO_USD_CAP: a paid Claude call needs --max-budget-usd > 0 "
                                          "(the contract's remote_budget_usd)")
 
+    try:
+        attempt = _journal_start(args, model)
+    except Exception:  # fail closed before command construction/provider dispatch; no diagnostic body
+        return envelope("ERROR", "", {}, "INVOCATION_JOURNAL_START_FAILED")
+
     # Nothing reported means UNKNOWN to the cost gate, which blocks the run: a failed start is not a free run.
     started = time.monotonic()
     try:
@@ -176,27 +188,44 @@ def main(argv: list[str] | None = None) -> int:
         done = subprocess.run(worker_command(argv_prompt, model, cap), cwd=args.workspace, env=worker_env(),
                               capture_output=True, timeout=timeout_s, input=stdin)
     except subprocess.TimeoutExpired:
+        journal_failure = "TIMEOUT"
         return envelope("ERROR", "", {}, f"claude worker timed out after {timeout_s}s")
     except (OSError, ValueError) as exc:
+        journal_failure = "PROCESS_ERROR"
         return envelope("ERROR", "", {}, f"claude worker could not start: {exc}")
+    except BaseException as exc:
+        _journal_abort(attempt, exc)
+        raise
     try:
         result = json.loads(done.stdout.decode("utf-8", errors="replace"))
     except ValueError:
+        journal_failure = "PARSE_ERROR"
         return envelope("ERROR", "", {}, f"claude returned no JSON (rc={done.returncode}): "
                                          f"{done.stderr.decode('utf-8', errors='replace')[:200]}")
+    except BaseException as exc:
+        _journal_abort(attempt, exc)
+        raise
     if not isinstance(result, dict):
+        journal_failure = "RESPONSE_FORMAT"
         return envelope("ERROR", "", {}, "claude returned a JSON value that is not an object")
-    usage = usage_from(result)
+    journal_result = result
+    try:
+        usage = usage_from(result)
+    except Exception:
+        journal_failure = "USAGE_FORMAT"
+        return envelope("ERROR", "", {}, "claude returned invalid usage metadata")
     usage["elapsed_s"] = int(time.monotonic() - started)
     overshoot = cap_overshoot(usage, cap)
     if overshoot is not None:
         usage["usd_cap_overshoot_microusd"] = overshoot
     if result.get("is_error") and result.get("subtype") not in ("error_max_turns",):
+        journal_failure = "PROVIDER_ERROR"
         return envelope("ERROR", "", usage, str(result.get("subtype") or result.get("result") or "claude error")[:300])
     extra = None
     if args.require_model:
         mismatch = model_mismatch(result, args.require_model)
         if mismatch:
+            journal_failure = "MODEL_MISMATCH"
             return envelope("FAILED", "", usage, mismatch)
         extra = {"resolved_models": sorted(str(key) for key in (result.get("modelUsage") or {}))}
     return envelope("SUCCESS", str(result.get("result") or "").strip()[:2000] or "(claude ended without a summary)", usage,
@@ -209,6 +238,56 @@ def model_mismatch(result: dict, pinned: str) -> str:
     """U236a: under --require-model every modelUsage key must be the pinned full id; anything else fails closed."""
     keys = sorted(str(key) for key in (result.get("modelUsage") or {}))
     return "" if keys == [pinned] else f"MODEL_MISMATCH: expected {pinned}, got {keys}"
+
+
+
+
+def _journal_start(args, model: str) -> str:
+    from v7_harness.invocation import start_attempt
+    from v7_harness.olla import _caller
+
+    return start_attempt(caller=os.environ.get("UAOS_CALLER") or _caller(),
+                         project=str(Path(args.workspace).resolve()),
+                         work_id=os.environ.get("UAOS_WORK_ID", "UNSCOPED"),
+                         purpose=os.environ.get("UAOS_PURPOSE", "claude_worker"), model=model,
+                         input_sha256=hashlib.sha256(args.prompt.encode("utf-8")).hexdigest(),
+                         db=os.environ.get("UAOS_INVOCATION_DB"))
+
+
+
+
+def _journal_usage(result: dict) -> dict:
+    raw = result.get("usage")
+    raw = raw if isinstance(raw, dict) else {}
+    counts = {key: value if type(value := raw.get(key)) is int and value >= 0 else None
+              for key in USAGE_KEYS}
+    inputs = [counts[key] for key in USAGE_KEYS if key != "output_tokens"]
+    values = {"input_tokens": sum(inputs) if all(v is not None for v in inputs) else None,
+              "output_tokens": counts["output_tokens"], "cache_creation_input_tokens": counts["cache_creation_input_tokens"],
+              "cache_read_input_tokens": counts["cache_read_input_tokens"], "provider": "claude_cli_unverified"}
+    cost = result.get("total_cost_usd")
+    if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0:
+        values["cost_usd"] = cost  # provider-reported list estimate; no OAuth/billing assertion
+    return values
+
+
+
+
+def _journal_finish(attempt: str | None, status: str, result: dict, failure: str | None) -> None:
+    if attempt is None:
+        return
+    from v7_harness.invocation import finish_attempt
+
+    finish_attempt(attempt, outcome="SUCCEEDED" if status == "SUCCESS" else "FAILED",
+                   error_class=failure, db=os.environ.get("UAOS_INVOCATION_DB"), **_journal_usage(result))
+
+
+
+
+def _journal_abort(attempt: str | None, exc: BaseException) -> None:
+    from v7_harness.invocation import _exception
+
+    _journal_finish(attempt, "ERROR", {}, _exception(exc))
 
 
 if __name__ == "__main__":

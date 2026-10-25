@@ -50,11 +50,18 @@ OUTLINE_MAX_LINES = 60  # U108: enough to place every def of a 1,300-line module
 
 
 def _post(path: str, payload: dict, timeout: int = 900) -> dict:
-    request = urllib.request.Request(
-        f"{HOST}{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    """U229-B2: journal every Ollama POST (embedding included); payload hash only, never raw text."""
+    import hashlib
+    from v7_harness.invocation import _integer, tracked_call
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    with tracked_call(caller=os.environ.get("UAOS_CALLER") or _caller(), project=str(Path.cwd()),
+                      work_id=os.environ.get("UAOS_WORK_ID", "UNSCOPED"),
+                      purpose=os.environ.get("UAOS_PURPOSE", "ollama_post"), model=str(payload.get("model") or "unknown"),
+                      input_sha256=digest, db=os.environ.get("UAOS_INVOCATION_DB")) as receipt:
+        body = _post_raw(path, payload, timeout)
+        receipt.update(outcome="SUCCEEDED", error_class=None, provider="ollama",
+                       input_tokens=_integer(body.get("prompt_eval_count")), output_tokens=None)
+    return body
 
 
 def _get(path: str, timeout: int = 10) -> dict:
@@ -1379,6 +1386,16 @@ def code_outline(path: Path) -> str:
 def _outline_note(path: Path) -> str:
     outline = code_outline(path)
     return f"\nExact outline of {path.name}:\n{outline}" if outline else ""
+
+
+
+
+def _post_raw(path: str, payload: dict, timeout: int = 900) -> dict:
+    request = urllib.request.Request(
+        f"{HOST}{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 if __name__ == "__main__":

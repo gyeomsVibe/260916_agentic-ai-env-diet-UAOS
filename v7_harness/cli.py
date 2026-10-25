@@ -2521,6 +2521,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 stream.reconfigure(encoding="utf-8")
             except (ValueError, OSError):
                 pass
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "invoke":
+        from .invocation import main as invocation_main
+        return invocation_main(arguments[1:])
+    if arguments and arguments[0] == "usage":
+        from .usage_accounting import main as usage_main
+        return usage_main(arguments[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     if getattr(args, "coord_subcommand", None) in _DESK_COMMANDS and getattr(args, "project", None):
