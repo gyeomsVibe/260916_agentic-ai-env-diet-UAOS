@@ -480,15 +480,18 @@ def _claude_transcript_title(thread: str, transcript, *, tail: int = 4 << 20) ->
 
 def _topic_from_text(text) -> str | None:
     """U237: a window's own sidebar topic is the first sentence of its declaration prompt that is not the declaration,
-    with URLs, paths and brackets removed, cut at a word to the topic limit. None when nothing valid remains."""
+    with URLs, paths and brackets removed, cut at a word to the topic limit. None when nothing valid remains.
+    U237E: the removal runs before the sentence split; splitting first left "com" from https://example.com and "md"
+    from C:/Work/report.md as topics."""
     from .title_consensus import MAX_TOPIC_CHARS, valid_topic
     text = typed_prompt(text)
     if not isinstance(text, str):
         return None
+    text = re.sub(r"https?://\S*|[A-Za-z]:[\\/]\S*|\S*[\\/]\S*|[\[\]]", " ", text)
     for sentence in re.split(r"[\n.!?。]+", text):
         if _DECLARE_RE.search(sentence) and any(word in sentence for word in _DESIGNATION):
             continue
-        words = re.sub(r"https?://\S*|[A-Za-z]:[\\/]\S*|\S*[\\/]\S*|[\[\]]", " ", sentence).split()
+        words = sentence.split()
         topic = ""
         for word in words:
             if len(f"{topic} {word}".strip()) > MAX_TOPIC_CHARS:
