@@ -200,8 +200,13 @@ def _claude_sessions_root() -> Path:
     return base / "claude-code-sessions"
 
 
-def _claude_title(thread: str, *, root: Path | None = None) -> str | None:
-    """Read-only: the desktop app keeps one JSON per session with `cliSessionId` (the hook's session_id) and `title`."""
+def _claude_title(thread: str, *, root: Path | None = None, transcript=None) -> str | None:
+    """Read-only. U237: the session transcript first (the MSIX desktop app moved its session store out of the hook's
+    reach, so that read was UNKNOWN forever); the desktop app's per-session JSON stays the second source."""
+    if thread and transcript:
+        title = _claude_transcript_title(thread, transcript)
+        if title is not None:
+            return title
     folder = Path(root) if root else _claude_sessions_root()
     if not thread or not folder.is_dir():
         return None
@@ -277,8 +282,8 @@ def _codex_names() -> list[str]:
 
 
 def _shows(current: str | None, title: str) -> bool:
-    match = TITLE_RE.search(current or "")
-    return bool(match) and match.group(0) == title  # None (no readback) is UNKNOWN, never a match
+    """U237: the full title must show; a prefix-only name (Codex 01a17325) is not converged. None is UNKNOWN."""
+    return isinstance(current, str) and bool(title) and current == title
 
 
 def _entry_change(project: Path, tool: str, thread: str, change):
@@ -307,12 +312,13 @@ def _converge(entry: dict) -> None:
     entry.update(converged=True, title_state="CONVERGED")
 
 
-def _take_emit(entry: dict) -> bool:
-    """One emit from the bounded budget; concurrent hooks count under the lock, so the cap holds in parallel."""
+def _take_emit(entry: dict, known: bool = True) -> bool:
+    """One emit from the bounded budget; concurrent hooks count under the lock, so the cap holds in parallel.
+    U237: an exhausted budget is BLOCKED only after a known other title; UNKNOWN readback alone is UNVERIFIED."""
     if entry.get("converged"):
         return False
     if int(entry.get("emits") or 0) >= MAX_EMITS:
-        entry["title_state"] = "BLOCKED"
+        entry["title_state"] = "BLOCKED" if known else "UNVERIFIED"
         return False
     entry["emits"] = int(entry.get("emits") or 0) + 1
     entry["title_state"] = "PENDING"
@@ -334,22 +340,25 @@ def _instruction(project: Path, tool: str, thread: str, title: str, now: datetim
 
 def reconcile(project: Path, tool: str, thread: str, *, now: datetime | None = None) -> str:
     """U207: on every real prompt of a claimed desk, re-issue the rename until the tool's own store shows it.
-    A lost hook output (timeout, dropped line) is therefore repaired by the next prompt, not lost for good."""
+    A lost hook output (timeout, dropped line) is therefore repaired by the next prompt, not lost for good.
+    U237: the full title is compared, and a desk the native adapter manages (`adapter_version`) is left to
+    desk_title.reconcile_title; this path, run on relay prompts too, converged Codex 01a17325 on its prefix."""
     try:
         record = json.loads((_presence(project) / "user_windows.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return ""
     entry = next((e for e in (record.get(tool) or []) if e.get("thread") == thread), None) \
         if isinstance(record, dict) else None
-    if not entry or entry.get("converged") or entry.get("title_state") == "BLOCKED":
+    if not entry or entry.get("converged") or entry.get("title_state") == "BLOCKED" or entry.get("adapter_version"):
         return ""  # converged desks cost no readback at all
     if desk_role(project, tool, thread) == "HANDED_OFF":
         return ""  # U207-B: a handed-off desk keeps its title and gets no rename duty
-    title = entry["title"]
-    if _shows(_current_title(tool, thread), title):
+    current = _current_title(tool, thread)
+    title = _full_title(project, entry, current) or entry["title"]
+    if _shows(current, title):
         _entry_change(project, tool, thread, _converge)
         return ""
-    if not _entry_change(project, tool, thread, _take_emit):
+    if not _entry_change(project, tool, thread, lambda e: _take_emit(e, current is not None)):
         return ""
     return _instruction(project, tool, thread, title, now)
 
@@ -363,14 +372,21 @@ def on_prompt(project: Path, tool: str, thread: str, prompt, *, now: datetime | 
     current = current if current is not None else _current_title(tool, thread)
     existing = _codex_names() if tool == "codex" else []
     got = claim(project, tool, thread, now=now, existing=existing, current=current)
-    title = got["title"]
+    topic = _topic_from_text(prompt)
+
+    def own(entry: dict) -> dict:  # U237: only this window's own declaration sets its topic, and only once
+        if topic and not entry.get("topic"):
+            entry["topic"] = topic
+        return dict(entry)
+
+    title = _full_title(project, _entry_change(project, tool, thread, own), current) or got["title"]
     if _shows(current, title):
         _entry_change(project, tool, thread, _converge)
         return ""  # the window already shows its permanent title; nothing to rename
 
     def restart(entry: dict) -> bool:  # a fresh declaration opens a fresh bounded budget
-        entry.update(converged=False, emits=0, title_state="PENDING")
-        return _take_emit(entry)
+        entry.update(converged=False, emits=0, native_emits=0, title_state="PENDING")
+        return _take_emit(entry, current is not None)
 
     _entry_change(project, tool, thread, restart)
     return _instruction(project, tool, thread, title, now)
@@ -437,3 +453,54 @@ def _mark_primary(entries: list, found: dict) -> None:
     for other in entries:
         if other is not found and not other.get("pinned") and other.get("handed_off_to") != found.get("thread"):
             other.update(handed_off_to=found.get("thread"), handed_off_at=found["at"])
+
+
+def _claude_transcript_title(thread: str, transcript, *, tail: int = 4 << 20) -> str | None:
+    """U237: the session's last `custom-title` record in its own transcript. Claude Code re-appends it every turn
+    (82 times in desk 46c52914), so a 4 MiB tail holds it. Any read or parse failure is UNKNOWN (None)."""
+    try:
+        with Path(transcript).open("rb") as handle:
+            size = handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, size - tail))
+            text = handle.read().decode("utf-8", errors="replace")
+    except (OSError, TypeError, ValueError):
+        return None
+    for line in reversed(text.splitlines()):
+        if '"custom-title"' not in line or thread not in line:
+            continue  # cheap filter: most lines are not this session's title record
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and data.get("type") == "custom-title" and data.get("sessionId") == thread:
+            title = data.get("customTitle")
+            return title if isinstance(title, str) else None
+    return None
+
+
+def _topic_from_text(text) -> str | None:
+    """U237: a window's own sidebar topic is the first sentence of its declaration prompt that is not the declaration,
+    with URLs, paths and brackets removed, cut at a word to the topic limit. None when nothing valid remains."""
+    from .title_consensus import MAX_TOPIC_CHARS, valid_topic
+    text = typed_prompt(text)
+    if not isinstance(text, str):
+        return None
+    for sentence in re.split(r"[\n.!?。]+", text):
+        if _DECLARE_RE.search(sentence) and any(word in sentence for word in _DESIGNATION):
+            continue
+        words = re.sub(r"https?://\S*|[A-Za-z]:[\\/]\S*|\S*[\\/]\S*|[\[\]]", " ", sentence).split()
+        topic = ""
+        for word in words:
+            if len(f"{topic} {word}".strip()) > MAX_TOPIC_CHARS:
+                break
+            topic = f"{topic} {word}".strip()
+        topic = topic or (words[0][:MAX_TOPIC_CHARS] if words else "")
+        if len(topic) >= 2 and valid_topic(topic):
+            return topic
+    return None
+
+
+def _full_title(project: Path, entry, current: str | None) -> str | None:
+    """U237: the full desired title (prefix plus this window's topic) by the native adapter's rule."""
+    from .desk_title import _desired_title  # desk_title imports this module; a call-time import avoids the cycle
+    return _desired_title(Path(project), entry, current) if isinstance(entry, dict) else None
