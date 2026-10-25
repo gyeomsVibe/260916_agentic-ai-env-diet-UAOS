@@ -315,3 +315,12 @@ def sync_doc_index(project_root: Path) -> int:
     )
     hub_path.write_text(hub_html, encoding="utf-8")
     return len(rows)
+
+
+def bootstrap_project_docs(project_root: Path) -> dict[str, object]:
+    """Ensure docs/, 00_DOCUMENT_INDEX.md, and 00_DOCUMENT_HUB.html exist and are synchronized."""
+    root = Path(project_root)
+    index_path = ensure_doc_index(root)
+    sync_doc_index(root)
+    hub_path = ensure_docs_dir(root) / "00_DOCUMENT_HUB.html"
+    return {"ok": True, "index_md": str(index_path), "hub_html": str(hub_path)}
