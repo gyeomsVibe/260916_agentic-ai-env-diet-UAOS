@@ -1018,6 +1018,18 @@ def build_parser() -> argparse.ArgumentParser:
         "results", help="List the RESULT lines of the main checkout and every worktree (newest per card)")
     p_card_results.add_argument("--project", default=".", help="Any checkout of the project (default: .)")
     p_card_results.set_defaults(func=cmd_card_results)
+    # U221: the last message of a finished card is this report, so a user who does not know what to ask sees "done".
+    p_card_done = p_card_subs.add_parser(
+        "done", help="Print the 3-line Korean completion report once the PR is merged on the remote (and runtime verified)")
+    p_card_done.add_argument("--project", default=".", help="A checkout of the project (default: .)")
+    p_card_done.add_argument("--name", required=True, help="Project name the user knows")
+    p_card_done.add_argument("--card", required=True, help="Card id, e.g. U221")
+    p_card_done.add_argument("--what", required=True, help="One plain sentence: what works now")
+    p_card_done.add_argument("--pr-url", required=True, help="https://github.com/<owner>/<repo>/pull/<n> of the merged PR")
+    p_card_done.add_argument("--head", required=True, help="40-hex PR head sha (or its merge commit for squash/rebase)")
+    p_card_done.add_argument("--runtime", help="Installed runtime version, if the card needed a reinstall")
+    p_card_done.add_argument("--user-action", help="Only a human-only step the user must still take")
+    p_card_done.set_defaults(func=cmd_card_done)
 
     # rsi: evidence-gated self-improvement (docs/38). observe → propose → try → gate → judge → rollback.
     p_rsi = subparsers.add_parser("rsi", help="Evidence-gated self-improvement: report, propose, gate, adopt, rollback")
@@ -1458,6 +1470,24 @@ def cmd_card_result(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": str(exc)})
         return 2
     _print_json(result)
+    return 0
+
+
+def cmd_card_done(args: argparse.Namespace) -> int:
+    """U221: prints the 3-line completion report only when the PR is merged on the remote and the runtime verifies."""
+    from . import card_pipeline
+
+    try:
+        report = card_pipeline.done_report(args.name, args.card, args.what, args.pr_url, args.head, args.runtime,
+                                           args.user_action)
+    except ValueError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    problems = card_pipeline.check_done(Path(args.project), args.pr_url, args.head, args.runtime)
+    if problems:
+        _print_json({"ok": False, "state": "NOT_DONE", "problems": problems})
+        return 1
+    _print_json({"ok": True, "state": "DONE", "report": report, "lines": report.splitlines()})
     return 0
 
 
