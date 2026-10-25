@@ -17,7 +17,7 @@ class NativeTitle(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.p = Path(self.tmp.name)
         (self.p / '.coord').mkdir()
-        self.prefix = '[사용자 대화창구-261024-1]'
+        self.prefix = '[261024-1]'
         for tool in ('codex', 'claude', 'antigravity'):
             uw.claim(self.p, tool, tool + '-desk', current=self.prefix)
 
@@ -83,7 +83,7 @@ class NativeTitle(unittest.TestCase):
         event = self.event()
         event['hook_event_name'] = 'PostToolUse'
         self.assertIsNone(dt.reconcile_title(self.p, 'claude', 'claude-desk', event).get('title'))
-        uw.claim(self.p, 'claude', 'new-desk', current='[사용자 대화창구-261025-1]')
+        uw.claim(self.p, 'claude', 'new-desk', current='[261025-1]')
         self.assertIsNone(self.check().get('title'))
 
 

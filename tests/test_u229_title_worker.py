@@ -21,7 +21,7 @@ class TitleWorker(unittest.TestCase):
         self.p = Path(self.tmp.name)
         (self.p / ".coord").mkdir()
         (self.p / ".coord/PLAN.md").write_text("# Temp\n", encoding="utf-8")
-        self.prefix = "[사용자 대화창구-261024-1]"
+        self.prefix = "[261024-1]"
         uw.claim(self.p, "claude", "desk", current=self.prefix)
 
     def event(self, **values):
