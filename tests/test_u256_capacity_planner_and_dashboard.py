@@ -142,7 +142,7 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertEqual(agy["used_5h_effective_tokens"], 1050000)
         self.assertEqual(agy["usable_remaining_5h_tokens"], 28950000)
         rec = snap["schedule_recommendation"]
-        self.assertEqual(rec["argon_tier_mode"], "ARGON_ULTRA_PRIMARY_HEAVY_LIFTER")
+        self.assertEqual(rec["argon_tier_mode"], "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON")
         self.assertEqual(rec["argon_used_5h_share_pct"], 100.0)
         self.assertEqual(rec["phase_assignments"][0]["assigned_owner"], "antigravity")
         self.assertEqual(rec["phase_assignments"][0]["assigned_reviewer"], "claude")
@@ -207,6 +207,65 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertEqual(agy_5h["calls"], 1)
         self.assertEqual(agy_5h["uncached_input_tokens"], 10000)
         self.assertEqual(agy_5h["output_tokens"], 2000)
+
+    def test_6_incremental_brain_watermark_compact_head_and_debounced_zero_token_refresh(self) -> None:
+        now = 1800000000.0
+        mark_presence(self.root, "codex", "LIMITED", now=now)
+        mark_presence(self.root, "claude", "ACTIVE", now=now)
+        mark_presence(self.root, "antigravity", "ACTIVE", now=now)
+
+        # Verify official Google AI Ultra 5x · Gemini 4 Argon naming
+        self.assertEqual(
+            CP.DEFAULT_POLICY["tool_roles"]["antigravity"],
+            "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon",
+        )
+        self.assertNotIn("12만원", CP.DEFAULT_POLICY["tool_roles"]["antigravity"])
+        self.assertNotIn("120k", CP.DEFAULT_POLICY["tool_roles"]["antigravity"])
+
+        brain_log = self.home / ".gemini/antigravity/brain/conv-wm-1/.system_generated/logs/transcript.jsonl"
+        brain_log.parent.mkdir(parents=True, exist_ok=True)
+        line1 = json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "created_at": "2027-01-15T07:50:00Z",
+            "input_tokens": 10000,
+            "output_tokens": 1000,
+        }) + "\n"
+        brain_log.write_text(line1, encoding="utf-8")
+
+        res1 = CP.refresh_capacity_zero_token(self.root, home=self.home, now=now, min_interval_s=60.0)
+        self.assertTrue(res1["ok"])
+        self.assertFalse(res1["debounced"])
+        self.assertEqual(res1["paid_tokens_used"], 0)
+
+        head_file = self.root / ".coord/usage/capacity_head.json"
+        self.assertTrue(head_file.is_file())
+        self.assertLessEqual(len(head_file.read_bytes()), 300)
+
+        # Second call within 60s with no schedule/ledger change is debounced (0 disk scan)
+        res2 = CP.refresh_capacity_zero_token(self.root, home=self.home, now=now + 10.0, min_interval_s=60.0)
+        self.assertTrue(res2["debounced"])
+        self.assertEqual(res2["paid_tokens_used"], 0)
+
+        # Append a second step to transcript.jsonl and verify incremental byte-offset seek reads only appended bytes
+        line2 = json.dumps({
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "created_at": "2027-01-15T07:51:00Z",
+            "input_tokens": 20000,
+            "output_tokens": 2000,
+        }) + "\n"
+        with brain_log.open("a", encoding="utf-8") as fh:
+            fh.write(line2)
+
+        snap3 = CP.collect_capacity_snapshot(self.root, home=self.home, now=now + 70.0, persist=True)
+        agy_5h = snap3["engines"]["antigravity"]["window_5h"]
+        self.assertEqual(agy_5h["calls"], 2)
+        self.assertEqual(agy_5h["uncached_input_tokens"], 30000)
+        self.assertEqual(agy_5h["output_tokens"], 3000)
+        compact_line = CP.render_compact_status_line(snap3)
+        self.assertLessEqual(len(compact_line), 200)
+        self.assertIn("GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON", compact_line)
 
 
 C = CP
