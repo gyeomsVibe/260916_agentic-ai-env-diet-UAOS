@@ -103,6 +103,10 @@ def reasons(project: Path, tool: str, *, now: float | None = None) -> list[str]:
     return lines
 
 
+DONE_STATES = ("DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED")
+ACTIVE_STATES = ("READY", "ACTIVE", "REVIEW", "WAITING", "BLOCKED", "IN_PROGRESS", "PENDING", "QUEUED")
+
+
 def write_wait_status_report(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any]:
     """U260: write human-readable `.coord/WAIT_STATUS.md` explaining observed wait reasons or completion state."""
     moment = time.time() if now is None else now
@@ -111,20 +115,33 @@ def write_wait_status_report(project: Path, tool: str, *, now: float | None = No
     active_or_ready: list[str] = []
     done_count = 0
     schedule_valid = False
+    has_malformed = False
     if sched_path.is_file():
         try:
             sched = json.loads(sched_path.read_text(encoding="utf-8"))
             phases = sched.get("phases") if isinstance(sched, dict) else None
-            if isinstance(phases, list):
-                for ph in phases:
-                    if not isinstance(ph, dict) or not ph.get("phase_id"):
+            if isinstance(phases, list) and len(phases) > 0:
+                for idx, ph in enumerate(phases):
+                    if not isinstance(ph, dict):
+                        has_malformed = True
+                        active_or_ready.append(f"INVALID_ROW_{idx}(non-dict)")
                         continue
-                    schedule_valid = True
-                    st = str(ph.get("state") or "")
-                    if st in ("DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED"):
+                    pid = ph.get("phase_id")
+                    st = ph.get("state")
+                    pid_ok = isinstance(pid, str) and bool(pid.strip())
+                    st_ok = isinstance(st, str) and st.strip() in (DONE_STATES + ACTIVE_STATES)
+                    if not pid_ok or not st_ok:
+                        has_malformed = True
+                        label_id = pid.strip() if pid_ok else f"INVALID_ROW_{idx}"
+                        label_st = st.strip() if isinstance(st, str) and st.strip() else "missing-state"
+                        active_or_ready.append(f"{label_id}({label_st})")
+                        continue
+                    st_clean = st.strip()
+                    if st_clean in DONE_STATES:
                         done_count += 1
                     else:
-                        active_or_ready.append(f"{ph['phase_id']}({st})")
+                        active_or_ready.append(f"{pid.strip()}({st_clean})")
+                schedule_valid = not has_malformed and (done_count + len(active_or_ready) > 0)
         except (OSError, ValueError):
             schedule_valid = False
     if not schedule_valid:

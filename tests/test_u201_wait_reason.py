@@ -142,7 +142,24 @@ class WaitReason(unittest.TestCase):
         rep_empty = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
         self.assertEqual("UNKNOWN", rep_empty["state"])
         self.assertFalse(rep_empty["all_done"])
-        # 4) Valid all-DONE schedule with no active waits -> ALL_DONE
+        # 4) Mixed valid DONE row + malformed rows (non-dict, missing phase_id, empty dict, invalid state) -> UNKNOWN & all_done=False
+        for bad_row in [
+            "ACTIVE",
+            {"state": "ACTIVE", "owner_tool": "antigravity"},
+            {},
+            {"phase_id": "U260", "state": ""},
+            {"phase_id": "U260", "state": "BOGUS"},
+        ]:
+            sched_file.write_text(
+                json.dumps({"schedule_id": "MIXED", "phases": [{"phase_id": "U259", "state": "DONE"}, bad_row]}),
+                encoding="utf-8",
+            )
+            rep_mixed = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+            self.assertEqual("UNKNOWN", rep_mixed["state"], bad_row)
+            self.assertFalse(rep_mixed["all_done"], bad_row)
+            self.assertFalse(rep_mixed["ok"], bad_row)
+            self.assertTrue(len(rep_mixed["remaining"]) >= 1, bad_row)
+        # 5) Valid all-DONE schedule with no active waits -> ALL_DONE
         sched_file.write_text(
             json.dumps({"schedule_id": "DONE", "phases": [{"phase_id": "U259", "state": "DONE"}]}),
             encoding="utf-8",
@@ -150,6 +167,7 @@ class WaitReason(unittest.TestCase):
         rep_done = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
         self.assertEqual("ALL_DONE", rep_done["state"])
         self.assertTrue(rep_done["all_done"])
+        self.assertTrue(rep_done["ok"])
 
     def test_u258_claude_can_judge_agy_pr_and_same_head_peer_verdict_required(self):
         from v7_harness.coord import merge_route
