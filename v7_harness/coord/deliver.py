@@ -298,33 +298,36 @@ def _deliver_to_claude_locked(
     if window_cwd:  # U115 judge: resume where the window's transcript lives (it may have entered a worktree)
         kwargs["cwd"] = window_cwd
 
-    try:
-        cp = execute(argv_list, **kwargs)
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        if session_path and resume:
-            session_path.unlink(missing_ok=True)
-        return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), "")
-
-    rc = getattr(cp, "returncode", 1)
-    stdout = getattr(cp, "stdout", "") or ""
-    stderr = getattr(cp, "stderr", "") or ""
-
-    if rc != 0 and "already in use" in stderr.lower() and resume and session_id and not session:
-        fresh_id = str(uuid.uuid4())
-        retry_argv = [
-            "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
-            for a in argv_list
-        ]
+    rc = 1
+    stdout = ""
+    stderr = ""
+    retry_argv = argv_list
+    for attempt in range(2):
+        run_argv = retry_argv if attempt == 1 else argv_list
         try:
-            cp = execute(retry_argv, **kwargs)
-            rc = getattr(cp, "returncode", 1)
-            stdout = getattr(cp, "stdout", "") or ""
-            stderr = getattr(cp, "stderr", "") or ""
+            cp = execute(run_argv, **kwargs)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            if attempt == 0:
+                if session_path and resume:
+                    session_path.unlink(missing_ok=True)
+                return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), "")
+            break
+        rc = getattr(cp, "returncode", 1)
+        stdout = getattr(cp, "stdout", "") or ""
+        stderr = getattr(cp, "stderr", "") or ""
+        if attempt == 1:
             argv_list = retry_argv
             if rc == 0:
                 session_path = None
-        except (subprocess.TimeoutExpired, OSError):
-            pass
+            break
+        if rc != 0 and "already in use" in stderr.lower() and resume and session_id and not session:
+            fresh_id = str(uuid.uuid4())
+            retry_argv = [
+                "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
+                for a in argv_list
+            ]
+            continue
+        break
 
     if rc != 0:
         if session_path and resume and "already in use" not in stderr.lower():
