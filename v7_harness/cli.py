@@ -916,6 +916,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_stall.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_stall.set_defaults(func=cmd_coord_stall)
 
+    p_coord_tp = p_coord_subs.add_parser("transplant-status", help="U251: Live status of OpenRig/ShowGN/REA transplanted modules")
+    p_coord_tp.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_tp.add_argument("--target", default="v7_harness/cli.py", help="Target path to test REA Tier-1/Tier-2 router")
+    p_coord_tp.set_defaults(func=cmd_coord_transplant_status)
+
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_route.set_defaults(func=cmd_coord_route)
@@ -2049,6 +2054,37 @@ def cmd_coord_stall(args: argparse.Namespace) -> int:
     result = scan(Path(args.project), args.tool)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result.get("blocked") or result.get("error") else 0
+
+
+def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
+    """U251: Live operational check of OpenRig 3-tool seats, ShowGN 5-chip telemetry, REA 2-tier router, and .work/library."""
+    from .benchmark_logic_transplant import build_five_chip_telemetry_snapshot, select_rea_analysis_tier
+    from .coord import next_card, presence
+    from .library_store import CANONICAL_LIBRARY_ROOT, inspect_library_repo
+
+    root = next_card.coord_root(Path(args.project))
+    desk = presence.read_all(root)
+    states = {t: str((desk.get(t) or {}).get("state") or "ABSENT") for t in ("codex", "claude", "antigravity")}
+    sched_file = next_card.schedule_path(root)
+    try:
+        sched = json.loads(sched_file.read_text(encoding="utf-8"))
+        phases = sched.get("phases") or []
+    except Exception:
+        phases = []
+    telemetry = build_five_chip_telemetry_snapshot(
+        schedule_phases=phases,
+        presence_states=states,
+        changed_files=[],
+        active_watchers=["coord watch --target antigravity"],
+    )
+    rea_route = select_rea_analysis_tier(args.target)
+    libs = {}
+    for name in ("openrig", "AgentCodeGUI", "rea"):
+        p = CANONICAL_LIBRARY_ROOT / name
+        if p.is_dir():
+            libs[name] = inspect_library_repo(p)
+    print(json.dumps({"ok": True, "telemetry": telemetry, "rea_router": rea_route, "library": libs}, ensure_ascii=False))
+    return 0
 
 
 def cmd_coord_push_check(args: argparse.Namespace) -> int:
