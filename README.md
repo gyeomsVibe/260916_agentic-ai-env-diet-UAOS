@@ -224,3 +224,4 @@ python -m v7_harness.cli pilot run --task T01 --source . \
 | 하루 운용 측정 | 25.4시간 창 집계 완료, 판정 왕복 미관측으로 효과는 `UNMEASURED` |
 | 자가개선 관문·전역 설치(U36·U37) | 구현(Linux 710 중 실패 1=B75). Windows 실행·Codex 판정·사용자 PC 설치 대기 |
 | 지휘자 최종 재검토 | 대기(Codex 한도, 9/24 예상) |
+- **U250 참조·벤치마킹 자료실 전역 규칙 (`v7_harness/library_store.py`)**: GitHub 샘플·벤치마킹 저장소를 `D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library\<repo>`에 읽기 전용 독립 Git 프로젝트로 일괄 격리 저장하고 `.work/library/README.md`에 자동 색인.

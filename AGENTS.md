@@ -75,3 +75,5 @@
 - **복귀 시 권한대행 인계 확인**: 한도·부재 후 다시 구동된 도구(Codex·Claude Code)는 구동과 동시에 `coord inbox`로 권한대행(Antigravity)의 인계 통지를 확인하고, `.coord/tasks/NEXT_MORNING_RESUME.md` 및 `.coord/codex_return_checklist.md`에 명시된 대행 구축 프로세스·프로젝트 검증 목록을 확인한 뒤 지휘·조율을 정상 재개한다.
 - 사용 기록은 개선 제안의 입력일 뿐 승인·판정 권한이 아니다. 10개 유효 표본마다 품질·재작업·토큰·시간을 비교하고, P1·품질 저하·3배 비용 회귀면 개선안을 채택하지 않는다. 자동 수집은 U27 검증 전까지 미구현이다.
 - U121: user gets only the Safety human list; do the rest unasked; copy to .work/backup_<date>/, then revert canon-conflicting edits.
+- 보고에는 기사, 깃허브 저장소 링크를 포함한 관련 근거데이터를 필수요소로 한다(사용자 지정, 2026-10-20 영구 고정). 1차 출처 링크가 없는 기획·보고·제안은 FAILED(반려) 처리한다.
+- 참조·벤치마킹 자료실 전역 규칙(U250, 2026-10-26 사용자 영구 지정): UAOS-RSI 운영체제에서 참조·분석·벤치마킹할 GitHub 샘플 및 외부 공개 저장소는 어느 도구·세션에서든 반드시 `D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library\<저장소명>` 경로에 독립 Git 프로젝트로 일괄 저장하고 `.work\library\README.md` 색인표(폴더·원본 URL·라이선스·커밋 SHA·파일 수)에 등록한다. 받은 외부 코드는 신뢰하지 않는 읽기 전용 자료로 격리(`.gitignore`의 `.work/`로 본 저장소 커밋 제외)하며, 해당 폴더 안에서 설치·빌드·스크립트 실행(`npm install`, `cargo build` 등)을 절대 수행하지 않는다.
