@@ -18,6 +18,8 @@ from typing import Any
 SATISFIED = ("DONE", "REVIEW")
 # ACTIVE is in flight, owned by a running session, so it is never a candidate.
 CANDIDATE = ("READY", "PLANNED")
+# U254: closed states; counting them as open made `coord next` say WAIT over finished cards.
+TERMINAL = ("DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED")
 # R4: one rejected base reworks every stacked child; 3 matches the three-failure stop rule.
 MAX_REVIEW_STACK = 3
 # U146a-R: a claim belongs to a session id and lapses after this long without renewal. 7200 s is the longest background
@@ -251,12 +253,28 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
                 continue
             return {"state": "NEXT", "card": card, "owner": p.get("owner_tool"), "claimed": True}
         return {"state": "NEXT", "card": card, "owner": p.get("owner_tool")}
+    # U254: a verdict this tool owes is its next step. `reviewer` names the judge; `waiting_on: <tool>-verdict` counts
+    # only without one, so a phase never selects two judges. Owner and author never judge their own phase (Codex R4).
+    for p in phases:
+        if p.get("state") != "REVIEW" or tool in (p.get("owner_tool"), p.get("author_tool")):
+            continue
+        wait = str(p.get("waiting_on") or "")
+        if (p.get("reviewer") or (wait[:-len("-verdict")] if wait.endswith("-verdict") else None)) != tool:
+            continue
+        card = str(p.get("phase_id"))
+        if not claim:
+            return {"state": "NEXT", "card": card, "owner": tool, "kind": "VERDICT"}
+        # One session judges: the claim file sits beside the work claims under its own name.
+        if session and _claim(path.parent / "next" / "claims", f"{card}.verdict", tool, session,
+                              time.time() if now is None else now):
+            return {"state": "NEXT", "card": card, "owner": tool, "kind": "VERDICT", "claimed": True}
+        claimed_out = True
     others = [p for p in candidates if p.get("owner_tool") not in (tool, "all")]
     if others and (helped := _assist(path, project, tool, others, claim, session, now, phases)) is not None:
         return helped
     if others:
         return {"state": "HANDOFF", "card": str(others[0].get("phase_id")), "owner": others[0].get("owner_tool")}
-    remaining = [p for p in phases if p.get("state") != "DONE"]
+    remaining = [p for p in phases if p.get("state") not in TERMINAL]
     open_cards = [str(p.get("phase_id")) for p in remaining if p.get("state") != "HUMAN"]
     if stacked:
         return {"state": "WAIT", "reason": "review stack at MAX_REVIEW_STACK; waiting for codex verdict",
