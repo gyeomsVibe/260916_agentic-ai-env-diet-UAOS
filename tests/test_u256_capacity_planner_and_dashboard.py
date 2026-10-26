@@ -107,6 +107,48 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertIn("tailwindcss.min.js", html_text)
         self.assertIn("UAOS-RSI 3대 도구 실시간 토큰", html_text)
 
+    def test_4_argon_brain_transcript_ingestion_and_ultra_heavy_lifter_routing(self) -> None:
+        now = 1800000000.0
+        mark_presence(self.root, "codex", "LIMITED", now=now)
+        mark_presence(self.root, "claude", "ACTIVE", now=now)
+        mark_presence(self.root, "antigravity", "ACTIVE", now=now)
+
+        brain_log = self.home / ".gemini/antigravity/brain/1e097d46-test/.system_generated/logs/transcript.jsonl"
+        brain_log.parent.mkdir(parents=True, exist_ok=True)
+        brain_log.write_text(json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "created_at": "2027-01-15T07:55:00Z",
+            "input_tokens": 500000,
+            "cache_read_tokens": 4000000,
+            "output_tokens": 50000,
+            "content": "SECRET_PROMPT_TEXT_NEVER_STORED_sk-12345",
+        }) + "\n", encoding="utf-8")
+
+        (self.root / ".coord/usage").mkdir(parents=True, exist_ok=True)
+        (self.root / ".coord/usage/capacity_policy.json").write_text(json.dumps({
+            "tool_caps_5h": {"codex": 7000000, "claude": 8000000, "antigravity": 30000000, "haiku": 3000000, "ollama": None},
+            "tool_caps_source": {"origin": "test_argon_ultra_envelope", "policy_docs": ["docs/27_token-budget-routing-policy.md"]},
+        }), encoding="utf-8")
+        (self.root / ".coord/master_schedule.json").write_text(json.dumps({
+            "phases": [
+                {"phase_id": "U258", "state": "READY", "owner_tool": "codex", "estimated_tokens": 80000},
+            ]
+        }), encoding="utf-8")
+
+        snap = CP.collect_capacity_snapshot(self.root, home=self.home, now=now, persist=True)
+        agy = snap["engines"]["antigravity"]
+        # 500,000 + 0.1*4,000,000 + 3.0*50,000 = 1,050,000 effective tokens
+        self.assertEqual(agy["used_5h_effective_tokens"], 1050000)
+        self.assertEqual(agy["usable_remaining_5h_tokens"], 28950000)
+        rec = snap["schedule_recommendation"]
+        self.assertEqual(rec["argon_tier_mode"], "ARGON_ULTRA_PRIMARY_HEAVY_LIFTER")
+        self.assertEqual(rec["argon_used_5h_share_pct"], 100.0)
+        self.assertEqual(rec["phase_assignments"][0]["assigned_owner"], "antigravity")
+        self.assertEqual(rec["phase_assignments"][0]["assigned_reviewer"], "claude")
+        snap_raw = (self.root / ".coord/usage/capacity_snapshot.json").read_text(encoding="utf-8")
+        self.assertNotIn("SECRET_PROMPT_TEXT_NEVER_STORED", snap_raw)
+
 
 C = CP
 
