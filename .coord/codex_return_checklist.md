@@ -52,3 +52,31 @@ Written by Claude (deputy) for Codex. Ordered by risk. Everything below was chan
 47. **U63 thrift mode (your code, Claude-integrated)** — your relay-nonstop U63 files copied unchanged except `apply()` now takes the caller's worktree for `_git_snapshot` and resolves `shared_desk` for state/packets/mail (your red test `test_linked_worktree_uses_shared_state_but_its_own_git_snapshot`). Check: `python -m unittest tests.test_u63_thrift_mode`.
 48. **U64 / U64-F wake path (ACTING verdict)** — your `_requires_wake` substring version failed your own red test; now whole tokens with ACK_ONLY first and negation stripped. New: `coord watch` skips letters with a `delivery/accepted/<id>.json` receipt, so a cold dispatch and the live watcher no longer both pay a turn. Residual: a watcher scan in the ms window between publish and claim can still wake once. Challenge: `python -m unittest tests.test_u64_nonstop_dispatch tests.test_u64f_no_double_wake`.
 49. **U65 three-tool rollout (ACTING verdict)** — runtime 0.3.0-4f9c15f0a20b from 1e6557f; the three global rule files got the U57 watch/deliver line through `install_uaos_everywhere --apply --no-codex-feature`. Two fixes (bundle c5c825f9): the installer now accepts Codex 0.157.1's `[features] hooks = true` (and legacy `codex_hooks`), writes `hooks` on new installs, and removes on uninstall only the key it wrote; `deploy_pc` skips `adapters/` so canon v5.26's adapters/claude.md no longer makes the claude source ambiguous. test_u37 line 94 changed its expected key — challenge that. Not done: the canon repo (260718) still holds an uncommitted v5.26.0 candidate, including the temp-file deletion exception that loosens an approval gate; I did not commit or push it and did not run `deploy_to_this_pc` canon steps. Decide its owner and whether it ships.
+
+## Codex return checklist (DESK-261027, Codex LIMITED)
+
+Acting authority: claude (conductor, independent judge) + antigravity (author, merger), by 윤겸스's order of 2026-10-27 and agreement relay_68eaaf14 / relay_fa95ef2a (AGREE to relay_169d1522). Codex re-reviews every line below on return.
+
+### Inventory of Codex's open work (2026-10-27)
+
+| Item | State found | Decision | Owner | Evidence |
+|---|---|---|---|---|
+| DESK-261026-3 runtime reconciliation | BLOCKED_BASELINE_DIVERGENCE (11 modules "missing", 158 required ids missing) | Stale baseline, not lost code. The "canonical" root was the main checkout on `claude/u181-boot` f1aaa0a, 158 commits behind origin/main, and all 11 modules exist on origin/main 2c63c2d. New baseline: a clean origin/main snapshot. | claude | `.work/wt_main_2c63c2d`, `.work/wt_main_2c63c2d_full.log` |
+| codex/u225-nonstop-quota dec1a02 (no PR) | 68 ahead of an old base, 1 behind | Superseded: content is on main, and U225 is 32/32 on 71496f0. Branch kept, no merge. | claude | `.work/u225_on_main.log` (this worktree) |
+| U253 zero-deadlock overhaul | Codex REVISE relay_60fa19a5; runtime copy regressed 27 checks | Returned to its author for rework on origin/main; claude judges. | antigravity | `.work/backup_261027_master_schedule_before_u253_handback.json` |
+| U255 moderator | R6 agy_moderator sha 00302457, commit 84a86f1 | claude PASS on R6 (r5 3/3, r3 3/3, counter 4/4, orchestrator OK). Merged as PR #218 (60ab0bb) with the same sha. failover_closeout.py was left out. The full suite on the merged main is still to run. | antigravity | `.work/u255_review/r6_*.log` (this worktree) |
+| U245/U251 failover_closeout (agy/u245-rea-failover-closeout 05d4c32) | 4 ahead / 4 behind main, uncommitted edits in wt_u241 | Rebase and PR, then claude judges. | antigravity | `.work/wt_u241_control_ux` |
+| U254 verdict loop (PR #217) | Merged 2026-10-26 (2c63c2d) | Codex re-reviews the merged code. | codex | PR #217 |
+
+### Rules held while Codex is away
+
+- The runtime reinstall hold stays. A reinstall happens only from an origin/main snapshot after a green full suite with agreement of both tools, and is marked for Codex re-review.
+- No tool judges its own work. A merge needs the other tool's PASS on the same head.
+
+### Evidence recorded 2026-10-27 (Codex re-review on return)
+
+- Baseline: the full suite on the origin/main snapshot 2c63c2d ran 2627 tests with 1 failure and 7 skipped. The one failure, `test_u13_isolation.test_real_scan_budget_5k_files`, is a wall-clock budget test that ran under suite load. It passed alone on 60ab0bb (44.9 s). Logs: `.work/wt_main_2c63c2d_full.log` and `.work/runtime_check_60ab0bb.log`.
+- Runtime: Antigravity reinstalled from origin/main 60ab0bb while the hold was in force. `current.json` now points to 0.3.0-14a4c986570a. Claude checked it: `global_install --check` exits 0, and the installed `agy_moderator.py` matches the git blob 00302457. Codex should re-review whether the U239 evaluator defect that caused the hold is actually fixed.
+- U253 R3 (ed2f676): REWORK. The P1 U166 regression is fixed. P2 is still open: `_schedule_ready_wake` treats only DONE as finished. Claude's counterexample `.work/u253_r3_counter_claude.py` fails 4 of 4 terminal states.
+- Background token cost: the Antigravity auto-answer daemon (`agy_auto.jsonl`) used 469,340 tokens over 46 answers in 24 h, and 118,872 tokens over 18 answers in the last 1 h, at about 10k tokens per answer. Each wake of the Claude watcher costs one paid turn, about 110k tokens of context.
+- Retention: `~/.uaos/runtime` holds 134 versions (329 MB). Deleting any of them needs fresh approval from 윤겸스. Only a dry-run manifest has been prepared.
