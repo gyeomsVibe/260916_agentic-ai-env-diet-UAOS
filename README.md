@@ -225,3 +225,4 @@ python -m v7_harness.cli pilot run --task T01 --source . \
 | 자가개선 관문·전역 설치(U36·U37) | 구현(Linux 710 중 실패 1=B75). Windows 실행·Codex 판정·사용자 PC 설치 대기 |
 | 지휘자 최종 재검토 | 대기(Codex 한도, 9/24 예상) |
 - **U250 참조·벤치마킹 자료실 전역 규칙 (`v7_harness/library_store.py`)**: GitHub 샘플·벤치마킹 저장소를 `D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library\<repo>`에 읽기 전용 독립 Git 프로젝트로 일괄 격리 저장하고 `.work/library/README.md`에 자동 색인.
+- **U251 3대 벤치마킹(`OpenRig`·`Show GN`·`REA`) 통합 이식 오케스트레이터 (`v7_harness/benchmark_logic_transplant.py`)**: 3대 도구+Ollama 4좌석(Seat) 레지스트리, 5칩 실시간 계기판, REA Tier-1 상시/Tier-2 온디맨드 하이브리드 라우터 및 초보자/전문가 완전 가이드(`docs/benchmark_transplant_openrig_showgn_rea/`).
