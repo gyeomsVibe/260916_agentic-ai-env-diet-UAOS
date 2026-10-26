@@ -107,6 +107,107 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertIn("tailwindcss.min.js", html_text)
         self.assertIn("UAOS-RSI 3대 도구 실시간 토큰", html_text)
 
+    def test_4_argon_brain_transcript_ingestion_and_ultra_heavy_lifter_routing(self) -> None:
+        now = 1800000000.0
+        mark_presence(self.root, "codex", "LIMITED", now=now)
+        mark_presence(self.root, "claude", "ACTIVE", now=now)
+        mark_presence(self.root, "antigravity", "ACTIVE", now=now)
+
+        brain_log = self.home / ".gemini/antigravity/brain/1e097d46-test/.system_generated/logs/transcript.jsonl"
+        brain_log.parent.mkdir(parents=True, exist_ok=True)
+        brain_log.write_text(json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "created_at": "2027-01-15T07:55:00Z",
+            "input_tokens": 500000,
+            "cache_read_tokens": 4000000,
+            "output_tokens": 50000,
+            "content": "SECRET_PROMPT_TEXT_NEVER_STORED_sk-12345",
+        }) + "\n", encoding="utf-8")
+
+        (self.root / ".coord/usage").mkdir(parents=True, exist_ok=True)
+        (self.root / ".coord/usage/capacity_policy.json").write_text(json.dumps({
+            "tool_caps_5h": {"codex": 7000000, "claude": 8000000, "antigravity": 30000000, "haiku": 3000000, "ollama": None},
+            "tool_caps_source": {"origin": "test_argon_ultra_envelope", "policy_docs": ["docs/27_token-budget-routing-policy.md"]},
+        }), encoding="utf-8")
+        (self.root / ".coord/master_schedule.json").write_text(json.dumps({
+            "phases": [
+                {"phase_id": "U258", "state": "READY", "owner_tool": "codex", "estimated_tokens": 80000},
+            ]
+        }), encoding="utf-8")
+
+        snap = CP.collect_capacity_snapshot(self.root, home=self.home, now=now, persist=True)
+        agy = snap["engines"]["antigravity"]
+        # 500,000 + 0.1*4,000,000 + 3.0*50,000 = 1,050,000 effective tokens
+        self.assertEqual(agy["used_5h_effective_tokens"], 1050000)
+        self.assertEqual(agy["usable_remaining_5h_tokens"], 28950000)
+        rec = snap["schedule_recommendation"]
+        self.assertEqual(rec["argon_tier_mode"], "ARGON_ULTRA_PRIMARY_HEAVY_LIFTER")
+        self.assertEqual(rec["argon_used_5h_share_pct"], 100.0)
+        self.assertEqual(rec["phase_assignments"][0]["assigned_owner"], "antigravity")
+        self.assertEqual(rec["phase_assignments"][0]["assigned_reviewer"], "claude")
+        snap_raw = (self.root / ".coord/usage/capacity_snapshot.json").read_text(encoding="utf-8")
+        self.assertNotIn("SECRET_PROMPT_TEXT_NEVER_STORED", snap_raw)
+
+    def test_5_deduplicates_antigravity_events_across_sources_and_unknown_share_not_zero(self) -> None:
+        now = 1800000000.0
+        # 1. With no usage and unmeasured caps, shares must be UNKNOWN (never 0.0)
+        empty_snap = CP.collect_capacity_snapshot(self.root, home=self.home, now=now, persist=False)
+        empty_rec = empty_snap["schedule_recommendation"]
+        self.assertEqual(empty_rec["argon_used_5h_share_pct"], "UNKNOWN")
+        self.assertEqual(empty_rec["argon_remaining_5h_share_pct"], "UNKNOWN")
+
+        # 2. Same Antigravity run present in runs.jsonl, agy_auto.jsonl, and brain transcript is counted ONCE
+        conv_id = "896a2a2a-0c25-4068-88c7-e666a8a65be0"
+        record_usage(self.root, {
+            "schema": "uaos-usage-v2",
+            "work_id": "U259-agy-dup",
+            "actor": "antigravity",
+            "worker": "antigravity",
+            "model": "gemini-2.5-pro",
+            "kind": "pilot",
+            "collection_mode": "measured",
+            "conversation_id": conv_id,
+            "input_tokens": 10000,
+            "output_tokens": 2000,
+            "wall_time_s": 1.5,
+            "outcome": "PASS",
+            "receipt": conv_id,
+            "independent_verifier": "claude",
+            "rsi_eligible": False,
+            "exclusion_reason": "TEST",
+            "ts": now - 600,
+        })
+        auto_dir = self.root / ".coord" / "mailbox" / "delivery"
+        auto_dir.mkdir(parents=True, exist_ok=True)
+        (auto_dir / "agy_auto.jsonl").write_text(
+            json.dumps({
+                "ts": now - 600,
+                "card": "U259",
+                "conversation_id": conv_id,
+                "tokens": 12000,
+                "state": "ANSWERED",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        b_dir = self.home / ".gemini" / "antigravity" / "brain" / conv_id / ".system_generated" / "logs"
+        b_dir.mkdir(parents=True, exist_ok=True)
+        (b_dir / "transcript.jsonl").write_text(
+            json.dumps({
+                "type": "PLANNER_RESPONSE",
+                "step_index": 1,
+                "created_at": "2027-01-15T07:50:05Z",
+                "input_tokens": 10000,
+                "output_tokens": 2000,
+            }) + "\n",
+            encoding="utf-8",
+        )
+        dup_snap = CP.collect_capacity_snapshot(self.root, home=self.home, now=now, persist=False)
+        agy_5h = dup_snap["engines"]["antigravity"]["window_5h"]
+        self.assertEqual(agy_5h["calls"], 1)
+        self.assertEqual(agy_5h["uncached_input_tokens"], 10000)
+        self.assertEqual(agy_5h["output_tokens"], 2000)
+
 
 C = CP
 

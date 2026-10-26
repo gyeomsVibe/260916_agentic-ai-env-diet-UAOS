@@ -71,11 +71,12 @@ DEFAULT_POLICY: dict[str, Any] = {
         "default_card_cost_tokens": "45000 effective tokens baseline in docs/27_token-budget-routing-policy.md",
         "review_share_ratio": "0.35 judge/rework reservation share in docs/27_token-budget-routing-policy.md",
         "card_cost_clamp": "[5000, 250000] single-turn floor to per-run ceiling in docs/29_antigravity-budget-manual.md",
+        "argon_routing": "Capacity-weighted Argon heavy-lifter routing in docs/27_token-budget-routing-policy.md and docs/29_antigravity-budget-manual.md",
     },
     "tool_roles": {
         "codex": "Conductor & Final Independent Judge",
         "claude": "Co-Conductor & Deep Implementer/Reviewer",
-        "antigravity": "Contracted Executor, Moderator & User Desk",
+        "antigravity": "Argon Primary Heavy-Lifter, Co-Conductor & Autonomous Merger",
         "haiku": "Low-Cost Multi-Agent Sub-Orchestrator (claude-haiku-5-5)",
         "ollama": "0-Paid-Token Local Calculator (qwen2.5-coder:7b)",
     },
@@ -174,6 +175,7 @@ def _scan_agy_auto(desk: Path) -> list[dict[str, Any]]:
                     "engine": "antigravity",
                     "ts": float(d.get("ts") or d.get("at") or 0.0),
                     "work_id": str(d.get("card") or d.get("message_id") or "agy_auto"),
+                    "conv_id": str(d.get("conversation_id") or d.get("session") or ""),
                     "uncached_input": int(tok * 0.85),
                     "cache_read": 0,
                     "cache_write": 0,
@@ -219,6 +221,7 @@ def _scan_sqlite_ledger(home: Path, cutoff_7d: float) -> tuple[list[dict[str, An
                     "engine": eng,
                     "ts": ts,
                     "work_id": str(d.get("event_key") or "")[:12],
+                    "conv_id": str(d.get("event_key") or ""),
                     "uncached_input": inp,
                     "cache_read": cr,
                     "cache_write": cw,
@@ -246,6 +249,61 @@ def _scan_sqlite_ledger(home: Path, cutoff_7d: float) -> tuple[list[dict[str, An
     except Exception:
         pass
     return events, quotas
+
+
+
+
+def _scan_agy_brain_transcripts(home_dir: Path, cutoff_ts: float) -> list[dict[str, Any]]:
+    """Ingest native Antigravity (Argon) PLANNER_RESPONSE token usage from ~/.gemini/antigravity/brain/*/transcript.jsonl."""
+    brain_root = home_dir / ".gemini" / "antigravity" / "brain"
+    if not brain_root.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for tf in brain_root.glob("*/.system_generated/logs/transcript.jsonl"):
+        try:
+            if cutoff_ts <= time.time() and tf.stat().st_mtime < cutoff_ts:
+                continue
+            conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
+            lines = tf.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            if "PLANNER_RESPONSE" not in ln:
+                continue
+            try:
+                row = json.loads(ln)
+            except ValueError:
+                continue
+            if not isinstance(row, dict) or row.get("type") != "PLANNER_RESPONSE":
+                continue
+            ca = row.get("created_at")
+            if not isinstance(ca, str) or not ca:
+                continue
+            try:
+                ts = datetime.fromisoformat(ca.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+            if ts < cutoff_ts:
+                continue
+            inp = int(row.get("input_tokens") or 0)
+            cr = int(row.get("cache_read_tokens") or 0)
+            cw = int(row.get("cache_creation_input_tokens") or 0)
+            out_t = int(row.get("output_tokens") or 0)
+            tot = inp + cr + cw + out_t
+            if tot <= 0:
+                continue
+            out.append({
+                "engine": "antigravity",
+                "ts": ts,
+                "work_id": f"agy-brain-{conv_id[:8]}-{row.get('step_index', 0)}",
+                "conv_id": conv_id,
+                "uncached_input": inp,
+                "cache_read": cr,
+                "cache_write": cw,
+                "output": out_t,
+                "raw_total": tot,
+            })
+    return out
 
 
 def collect_capacity_snapshot(
@@ -298,6 +356,7 @@ def collect_capacity_snapshot(
             "engine": eng,
             "ts": ts,
             "work_id": str(row.get("work_id") or ""),
+            "conv_id": str(row.get("conversation_id") or row.get("session") or row.get("receipt") or ""),
             "uncached_input": inp,
             "cache_read": cr,
             "cache_write": cw,
@@ -305,13 +364,46 @@ def collect_capacity_snapshot(
             "raw_total": raw_tot,
         })
 
-    for a_row in _scan_agy_auto(desk):
-        if a_row["ts"] >= cutoff_7d:
-            events.append(a_row)
+    def _is_dup_event(cand: dict[str, Any], prior_list: list[dict[str, Any]]) -> bool:
+        c_eng = cand.get("engine")
+        c_conv = str(cand.get("conv_id") or "").strip()
+        c_wid = str(cand.get("work_id") or "").strip()
+        c_ts = float(cand.get("ts") or 0.0)
+        c_tot = int(cand.get("raw_total") or 0)
+        c_io = (int(cand.get("uncached_input") or 0), int(cand.get("output") or 0))
+        for ex in prior_list:
+            if ex.get("engine") != c_eng:
+                continue
+            e_conv = str(ex.get("conv_id") or "").strip()
+            e_wid = str(ex.get("work_id") or "").strip()
+            if c_conv and e_conv and (c_conv == e_conv or c_conv in e_conv or e_conv in c_conv):
+                return True
+            if c_conv and e_wid and (c_conv == e_wid or c_conv[:8] in e_wid):
+                return True
+            if e_conv and c_wid and (e_conv == c_wid or e_conv[:8] in c_wid):
+                return True
+            if abs(c_ts - float(ex.get("ts") or 0.0)) <= 300.0:
+                if c_tot > 0 and c_tot == int(ex.get("raw_total") or 0):
+                    return True
+                if c_io[0] > 0 and c_io == (int(ex.get("uncached_input") or 0), int(ex.get("output") or 0)):
+                    return True
+        return False
 
     sq_events, quotas = _scan_sqlite_ledger(home_dir, cutoff_7d)
+    prior_after_ledger = list(events)
     for se in sq_events:
-        events.append(se)
+        if not _is_dup_event(se, prior_after_ledger):
+            events.append(se)
+
+    prior_after_sq = list(events)
+    for a_row in _scan_agy_auto(desk):
+        if a_row["ts"] >= cutoff_7d and not _is_dup_event(a_row, prior_after_sq):
+            events.append(a_row)
+
+    prior_before_brain = list(events)
+    for b_row in _scan_agy_brain_transcripts(home_dir, cutoff_7d):
+        if b_row["ts"] >= cutoff_7d and not _is_dup_event(b_row, prior_before_brain):
+            events.append(b_row)
 
     engines_summary: dict[str, dict[str, Any]] = {}
     card_totals: dict[str, list[int]] = {e: [] for e in ALL_ENGINES}
@@ -577,9 +669,32 @@ def build_capacity_aware_schedule(
                 "reason": f"Capacity-weighted owner {chosen_owner} (rem {virtual_rem[chosen_owner]:,} tok) + 60% Ollama/Haiku offload",
             })
 
+    paid_used_5h = sum(int((engines.get(t) or {}).get("used_5h_effective_tokens") or 0) for t in PAID_TOOLS)
+    agy_used_5h = int((engines.get("antigravity") or {}).get("used_5h_effective_tokens") or 0)
+    agy_used_share_pct: float | str = (
+        round((agy_used_5h / paid_used_5h) * 100.0, 1) if paid_used_5h > 0 else "UNKNOWN"
+    )
+    rem_vals = [_rem_int(t) for t in PAID_TOOLS]
+    if all(v is not None for v in rem_vals):
+        total_rem_5h = sum(max(0, int(v)) for v in rem_vals if v is not None)
+        agy_rem_5h = max(0, int(_rem_int("antigravity") or 0))
+        agy_rem_share_pct: float | str = (
+            round((agy_rem_5h / total_rem_5h) * 100.0, 1) if total_rem_5h > 0 else "UNKNOWN"
+        )
+    else:
+        agy_rem_share_pct = "UNKNOWN"
+    argon_mode = (
+        "ARGON_ULTRA_PRIMARY_HEAVY_LIFTER"
+        if ranked_paid and ranked_paid[0] == "antigravity"
+        else "BALANCED_3TOOL_COLLAB"
+    )
+
     return {
         "recommended_conductor": recommended_conductor,
         "ranked_paid_tools": ranked_paid,
+        "argon_tier_mode": argon_mode,
+        "argon_used_5h_share_pct": agy_used_share_pct,
+        "argon_remaining_5h_share_pct": agy_rem_share_pct,
         "post_schedule_remaining_tokens": virtual_rem,
         "phase_assignments": assignments,
     }
@@ -693,20 +808,20 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     const LABELS = {{
       codex: "Codex (조율·판정)",
       claude: "Claude Code (부지휘)",
-      antigravity: "Antigravity (실행·중재)",
+      antigravity: "Antigravity Argon (주력 실행·중재)",
       haiku: "Haiku 5.5 (경량 분담)",
       ollama: "Ollama CLI (0원 계산기)"
     }};
 
     function fmt(n) {{
-      return (n === null || n === undefined) ? "∞ (무제한)" : Number(n).toLocaleString();
+      if (n === null || n === undefined) return "∞ (무제한)"; if (n === "UNKNOWN") return "미계측(UNKNOWN)"; return Number(n).toLocaleString();
     }}
 
     function renderAll(winKey) {{
       const sched = SNAP.schedule_recommendation || {{}};
       const off = SNAP.offload_efficiency_24h || {{}};
       document.getElementById("conductor-badge").textContent =
-        "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase();
+        "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | 아르곤 5h 작업점유: " + (sched.argon_used_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_used_5h_share_pct ?? "UNKNOWN") + "%") + " (가용점유 " + (sched.argon_remaining_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_remaining_5h_share_pct ?? "UNKNOWN") + "%") + ")";
       document.getElementById("offload-badge").textContent =
         "Ollama+Haiku 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
 
