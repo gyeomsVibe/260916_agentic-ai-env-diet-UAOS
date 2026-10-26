@@ -118,6 +118,21 @@ def gate(view: dict[str, Any], head: str, letter: dict[str, Any]) -> None:
         raise MergeRefused("verdict letter does not pass this exact head")
 
 
+_RAW_GH_MERGE_RE = re.compile(r"""(?:\bgh(?:\.exe)?\s+pr\s+merge\b|["']pr["']\s*,\s*["']merge["'])""", re.IGNORECASE)
+
+
+def raw_gh_merge_denied(command: str, env: dict[str, str] | None = None) -> str | None:
+    """U258: refuse direct `gh pr merge` (shell or inline subprocess) outside a gated `uaos coord merge` worker."""
+    if (env if env is not None else os.environ).get("UAOS_WORKER") == "1":
+        return None
+    if _RAW_GH_MERGE_RE.search(str(command or "")):
+        return (
+            "Direct 'gh pr merge' is refused (U258); run 'uaos coord merge --pr <N> --head <40-hex> "
+            "--verdict <relay_id>' so a same-head non-author PASS verdict is verified first."
+        )
+    return None
+
+
 def require_same_head_peer_verdict(project: Path, *, branch: str, head: str, verdict_relay: str) -> dict[str, Any]:
     """U258: hard pre-merge guard ensuring a same-head non-author PASS/APPROVE relay exists before any merge."""
     check_args(1, head, verdict_relay)
@@ -234,6 +249,7 @@ def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None
     try:
         check_args(pr, head, verdict)
         view = pr_view(pr, project, runner)
+        require_same_head_peer_verdict(project, branch=str(view.get("headRefName") or ""), head=head, verdict_relay=verdict)
         gate(view, head, read_verdict(project, verdict))
         ci_run = ci_attested(view, pr, head, project, runner)
     except (MergeRefused, OSError, subprocess.SubprocessError, ValueError) as exc:

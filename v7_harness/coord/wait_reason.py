@@ -49,7 +49,7 @@ def _gate_stops(project: Path, tool: str, moment: float) -> list[str]:
 
 
 def _schedule_waits(project: Path, tool: str) -> list[str]:
-    """U260: surface live REVIEW / peer-ACTIVE waits from `.coord/master_schedule.json` using observed fields only."""
+    """U263: surface live REVIEW / peer-ACTIVE waits from `.coord/master_schedule.json` using observed fields only."""
     sched_path = Path(project) / ".coord" / "master_schedule.json"
     if not sched_path.is_file():
         return []
@@ -108,7 +108,7 @@ ACTIVE_STATES = ("READY", "ACTIVE", "REVIEW", "WAITING", "BLOCKED", "IN_PROGRESS
 
 
 def write_wait_status_report(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any]:
-    """U260: write human-readable `.coord/WAIT_STATUS.md` explaining observed wait reasons or completion state."""
+    """U263: write human-readable `.coord/WAIT_STATUS.md` explaining observed wait reasons or completion state."""
     moment = time.time() if now is None else now
     wait_lines = reasons(project, tool, now=moment)
     sched_path = Path(project) / ".coord" / "master_schedule.json"
@@ -159,7 +159,7 @@ def write_wait_status_report(project: Path, tool: str, *, now: float | None = No
     md_path = Path(project) / ".coord" / "WAIT_STATUS.md"
     md_path.parent.mkdir(parents=True, exist_ok=True)
     body = [
-        "# UAOS 실시간 대기·진행 상태 브리핑 (U260)",
+        "# UAOS 실시간 대기·진행 상태 브리핑 (U263)",
         "",
         f"- **상태 (`state`)**: `{status_state}`",
         f"- **요약**: {headline}",
@@ -184,7 +184,11 @@ def write_wait_status_report(project: Path, tool: str, *, now: float | None = No
 
 def stop_output(result: dict[str, Any] | None, project: Path, tool: str, *,
                 now: float | None = None) -> dict[str, Any] | None:
-    """The Stop hook's JSON: the gate's own decision, plus the reasons as `systemMessage` where the user sees it."""
+    """The Stop hook's JSON: writes `.coord/WAIT_STATUS.md` for all tools, plus `systemMessage` where supported."""
+    try:
+        write_wait_status_report(project, tool, now=now)
+    except OSError:
+        pass
     if tool not in SHOWS_SYSTEM_MESSAGE:
         return result
     lines = reasons(project, tool, now=now)
