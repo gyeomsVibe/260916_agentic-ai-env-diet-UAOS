@@ -220,5 +220,18 @@ class WaitReason(unittest.TestCase):
         self.assertIsNone(merge_route.raw_gh_merge_denied('grep -r "gh pr merge" docs'))
 
 
+        for cmd in (
+            "gh pr merge 226 --merge",
+            "gh -R owner/repo pr merge 226 --merge",
+            "gh --repo owner/repo pr merge 226 --merge",
+            "& \"C:\\Program Files\\GitHub CLI\\gh.exe\" pr merge 226 --merge",
+            "gh.exe pr merge 226 --merge",
+            "gh api repos/o/r/pulls/1/merge -X PUT",
+        ):
+            self.assertIsNotNone(merge_route.raw_gh_merge_denied(cmd, env={}), cmd)
+            self.assertIsNotNone(olla.shell_read_hint({"hook_event_name": "PreToolUse", "tool_input": {"command": cmd}}), cmd)
+            self.assertEqual("deny", olla.agy_hook("PreToolUse", {"toolCall": {"name": "run_command", "args": {"CommandLine": cmd}}})["decision"], cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

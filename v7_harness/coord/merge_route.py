@@ -118,19 +118,52 @@ def gate(view: dict[str, Any], head: str, letter: dict[str, Any]) -> None:
         raise MergeRefused("verdict letter does not pass this exact head")
 
 
-_RAW_GH_MERGE_RE = re.compile(
-    r"(?:^|[;&|\n]\s*)(?:&\s*)?(?:(?:\$env:\w+\s*=\s*[^;]+;\s*)|(?:[A-Za-z_]\w*=\S+\s+))*"
-    r"(?:[^\s;&|]+[/\\])?gh(?:\.exe)?\s+(?:pr\s+merge\b|api\b[^;&|\n]*?\bpulls/\d+/merge\b)"
-    r"|[\x27\"](?:pr[\x27\"]\s*,\s*[\x27\"]merge|api[\x27\"]\s*,[^\]]*?\bpulls/\d+/merge)\b",
+_SUBPROC_GH_MERGE_RE = re.compile(
+    r"""[\x27"](?:pr[\x27"]\s*,\s*[\x27"]merge|api[\x27"]\s*,[^\]]*?\bpulls/\d+/merge)\b""",
     re.IGNORECASE,
 )
+_PULLS_MERGE_API_RE = re.compile(r"(?:^|/)pulls/\d+/merge(?:$|[?#])", re.IGNORECASE)
+_SEGMENT_RE = re.compile(r"(?:[^;&|\n\x22\x27]|\x22[^\x22]*\x22|\x27[^\x27]*\x27)+")
+_TOKEN_RE = re.compile(r"\x22[^\x22]*\x22|\x27[^\x27]*\x27|\S+")
 
 
-def raw_gh_merge_denied(command: str, env: dict[str, str] | None = None) -> str | None:
+def _tokens_are_gh_merge(tokens: list[str]) -> bool:
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx].strip().strip("'\"")
+        if not tok or tok in ("&", "env", "sudo", "command", "nohup"):
+            idx += 1
+            continue
+        if tok.startswith("$env:") or (re.match(r"^[A-Za-z_]\w*=", tok) and "/" not in tok and "\\" not in tok):
+            idx += 1
+            continue
+        break
+    if idx >= len(tokens):
+        return False
+    exe = tokens[idx].strip().strip("'\"").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if exe not in ("gh", "gh.exe"):
+        return False
+    rest = [t.strip().strip("'\"") for t in tokens[idx + 1 :]]
+    low = [t.lower() for t in rest]
+    if "pr" in low and "merge" in low[low.index("pr") + 1 :]:
+        return True
+    if "api" in low and any(_PULLS_MERGE_API_RE.search(t) for t in rest):
+        return True
+    return False
+
+
+def raw_gh_merge_denied(command: str | list[Any], env: dict[str, str] | None = None) -> str | None:
     """U258: refuse direct `gh pr merge` or `gh api .../pulls/<N>/merge` outside a gated `uaos coord merge` worker."""
     if (env if env is not None else os.environ).get("UAOS_WORKER") == "1":
         return None
-    if _RAW_GH_MERGE_RE.search(str(command or "")):
+    if isinstance(command, list):
+        matched = _tokens_are_gh_merge([str(x) for x in command])
+    else:
+        text = str(command or "")
+        matched = bool(_SUBPROC_GH_MERGE_RE.search(text)) or any(
+            _tokens_are_gh_merge(_TOKEN_RE.findall(seg)) for seg in _SEGMENT_RE.findall(text)
+        )
+    if matched:
         return (
             "Direct 'gh pr merge' / 'gh api .../pulls/<N>/merge' is refused (U258); run "
             "'uaos coord merge --pr <N> --head <40-hex> --verdict <relay_id>' so a same-head "
