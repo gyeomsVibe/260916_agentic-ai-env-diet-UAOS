@@ -336,11 +336,32 @@ def source_escape_paths(base: DeterministicManifest | None, source_dir: Path, ex
     return changed[:SOURCE_ESCAPE_LIST_LIMIT]
 
 
+def _abandon_orphan_summary(work_dir: Path, task_id: str) -> dict[str, Any]:
+    """U261: a failed summary with no open attempt (refused before the ledger row, e.g. SOURCE_DIVERGED) is abandoned.
+
+    Before this, reconcile answered NOTHING_TO_RECONCILE and the sentinel's NEEDS_RECONCILIATION alert never cleared.
+    """
+    from v7_harness.coord.sentinel import needs_reconciliation
+
+    summary_path = work_dir / "runs" / task_id / "summary.json"
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        summary = None
+    if not isinstance(summary, dict) or not needs_reconciliation(summary):
+        return {"state": "NOTHING_TO_RECONCILE", "reconciled_attempts": 0}
+    summary.update({"abandoned_from_error_class": summary.get("error_class"), "state": "ABANDONED",
+                    "error_class": "ABANDONED", "promotion": "BLOCKED", "acceptance_exit": None,
+                    "verdict_hint": "BLOCKED"})
+    _write_summary(summary_path, summary)
+    return {"state": "ABANDONED", "reconciled_attempts": 0}
+
+
 def reconcile_pilot(*, work_dir: Path, task_id: str) -> dict[str, Any]:
     work_dir = Path(work_dir)
     db_path = work_dir / "coord.sqlite3"
     if not db_path.exists():
-        return {"state": "NOTHING_TO_RECONCILE", "reconciled_attempts": 0}
+        return _abandon_orphan_summary(work_dir, task_id)
 
     core = BrokerCore(db_path)
     core.start()
@@ -352,7 +373,7 @@ def reconcile_pilot(*, work_dir: Path, task_id: str) -> dict[str, Any]:
             ).fetchall()
 
             if not target_attempts:
-                return {"state": "NOTHING_TO_RECONCILE", "reconciled_attempts": 0}
+                return _abandon_orphan_summary(work_dir, task_id)
 
             reconciled_count = len(target_attempts)
             for att_id, idem_key in target_attempts:
