@@ -1,0 +1,36 @@
+{
+  "work_id": "U242",
+  "verdict": "PASS_SCOPED_F1_ONLY_PENDING_FULL_SUITE",
+  "judge": "codex",
+  "source_sha256": "9EDB5E740EBA147FDAF99B22705E8268C9E2BE47C891E3F8FD948DC5ADF95FB0",
+  "test_sha256": "532A9ED29EE4B7715F53869BB1FB7661F9E514640D2494F99A38D53B83F03C48",
+  "command": "python -B -m unittest tests.test_u241_control_ux tests.test_u242_control_ux_any_desk",
+  "tests": 8,
+  "exit_code": 0,
+  "diff_check_exit": 0,
+  "source_unchanged": true,
+  "unchanged_hold": "U241C worker metadata/shared-root/QUIET_LOCK, no runtime approval",
+  "local_runs": [
+    {
+      "input_tokens": 2851,
+      "id": "U242-L1",
+      "promotion": "APPLIED",
+      "output_tokens": 324
+    },
+    {
+      "failure": "SPLICE_UNSUPPORTED:Expr",
+      "input_tokens": 5076,
+      "id": "U242-L2",
+      "promotion": "ABANDONED",
+      "output_tokens": 138
+    },
+    {
+      "input_tokens": 3238,
+      "id": "U242-L2B",
+      "promotion": "APPLIED",
+      "output_tokens": 755
+    }
+  ],
+  "savings": "UNMEASURED",
+  "next": "finish full suite, prepare exact-head PR for independent final review"
+}

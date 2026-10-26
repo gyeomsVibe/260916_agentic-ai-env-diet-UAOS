@@ -58,9 +58,16 @@ class DeliverResult:
 # "STEP1" and "no ACTIONABLE_DELTA since last"; an ACK_ONLY marker always wins.
 _TOKEN = r"(?<![A-Z0-9_=]){}(?![A-Z0-9_])"
 _ACK_RE = re.compile(_TOKEN.format("ACK_ONLY"))
-_NEGATED_RE = re.compile(r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+ACTIONABLE_DELTA\b")
+_NEGATED_RE = re.compile(r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+(?:ACTIONABLE_DELTA|VERDICT_REQUESTED)\b")
 _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
-    "ACTIONABLE_DELTA", "VERDICT_REQUESTED=YES", "APPROVAL_REQUIRED", r"(?:PRIORITY|SEVERITY|P1)=(?:P1|YES|1)"))
+    "ACTIONABLE_DELTA",
+    r"VERDICT_REQUESTED(?:=YES|(?!=NO\b|=FALSE\b|=0\b))",
+    r"VERDICT[\s:_-]+(?:PASS|REWORK|REVISE|FAIL|APPROVE|PIVOT|ACCEPTED|NOT[\s_]+ACCEPTED)",
+    "APPROVAL_REQUIRED",
+    r"(?:PRIORITY|SEVERITY|P1)=(?:P1|YES|1)",
+    r"READY[\s_]+FOR[\s_]+(?:PEER[\s_]+)?REVIEW",
+    r"RECEIPT[\s_]+READY",
+))
 # U141-B: quoted data is never an instruction. Fenced blocks (``` or ~~~, an unclosed fence runs to the end) go first,
 # then "...", curly quotes, 'single' quotes, `code` and "> " reply lines are blanked before the token scan. A single
 # quote counts only with no word character outside it, so apostrophes (it's, tools') never open a span (U141-B2 REWORK).
@@ -267,6 +274,21 @@ def _deliver_to_claude_locked(
     rc = getattr(cp, "returncode", 1)
     stdout = getattr(cp, "stdout", "") or ""
     stderr = getattr(cp, "stderr", "") or ""
+
+    if rc != 0 and not session and session_id and "already in use" in stderr.lower():
+        ephemeral_id = str(uuid.uuid4())
+        retry_argv = [claude_bin, "-p", message, "--output-format", "json", "--session-id", ephemeral_id]
+        for tool in allowed_tools:
+            retry_argv.extend(["--allowedTools", tool])
+        try:
+            cp = execute(retry_argv, **kwargs)
+            rc = getattr(cp, "returncode", 1)
+            stdout = getattr(cp, "stdout", "") or ""
+            stderr = getattr(cp, "stderr", "") or ""
+            argv_list = retry_argv
+            session_path = None
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(retry_argv), "")
 
     if rc != 0:
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:rc={rc}", tuple(argv_list), stderr[:500])
@@ -1296,6 +1318,10 @@ def deliver(
         except Exception:  # noqa: BLE001
             pass
     if target == "antigravity":
+        from v7_harness.coord.watch import watcher_live, watcher_wakes
+        if watcher_live(desk, "antigravity") and (not wants_turn or watcher_wakes(desk, "antigravity")):
+            return DeliverResult(False, "antigravity", "QUEUED_INTERACTIVE", (), "", message_id, digest,
+                                 str(box.inbox_dir / f"{message_id}.json"))
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
         unread = ("UNREAD until a user turn in Antigravity; for a verdict run `pilot review --reviewer agy` "

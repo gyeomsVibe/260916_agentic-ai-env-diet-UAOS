@@ -1,0 +1,16 @@
+{
+  "card": "U194",
+  "title": "[U194] Verdict request wake release",
+  "tools": {
+    "claude": {
+      "id": "47da92e5-d423-43a8-93d0-afb30e0f9862",
+      "opened_at": 1792067698.939717,
+      "released_at": 1792069893.7043648
+    },
+    "antigravity": {
+      "id": "14c1c5b1-d8bb-4e82-8748-7e318e8780b5",
+      "opened_at": 1792068104.593379,
+      "last_input_tokens": 24437
+    }
+  }
+}

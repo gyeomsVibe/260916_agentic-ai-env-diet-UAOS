@@ -1,0 +1,17 @@
+{
+  "work_id": "U239-RELEASE",
+  "first_attempt": "INVALID_INTENT: NOTICE cannot carry verdict; not delivered",
+  "retry_message": "relay_7142f4030fa941d7925709515e220ddb",
+  "state": "PUBLISHED_AGY_ANSWERED",
+  "reply": "relay_52ceca9d70e56d0336f94f14e3952e6a",
+  "reported_usage": {
+    "input_tokens": 4938,
+    "output_tokens": 846,
+    "thinking_tokens": 414,
+    "cache_read_tokens": 30021,
+    "total_tokens": 5784
+  },
+  "usage_note": "Automatic relay responder consumed remote usage; reported values retained without summing cached/thinking fields or inferring billing",
+  "runtime_preserved": "0.3.0-f4723bc9dd46",
+  "source_edits": 0
+}

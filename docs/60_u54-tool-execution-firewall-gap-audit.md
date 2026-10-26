@@ -11,11 +11,11 @@
 
 ## 요약
 
-- 전체 지점: 49
+- 전체 지점: 50
 - GAP: 0
 - CALLER_INPUT: 30
 - GUARDED: 2
-- FIXED: 13
+- FIXED: 14
 - PASS_THROUGH: 4
 
 ## 전체 목록
@@ -35,6 +35,7 @@
 | `v7_harness/coord/deliver.py:129` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:263` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:38` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/merge_relay.py:23` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
 | `v7_harness/coord/merge_route.py:61` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/next_card.py:31` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/notify.py:219` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |

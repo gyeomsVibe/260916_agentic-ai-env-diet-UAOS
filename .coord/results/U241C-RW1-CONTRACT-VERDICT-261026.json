@@ -1,0 +1,24 @@
+{
+  "work_id": "U241C-RW1",
+  "verdict": "REVISE_CONTRACT_NATIVE_HOOK_GUARD",
+  "judge": "codex",
+  "manual_sha256": "CC70A78CCCEEA8409E8E50BF23322883525E15D6FF4868E1B98D8758F7C091E0",
+  "lint_exit": 0,
+  "lint_errors": 0,
+  "negative_tests": 7,
+  "independent_red_failures": 6,
+  "independent_red_exit": 1,
+  "negative_sha256": "016AAECC2F02103EA004C738A93E2EAD1472EB85749CCDC1EF81CCC3B3E3F625",
+  "source_unchanged": true,
+  "accepted": [
+    "allow only control_ux.py and coord/user_window.py",
+    "retain unchanged external0FD586 gate",
+    "worker UNKNOWN default and shared_desk resolution",
+    "fail-closed lock presence and bounded failure logging"
+  ],
+  "blocking_gap": "S3 validates declaration text only; S4 changes logging only. on_prompt invokes renderer before is_declaration; status prompts from relay/worker or handed-off thread still bypass automatic-origin/desk guards.",
+  "revision": "Keep existing7 tests and0FD586 unchanged. Add separate fixed negative hook suite for relay/worker status and HANDED_OFF/mismatched thread; positive current PRIMARY human status and first human declaration. Restrict automatic on_prompt invocation using existing canonical human-origin and desk identity checks before render.",
+  "implementation_authorized": false,
+  "revision_count": 1,
+  "next": "Publish linted RW1b with added gate hash and bounded single-function slices; no source edits yet"
+}

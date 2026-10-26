@@ -1,3 +1,20 @@
+# Current desk contract — 2026-10-26 generation20
+Codex user desk01a1773a-095c-7790-8b9d-6e6d92866f81; title prefix[261026-2]. Current scope/owners/gates/parallel plan: .coord/tasks/DESK-261026-2-master-schedule.md. Existing source ownership, runtime release hold and fixed12000 Haiku qualification cap remain. Previous desk snapshots below are historical.
+
+# Current desk contract - 2026-10-25 (maintained)
+Codex thread 01a17169-6756-71e2-b713-84693a5d2634, generation17 is the declared user desk. User reports Claude and Antigravity quota-limited and authorizes nonstop operation without repeated consent. Existing platform denials and evidence gates remain. Schedule: .coord/tasks/DESK-261025-1-resume.md. No implementation from the user desk and no reassignment of existing owned source without reconciliation. This entry supersedes older attendance/desk snapshots below.
+# Current desk contract — 2026-10-24 (maintained)
+Codex desk generation16, thread01a16e0b-721a-76a2-855f-e222db218289 conducts; Claude and Antigravity attendance ACTIVE, actual implementation capability must be proven per route. Current schedule .coord/tasks/DESK-261024-1-master-schedule.md and master_schedule.json desk_261024. Older sole-Codex/quota statements below are historical. User granted nonstop operation without repeated approval; provenance, single-writer and platform restrictions remain. Coordination files only in this desk; implementation uses dedicated execution owner. No bulk commit/ACK or relabeling failed gates.
+# 현재 운영 계약: Codex 단독 조율 (2026-10-20, 유지)
+
+- 직접 사용자 지시: Claude Code·Antigravity가 쿼터로 중단되어 Codex가 모든 프로세스의 조율·우선순위·판정을 인수한다. 사용자 창구 generation15 / 01a15967-65ee-7ae2-9a28-dce959d15fd8.
+- 현재 정본: .coord/master_schedule.json, .coord/tasks/DESK-261020-4-master-schedule.md, .coord/results/SOLE-CODEX-261020.md. 아래 U76/U77 현황은 역사적 배경이며 현재 활성 단계를 뜻하지 않는다.
+- 기존 원작성자·입력 해시·작업트리·인덱스는 보존하고 Codex가 조율을 인수한다. 실행할 때 한 범위에 단일 작성자와 정확 계약을 둔다. 이번 전수조사만으로 미커밋 원본 전체를 인수·배포하지 않는다.
+- 순서: 실제 상태/원격/해시 확인 → 낡은 완료·대기 기록 정합 → 가능한 고정 인수 실행 → 원인별 최소 수정/검증. 결정적 도구 먼저, 제한된 Ollama 출력은 원문 대조 후 사용. 제한된 Claude/AGY에 유료 재시도하지 않는다.
+- 일반 승인·시작 명령을 다시 요구하지 않는다. 출처·고정 인수·비용 관문이 실패하면 실패를 보존하고 증거 없는 PASS/ANSWERED를 만들지 않는다. 실제로 수행 중인지 WAIT/BLOCKED인지 구분해 보고한다.
+- 중단 조건: 원본 해시 변경, 중복 소유권, 고정 평가기 변경, 상한 미집행 유료 경로, 같은 원인 반복. 마지막 경우 지도형 모델 경로 대신 결정적 추출로 전환한다. 감시자 생존은 실행·네이티브 기상 증명이 아니다.
+
+---
 # UAOS 프로젝트 완성 매뉴얼
 
 - work_id: U76
@@ -15,5 +32,6 @@
 - 검증: diff, 고정 인수, 테스트 해시, 장부, 원격 SHA가 작업자 보고보다 우선한다. 미실행은 UNKNOWN이고 예산 초과·범위 밖 쓰기·빈 산출물은 승인하지 않는다.
 - 승인 경계: `.coord/PLAN.md`와 작업 카드의 로컬 갱신은 무승인이다. 삭제, remote push, deploy/public posting, 결제, 계정·자격증명·권한·시스템 설정 변경은 각각의 최신 명시 승인 없이는 금지한다. 과거 U45 승인은 U67로 이전되지 않는다.
 - 중단: 입력 해시 불일치, 중복 소유권, 같은 원인 2회 실패(Ollama) 또는 3회 실패(일반 실행), 고정 인수 변경, 예산 초과, 범위 밖 쓰기, 승인 경계 도달.
-
+- 보고에는 기사, 깃허브 저장소 링크를 포함한 관련 근거데이터를 필수요소로 한다(사용자 지정, 2026-10-20 영구 고정). 1차 출처 링크가 없는 기획·보고·제안은 FAILED(반려) 처리한다.
+- 참조·벤치마킹 자료실 전역 규칙(U250, 2026-10-26 사용자 영구 지정): UAOS-RSI 운영체제에서 참조·분석·벤치마킹할 GitHub 샘플 및 외부 공개 저장소는 어느 도구·세션에서든 반드시 `D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library\<저장소명>` 경로에 독립 Git 프로젝트로 일괄 저장하고 `.work\library\README.md` 색인표(폴더·원본 URL·라이선스·커밋 SHA·파일 수)에 등록한다. 받은 외부 코드는 신뢰하지 않는 읽기 전용 자료로 격리(`.gitignore`의 `.work/`로 본 저장소 커밋 제외)하며, 해당 폴더 안에서 설치·빌드·스크립트 실행(`npm install`, `cargo build` 등)을 절대 수행하지 않는다.
 

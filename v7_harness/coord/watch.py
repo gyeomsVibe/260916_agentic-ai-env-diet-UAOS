@@ -329,6 +329,54 @@ def _release_locks(project: Path, tools: list[str], mine: dict[str, Any]) -> Non
             pass
 
 
+def _schedule_ready_wake(project: Path, tools: tuple[str, ...], clock: Callable[[], float]) -> dict[str, Any] | None:
+    """U253: level-triggered wake when `.coord/master_schedule.json` has an unclaimed READY/ACTIVE phase for `tools`."""
+    sched_path = Path(project) / ".coord" / "master_schedule.json"
+    try:
+        raw = json.loads(sched_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    phases = raw.get("phases") if isinstance(raw, dict) else None
+    if not isinstance(phases, list):
+        return None
+    done_ids = {
+        str(p.get("phase_id") or p.get("id") or "")
+        for p in phases
+        if isinstance(p, dict) and p.get("state") == "DONE"
+    }
+    for p in phases:
+        if not isinstance(p, dict):
+            continue
+        state = p.get("state")
+        if state not in ("READY", "ACTIVE"):
+            continue
+        if p.get("blocker_kind") in ("SAFETY_GATE", "UNAPPROVED_REVIEW_DEPENDENCY"):
+            continue
+        owner = p.get("owner_tool") or p.get("owner")
+        target = owner if owner in tools else (tools[0] if owner == "all" and tools else None)
+        if not target:
+            continue
+        deps = p.get("depends_on") or []
+        if isinstance(deps, list) and any(str(d) not in done_ids for d in deps):
+            continue
+        phase_id = str(p.get("phase_id") or p.get("id") or "").strip()
+        if not phase_id:
+            continue
+        stamp = str(p.get("updated_at") or p.get("rerouted_at") or raw.get("updated_at") or state)
+        sched_key = f"sched_{phase_id}"
+        sched_digest = hashlib.sha256(f"u253-sched:{target}:{phase_id}:{state}:{stamp}".encode("utf-8")).hexdigest()
+        if claim_wake(project, target, sched_key, sched_digest, clock=clock) == "CLAIMED":
+            return {
+                "id": sched_key,
+                "kind": "SCHEDULE_READY",
+                "actor": "scheduler",
+                "requested_target": target,
+                "card": phase_id,
+                "wake_class": "ACTIONABLE",
+            }
+    return None
+
+
 def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_TIMEOUT_S,
           interval_s: float = DEFAULT_INTERVAL_S, clock: Callable[[], float] | None = None,
           sleep: Callable[[float], None] | None = None, wakes_session: bool = False,
@@ -398,11 +446,19 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                     target = found["requested_target"]
                     target = target if target in tools else tools[0]
                     cls, _diag = classify(body, migration_record(project, message_id, body.get("digest")))
+                    if cls == "LEGACY" and wakes_session and str(body.get("actor") or "") not in ("", target):
+                        from v7_harness.coord.deliver import _requires_wake
+                        if _requires_wake(str(body.get("message") or "")):
+                            cls = "ACTIONABLE"
                     if cls != "ACTIONABLE":
                         continue  # NOTICE, INVALID and LEGACY never wake; the hook shows them at zero tokens
                     if claim_wake(project, target, message_id, letter_digest(message_id, body),
                                   clock=clock) == "CLAIMED":
                         return {**found, "wake_class": cls}
+            if structured and wakes_session:
+                sched_wake = _schedule_ready_wake(Path(project), tools, clock)
+                if sched_wake is not None:
+                    return sched_wake
             if clock() >= deadline:
                 return None
             sleep(interval_s)

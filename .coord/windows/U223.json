@@ -1,0 +1,16 @@
+{
+  "card": "U223",
+  "title": "[U223] Exact candidate staging",
+  "tools": {
+    "claude": {
+      "id": "81bf5b47-3fbb-4dc4-8c11-8fe77b513074",
+      "opened_at": 1792383278.275621,
+      "released_at": 1792383863.9080038
+    },
+    "antigravity": {
+      "id": "6e3cd605-a1ba-4158-8b02-65203b3a26a2",
+      "opened_at": 1792877050.594053,
+      "last_input_tokens": 12281
+    }
+  }
+}

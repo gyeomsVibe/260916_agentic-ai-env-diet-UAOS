@@ -815,6 +815,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_sentinel.add_argument("--ring", action="store_true", default=False,
                                   help="Ring Codex (codex queue) for waiting P1 wakes while Codex has a fresh ACTIVE heartbeat")
     p_coord_sentinel.set_defaults(func=cmd_coord_sentinel)
+    p_coord_boot = p_coord_subs.add_parser("boot", help="U181: boot task plan (registers nothing) or its launcher")
+    p_coord_boot.add_argument("--home", default=None, help="Home that holds .uaos (default: the user's)")
+    p_coord_boot.add_argument("--launch", action="store_true", help="Start one sentinel loop per project and wait")
+    p_coord_boot.set_defaults(func=cmd_coord_boot)
+
+    p_coord_title_vote = p_coord_subs.add_parser("title-vote", help="U234: cast this tool's own desk-title vote")
+    p_coord_title_vote.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_title_vote.add_argument("--tool", choices=["codex", "claude", "antigravity"], default=None)
+    p_coord_title_vote.add_argument("--topic", default=None, help="1-16 characters, no brackets or controls")
+    p_coord_title_vote.add_argument("--schedule-sha256", default=None, help="Semantic digest the voter read")
+    p_coord_title_vote.add_argument("--status", action="store_true", help="Print the current digest and accepted topic; casts no vote")
+    p_coord_title_vote.set_defaults(func=cmd_coord_title_vote)
 
     p_coord_presence = p_coord_subs.add_parser("presence")
     p_coord_presence.add_argument("--project", default=".", help="Project root (default: .)")
@@ -858,6 +870,13 @@ def build_parser() -> argparse.ArgumentParser:
     # U141-A: structured (default) wakes only on an ACTIONABLE letter, once per letter, one watcher per target.
     p_coord_watch.add_argument("--policy", default="structured", choices=["structured", "legacy"])
     p_coord_watch.set_defaults(func=cmd_coord_watch)
+    p_coord_listen = p_coord_subs.add_parser("listen", help="Fast Claude startup bootstrap; native Stop asyncRewake listener")
+    p_coord_listen.add_argument("--tool", required=True, choices=["claude", "codex", "antigravity"])
+    p_coord_listen.add_argument("--from-hook", action="store_true", required=True)
+    p_coord_listen.set_defaults(func=cmd_coord_listen)
+    p_worker_route = p_coord_subs.add_parser("worker-route", help="Plan a bounded shared worker route; never execute")
+    p_worker_route.add_argument("--task-file", required=True, help="JSON object with task and availability objects")
+    p_worker_route.set_defaults(func=cmd_coord_worker_route)
 
     # U146-A: the nonstop chain. `next` names the tool's next card, `stop-gate` is the Claude Stop hook, and
     # `push-check` reads the user's standing push grant.
@@ -892,6 +911,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_stall.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_stall.set_defaults(func=cmd_coord_stall)
 
+    p_coord_tp = p_coord_subs.add_parser("transplant-status", help="U251: Live status of OpenRig/ShowGN/REA transplanted modules")
+    p_coord_tp.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_tp.add_argument("--target", default="v7_harness/cli.py", help="Target path to test REA Tier-1/Tier-2 router")
+    p_coord_tp.set_defaults(func=cmd_coord_transplant_status)
+
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_route.set_defaults(func=cmd_coord_route)
@@ -921,9 +945,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_thrift.add_argument("--stop-condition", default="")
     p_coord_thrift.set_defaults(func=cmd_coord_thrift)
 
+    p_coord_today = p_coord_subs.add_parser("today", help="U213: the day briefing (version, progress, next step)")
+    p_coord_today.add_argument("--project", default=".", help="Project root or a folder inside it (default: .)")
+    p_coord_today.add_argument("--tool", choices=["codex", "claude", "antigravity"], default="claude")
+    p_coord_today.set_defaults(func=cmd_coord_today)
+
     p_coord_init = p_coord_subs.add_parser("init")
     p_coord_init.add_argument("--project", default=".", help="Project to prepare for UAOS (default: .)")
     p_coord_init.set_defaults(func=cmd_coord_init)
+    _add_docs_parsers(subparsers)
 
     p_coord_inbox = p_coord_subs.add_parser("inbox")
     p_coord_inbox.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1001,6 +1031,18 @@ def build_parser() -> argparse.ArgumentParser:
         "results", help="List the RESULT lines of the main checkout and every worktree (newest per card)")
     p_card_results.add_argument("--project", default=".", help="Any checkout of the project (default: .)")
     p_card_results.set_defaults(func=cmd_card_results)
+    # U221: the last message of a finished card is this report, so a user who does not know what to ask sees "done".
+    p_card_done = p_card_subs.add_parser(
+        "done", help="Print the 3-line Korean completion report once the PR is merged on the remote (and runtime verified)")
+    p_card_done.add_argument("--project", default=".", help="A checkout of the project (default: .)")
+    p_card_done.add_argument("--name", required=True, help="Project name the user knows")
+    p_card_done.add_argument("--card", required=True, help="Card id, e.g. U221")
+    p_card_done.add_argument("--what", required=True, help="One plain sentence: what works now")
+    p_card_done.add_argument("--pr-url", required=True, help="https://github.com/<owner>/<repo>/pull/<n> of the merged PR")
+    p_card_done.add_argument("--head", required=True, help="40-hex PR head sha (or its merge commit for squash/rebase)")
+    p_card_done.add_argument("--runtime", help="Installed runtime version, if the card needed a reinstall")
+    p_card_done.add_argument("--user-action", help="Only a human-only step the user must still take")
+    p_card_done.set_defaults(func=cmd_card_done)
 
     # rsi: evidence-gated self-improvement (docs/38). observe → propose → try → gate → judge → rollback.
     p_rsi = subparsers.add_parser("rsi", help="Evidence-gated self-improvement: report, propose, gate, adopt, rollback")
@@ -1444,6 +1486,24 @@ def cmd_card_result(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_card_done(args: argparse.Namespace) -> int:
+    """U221: prints the 3-line completion report only when the PR is merged on the remote and the runtime verifies."""
+    from . import card_pipeline
+
+    try:
+        report = card_pipeline.done_report(args.name, args.card, args.what, args.pr_url, args.head, args.runtime,
+                                           args.user_action)
+    except ValueError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    problems = card_pipeline.check_done(Path(args.project), args.pr_url, args.head, args.runtime)
+    if problems:
+        _print_json({"ok": False, "state": "NOT_DONE", "problems": problems})
+        return 1
+    _print_json({"ok": True, "state": "DONE", "report": report, "lines": report.splitlines()})
+    return 0
+
+
 def cmd_card_results(args: argparse.Namespace) -> int:
     from . import card_pipeline
 
@@ -1491,6 +1551,36 @@ def _sentinel_loop_owner(pid_file: Path, interval: float) -> int:
     except (OSError, ValueError):
         return 0
     return running if age < max(180.0, 3 * interval) and running != os.getpid() and _is_pid_alive(running) else 0
+
+
+def cmd_coord_boot(args: argparse.Namespace) -> int:
+    """U181: print the boot task plan (registers nothing) or run the launcher the task starts."""
+    from .coord import boot_task
+    home = Path(args.home) if args.home else Path.home()
+    if args.launch:
+        return boot_task.launch(home)
+    result = boot_task.plan(home)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["ok"] else 1
+
+
+def cmd_coord_title_vote(args: argparse.Namespace) -> int:
+    """U234: one native tool casts its own vote; --status only reads (never creates the store)."""
+    from .coord import title_consensus as tc
+    project = Path(args.project)
+    try:
+        if args.status:
+            _, topic = tc.accepted_topic(project)
+            result = {"ok": True, "schedule_sha256": tc.schedule_digest(project), "accepted_topic": topic}
+        else:
+            if not (args.tool and args.topic and args.schedule_sha256):
+                raise ValueError("--tool, --topic and --schedule-sha256 are required to vote")
+            result = {"ok": True, **tc.cast_vote(project, args.tool, args.topic, args.schedule_sha256)}
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
 
 
 def cmd_coord_sentinel(args: argparse.Namespace) -> int:
@@ -1569,13 +1659,22 @@ def _cmd_coord_sentinel(args: argparse.Namespace) -> int:
     return 0
 
 
+# U207-B G2: presence hooks run under a 10 s timeout (global_install) and the runner drops the output of a killed hook.
+# The ack after the emit takes milliseconds but can wait on a held lock, so an ack not started within 6 s is left to the
+# next hook (U141-A shows unacked letters again) and 4 s stay for the cursor write and the exit.
+HOOK_ACK_BUDGET_S = 6.0
+
+
 def cmd_coord_presence(args: argparse.Namespace) -> int:
     """U32b: record one tool's heartbeat, or show all three. Called from each tool's session hooks."""
+    import time
+
     from .coord.presence import conductor, hook_turn_start, mark, read_all
 
+    started = time.monotonic()  # U207-B G2: post-emit work is skipped once the hook used HOOK_ACK_BUDGET_S
     say = getattr(args, "say", "json")
 
-    shown = {"user": "", "event": ""}  # U147: the in-app line for 윤겸스 and the hook event that carries it
+    shown = {"user": "", "event": "", "native_title": "", "native_event": ""}
 
     def _emit(data: dict[str, Any], line: str = "") -> None:
         user = shown["user"]
@@ -1586,6 +1685,18 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 out["hookSpecificOutput"] = {"hookEventName": "PostToolUse", "additionalContext": line}
             if out:
                 print(json.dumps(out, ensure_ascii=False))
+            sys.stdout.flush()  # U207-B G2: the line leaves the process before any post-emit work can be killed
+            return
+        if shown["native_title"] and shown["native_event"] in ("SessionStart", "UserPromptSubmit"):
+            out = dict(data) if say == "json" else {}
+            out["hookSpecificOutput"] = {"hookEventName": shown["native_event"],
+                                         "sessionTitle": shown["native_title"]}
+            if line:
+                out["hookSpecificOutput"]["additionalContext"] = line
+            if user:
+                out["systemMessage"] = user
+            print(json.dumps(out))  # native control still works with --say none and no user briefing
+            sys.stdout.flush()
             return
         if user and say in ("brief", "p1", "none"):
             # U147: Claude Code and Codex show `systemMessage` to the user, not the model (0 tokens); the model's
@@ -1594,7 +1705,8 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             if line:
                 out["hookSpecificOutput"] = {"hookEventName": shown["event"] or "UserPromptSubmit",
                                              "additionalContext": line}
-            print(json.dumps(out, ensure_ascii=False))
+            # U213: ASCII-escaped JSON, so a reader that decodes stdout with the Windows code page (cp949) still parses
+            print(json.dumps(out))
         elif say == "json":
             print(json.dumps(data, ensure_ascii=False))
         elif say in ("brief", "p1", "none") and line:
@@ -1604,6 +1716,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
         elif say == "agy":
             # Antigravity reads one JSON object on stdout; a skip, an error or an unchanged line prints {}.
             print(json.dumps({"injectSteps": [{"ephemeralMessage": line}]}, ensure_ascii=False) if line else "{}")
+        sys.stdout.flush()  # U207-B G2: a pipe is block-buffered; a runner kill after this point loses nothing
 
     if getattr(args, "desk_thread", None) is not None:
         from .coord import desk_sync
@@ -1667,6 +1780,19 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 except Exception:  # noqa: BLE001 - a hook never fails the session
                     pass
             window_line = ""
+            # U207-B G3: an older declared desk of this tool is handed off. It gets one line instead of its desk duties
+            # (letters and their wake receipts, stall reroutes), so work stops landing in yesterday's window.
+            handed_off = ""
+            if args.tool and args.delta:
+                try:
+                    from .coord.user_window import handoff_line
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    event = event if isinstance(event, dict) else {}
+                    handed_off = handoff_line(project, args.tool,
+                                              hook_session(stdin_text) or str(event.get("conversationId") or ""))
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    handed_off = ""
             # U154: only the per-prompt hook global_install writes (`--delta`, all 3 tools) runs U150. Claude's project
             # hook has no --delta and got byte-identical stdin, so it recorded every prompt a second time.
             if args.tool and args.delta:
@@ -1687,6 +1813,16 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                         prompt = turns[-1][0] if turns else None
                         thread = str(event.get("conversationId") or "")
                     window_line = on_prompt(project, args.tool, thread, prompt)
+                    from .coord.desk_title import reconcile_title
+
+                    native = reconcile_title(project, args.tool, thread, event)
+                    if args.tool == "claude" or native["instruction"]:
+                        window_line = "\n".join(p for p in window_line.splitlines()
+                                                if not p.startswith("USER WINDOW:"))
+                    window_line = "\n".join(p for p in (window_line, native["instruction"]) if p)
+                    if args.tool == "claude":
+                        shown["native_title"] = native.get("title") or ""
+                        shown["native_event"] = str(event.get("hook_event_name") or "")
                     # U150-B: an error report reaches the other two tools; a repeat of it becomes P1.
                     from .coord.repeat_error import on_prompt as error_lines
 
@@ -1698,7 +1834,8 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 try:
                     from .coord.stall import hook_lines
 
-                    window_line = "\n".join(p for p in (window_line, hook_lines(project, args.tool)) if p)
+                    if not handed_off:
+                        window_line = "\n".join(p for p in (window_line, hook_lines(project, args.tool)) if p)
                 except Exception:  # noqa: BLE001 - a hook never fails the session
                     pass
             if args.tool and args.state:
@@ -1715,6 +1852,25 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 alert = retention_alert(project)
                 if retention_alert_is_new(project, alert):
                     line = line + " " + alert
+                try:  # U213: the day briefing reaches 윤겸스 as systemMessage once per session, never the model
+                    from .coord.day_brief import brief_once, day_brief
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    event = event if isinstance(event, dict) else {}
+                    if event.get("source") != "compact" and brief_once(project, args.tool or "", hook_session(stdin_text)):
+                        shown["user"], shown["event"] = day_brief(project, args.tool, presence), "SessionStart"
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    pass
+            elif say == "agy":
+                try:  # U213: Antigravity's user desk opens its next reply with the briefing
+                    from .coord.day_brief import agy_brief
+
+                    event = json.loads(stdin_text) if stdin_text.strip() else {}
+                    event = event if isinstance(event, dict) else {}
+                    brief = agy_brief(project, str(event.get("conversationId") or ""), presence)
+                    line = "\n".join(part for part in (line, brief) if part)
+                except Exception:  # noqa: BLE001 - a hook never fails the session
+                    pass
             elif say == "p1" and not p1_is_new(project, line):
                 line = ""  # U46-P1: an unchanged P1 set is ACK_ONLY; it was repeated on every prompt
             if say == "none":
@@ -1728,7 +1884,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                 # U105: removed first-call limit (invocationNum 0) so a letter arriving mid-turn is heard at next call
                 session = hook_session(stdin_text) or str(event.get("conversationId") or "") or None
                 # U141-A: the cursor and the wake receipts advance only after the output below was written.
-                text, ack = prepare_delta(project, args.tool, session)
+                text, ack = (handed_off, None) if handed_off else prepare_delta(project, args.tool, session)
                 line = "\n".join(part for part in (line, text) if part)
                 if say != "agy":  # Antigravity's user-visible hook field is UNKNOWN; its line stays model-facing
                     from .coord.board import letters_in, line_is_new, status_line
@@ -1741,7 +1897,7 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
                         pass
             line = "\n".join(part for part in (window_line, line) if part)
             _emit({"ok": True, "project": str(project), "presence": presence, "conductor": conductor(presence)}, line)
-            if ack is not None:
+            if ack is not None and time.monotonic() - started < HOOK_ACK_BUDGET_S:
                 try:
                     ack()
                 except Exception:  # noqa: BLE001 - a failed ack shows the same letters again next time; never a crash
@@ -1765,6 +1921,30 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
     presence = read_all(project)
     _emit({"ok": True, "presence": presence, "conductor": conductor(presence)})
     return 0
+
+
+def cmd_coord_worker_route(args: argparse.Namespace) -> int:
+    from .worker_routing import plan
+    try:
+        data = json.loads(Path(args.task_file).read_text(encoding='utf-8'))
+        result = plan(data.get('task'), data.get('availability')) if isinstance(data, dict) else plan(None, None)
+    except (OSError, ValueError):
+        result = plan(None, None)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result['status'] == 'READY' else 1
+
+
+def cmd_coord_listen(args: argparse.Namespace) -> int:
+    from .coord import continuity, hook_context
+    try:
+        payload = json.loads(hook_context.read_stdin())
+        code, record = continuity.run_hook(payload, args.tool)
+    except (OSError, ValueError, TypeError):
+        return 0  # Invalid context never creates a paid wake.
+    if code == 2:
+        print(f"UAOS ACTIONABLE letter {record['id']}: open, disposition, then coord ack; no auto-approval.",
+              file=sys.stderr, flush=True)
+    return code
 
 
 def cmd_coord_watch(args: argparse.Namespace) -> int:
@@ -1844,8 +2024,12 @@ def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
             return 0
         # U146a-R: the hook's session owns the claim; without one the gate claims nothing and allows the stop.
         result = gate(project, args.tool, session=hook_session(hook))
+        # U201: whenever the turn ends or is held, the user also sees why work waits or stopped; ASCII JSON,
+        # since a cp949 console cannot print it and the fail-open handler would swallow the error
+        from .coord.wait_reason import stop_output
+        result = stop_output(result, project, args.tool)
         if isinstance(result, dict):
-            print(json.dumps(result, ensure_ascii=False))
+            print(json.dumps(result))
     except Exception:  # noqa: BLE001 - fail open: the stop is allowed
         pass
     return 0
@@ -1865,6 +2049,37 @@ def cmd_coord_stall(args: argparse.Namespace) -> int:
     result = scan(Path(args.project), args.tool)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result.get("blocked") or result.get("error") else 0
+
+
+def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
+    """U251: Live operational check of OpenRig 3-tool seats, ShowGN 5-chip telemetry, REA 2-tier router, and .work/library."""
+    from .benchmark_logic_transplant import build_five_chip_telemetry_snapshot, select_rea_analysis_tier
+    from .coord import next_card, presence
+    from .library_store import CANONICAL_LIBRARY_ROOT, inspect_library_repo
+
+    root = next_card.coord_root(Path(args.project))
+    desk = presence.read_all(root)
+    states = {t: str((desk.get(t) or {}).get("state") or "ABSENT") for t in ("codex", "claude", "antigravity")}
+    sched_file = next_card.schedule_path(root)
+    try:
+        sched = json.loads(sched_file.read_text(encoding="utf-8"))
+        phases = sched.get("phases") or []
+    except Exception:
+        phases = []
+    telemetry = build_five_chip_telemetry_snapshot(
+        schedule_phases=phases,
+        presence_states=states,
+        changed_files=[],
+        active_watchers=["coord watch --target antigravity"],
+    )
+    rea_route = select_rea_analysis_tier(args.target)
+    libs = {}
+    for name in ("openrig", "AgentCodeGUI", "rea"):
+        p = CANONICAL_LIBRARY_ROOT / name
+        if p.is_dir():
+            libs[name] = inspect_library_repo(p)
+    print(json.dumps({"ok": True, "telemetry": telemetry, "rea_router": rea_route, "library": libs}, ensure_ascii=False))
+    return 0
 
 
 def cmd_coord_push_check(args: argparse.Namespace) -> int:
@@ -1976,10 +2191,14 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
     if not project_manual.is_file():
         project_manual.write_text(PROJECT_MANUAL_TEMPLATE, encoding="utf-8")
         created.append(".coord/PROJECT_MANUAL.md")
-    for folder in (".coord/tasks", ".coord/mailbox", ".work"):
+    for folder in (".coord/tasks", ".coord/mailbox", ".work", "docs"):
         if not (project / folder).is_dir():
             (project / folder).mkdir(parents=True)
             created.append(folder + "/")
+    from .docs_manager import ensure_doc_index
+    if not (project / "docs" / "00_DOCUMENT_INDEX.md").is_file():
+        ensure_doc_index(project)
+        created.append("docs/00_DOCUMENT_INDEX.md")
     task_tpl = project / ".coord" / "tasks" / "contract_template.md"
     if not task_tpl.is_file():
         from .manual import new_manual
@@ -2006,6 +2225,7 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
             handle.write(prefix + "# UAOS runtime state (coord init)\n" + "\n".join(missing) + "\n")
     print(json.dumps({"ok": True, "created": created, "gitignore_added": missing,
                       "contract_manuals": ".coord/tasks/<work_id>-manual.md",
+                      "docs_index": "docs/00_DOCUMENT_INDEX.md",
                       "next": ["coord presence --tool <codex|claude|antigravity> --state ACTIVE",
                                "fill .coord/PROJECT_MANUAL.md (big picture) before the first delegation",
                                "pilot manual new ... then pilot manual lint ... then pilot run --manual ..."]},
@@ -2018,6 +2238,20 @@ def cmd_coord_init(args: argparse.Namespace) -> int:
 INBOX_ROUTINE_KINDS = frozenset({"RUN"})
 # 200 characters keep a letter's who/what/verdict; the full text stays in the letter and under `--all`.
 INBOX_SUMMARY_LIMIT = 200
+
+
+def cmd_coord_today(args: argparse.Namespace) -> int:
+    """U213: print the day briefing the SessionStart hook shows, for "진행상황을 브리핑해라" at any time."""
+    from .coord.day_brief import day_brief
+    from .coord.hook_context import find_project
+    from .coord.presence import read_all
+
+    project = find_project([args.project])
+    if project is None:
+        print(f"NOT_A_UAOS_PROJECT: no .coord/PLAN.md at or above {args.project}")
+        return 1
+    print(day_brief(project, args.tool, read_all(project)))
+    return 0
 
 
 def cmd_coord_inbox(args: argparse.Namespace) -> int:
@@ -2054,7 +2288,12 @@ def cmd_coord_ack(args: argparse.Namespace) -> int:
     from .coord.mailbox import Mailbox, MailboxRejected
 
     box = Mailbox(Path(args.project) / ".coord" / "mailbox")
-    claim = box.claim(args.message_id, consumer_id=args.consumer)
+    consumer = args.consumer
+    if consumer == "commander":
+        consumer = (os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
+                    or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("ANTIGRAVITY_SESSION_ID")
+                    or consumer)
+    claim = box.claim(args.message_id, consumer_id=consumer)
     if claim is None:
         already = (box.ack_dir / f"{args.message_id}.json").is_file()
         print(json.dumps({"ok": already, "id": args.message_id,
@@ -2327,7 +2566,58 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive"})
+_DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window"})
+
+
+
+
+def _add_docs_parsers(subparsers) -> None:
+    """Register the `docs new|sync|next-num` subcommands (U222)."""
+    p_docs = subparsers.add_parser("docs", help="UAOS documentation and auto-numbering management")
+    subs = p_docs.add_subparsers(dest="docs_cmd", required=True)
+    p_new = subs.add_parser("new", help="Create a new auto-numbered document and register in index")
+    p_new.add_argument("title", help="Document title")
+    p_new.add_argument("--slug", default=None, help="Custom filename slug")
+    p_new.add_argument("--category", default="", help="Document category")
+    p_new.add_argument("--tool", default="", help="Authoring tool name")
+    p_new.set_defaults(func=cmd_docs_new)
+    p_sync = subs.add_parser("sync", help="Synchronize docs/00_DOCUMENT_INDEX.md with all docs")
+    p_sync.set_defaults(func=cmd_docs_sync)
+    p_next = subs.add_parser("next-num", help="Print next sequential number prefix")
+    p_next.set_defaults(func=cmd_docs_next_num)
+    for each in (p_new, p_sync, p_next):
+        each.add_argument("--project", default=".", help="Project directory (default: .)")
+
+
+def cmd_docs_new(args: argparse.Namespace) -> int:
+    """Create a new auto-numbered document and register in docs/00_DOCUMENT_INDEX.md."""
+    from .docs_manager import register_new_doc
+    project = Path(args.project)
+    path = register_new_doc(project, title=args.title, slug=args.slug,
+                            category=args.category, author_tool=args.tool)
+    rel = str(path.relative_to(project).as_posix())
+    print(json.dumps({"ok": True, "created": rel, "path": str(path)}, ensure_ascii=False))
+    return 0
+
+
+
+
+def cmd_docs_next_num(args: argparse.Namespace) -> int:
+    """Calculate and return the next sequential document number and prefix."""
+    from .docs_manager import allocate_next_doc_number
+    num, prefix = allocate_next_doc_number(Path(args.project))
+    print(json.dumps({"ok": True, "next_number": num, "prefix": prefix}, ensure_ascii=False))
+    return 0
+
+
+
+
+def cmd_docs_sync(args: argparse.Namespace) -> int:
+    """Audit and synchronize docs/00_DOCUMENT_INDEX.md table with existing documents."""
+    from .docs_manager import sync_doc_index
+    count = sync_doc_index(Path(args.project))
+    print(json.dumps({"ok": True, "synced_count": count, "index": "docs/00_DOCUMENT_INDEX.md"}, ensure_ascii=False))
+    return 0
 
 
 if __name__ == "__main__":

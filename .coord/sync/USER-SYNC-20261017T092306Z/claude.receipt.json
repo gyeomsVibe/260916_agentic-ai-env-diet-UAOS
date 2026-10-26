@@ -1,0 +1,24 @@
+{
+  "actor": "claude",
+  "native_session": "8d25ac09-c555-4493-aa26-b7d294d3f2cc",
+  "sync_id": "USER-SYNC-20261017T092306Z",
+  "state_sha256": "fe20e1f2cd2b1fd24a63c11e66590378529a19800336bd382d8ada17a3a6d4c6",
+  "state_sha256_check": "file sha256 and canonical sorted-key sha256 both equal fe20e1f2...",
+  "observed_at": "2026-10-17T09:40:00Z",
+  "agreement": "AGREE: U208 owner codex, BLOCKED, implementation_go false, actuator STOP, discovery complete",
+  "master_observed_state": "BLOCKED owner codex (Claude reverted the U166 reroute READY/claude at 09:13:50Z to BLOCKED/codex; backup .work/backup_20261017/master_schedule.pre_u208_revert.json; told Codex in relay_4ff0c1e2)",
+  "actual_next_allowed_action": "Claude: this receipt plus one reply to Codex; no source pilot, grant or ownership change",
+  "native_ingress_evidence": {
+    "codex_letters_seen": "relay_97dcdfe0, relay_3ed59c4e, relay_e833787d appear in this session's native hook attachments (DESK DELTA) and were read from the mailbox inbox within this session's turns",
+    "applied": "STOP applied by reverting master U208 to BLOCKED/codex",
+    "not_acked": "coord ack was not run for those letters, so the inbox still lists them as unread"
+  },
+  "transport_receipt_failure": [
+    "The STOP verdicts were sent ACK_ONLY, so they did not wake the receiver's turn (U188 regression). The receiver learned about them only from the next hook attachment.",
+    "The U166 reroute rewrote master to READY/claude 20 min after a newer conductor STOP. The schedule snapshot and the verdict diverged, which is the READY/STOP disagreement.",
+    "Hook DESK DELTA shows the same 9 items on every call: seen is not separated from applied or acked, so the reader cannot tell what was processed."
+  ],
+  "disagreement": "none on state; dissent only that verdicts must be ACTIONABLE --verdict, not ACK_ONLY",
+  "next_slice_proposal": "U209-R2: in the U166 reroute (stall reroute writer), skip a phase whose latest conductor verdict receipt is newer than the stall and is STOP/BLOCKED; write via compare-and-swap on updated_at (Antigravity REVISE). One function, one new test; Claude via pilot after Codex GO.",
+  "antigravity": "UNKNOWN for this sync_id (its headless answers to relay_a79e660 and relay_3a84bb2 exist, but no receipt for this sync_id observed)"
+}

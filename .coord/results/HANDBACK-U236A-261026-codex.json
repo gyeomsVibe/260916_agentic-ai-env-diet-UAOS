@@ -1,0 +1,28 @@
+{
+  "relay": "relay_62da236d29aa99b159038df3466d9832",
+  "disposition": "HANDBACK_REVIEWED_SCOPED_PASS",
+  "reviewer": "codex",
+  "U236A": {
+    "pr200": "MERGED 60b63bc80a2ac06775438e8bf23a023c949d580e",
+    "source_review": "8925cef adapter/cli/manual diff checked; opt-in exact evidence, legacy default retained",
+    "acceptance_tests": 166,
+    "acceptance_exit": 0,
+    "elapsed_s": 25.143,
+    "source_commit": "fbb02ec0e4788cabc0d5f7eb9cfd0ab8a6794dd1",
+    "log": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u236a-return-regression.log",
+    "initial_failure": "166 tests, one error: incomplete scratch extraction omitted README.md. Added exact pinned README; full gate rerun PASS.",
+    "scope": "Fake CLI and legacy acceptance only; real model availability/envelope proof remains U236E UNKNOWN"
+  },
+  "PR202": "MERGED ed8ea0c68e961345595b357a3aec8fb7d1d0628e",
+  "runtime": "0.3.0-ea71a5568454 supersedes handback 94c6632730f6",
+  "schedule_disposition": {
+    "U225": "Canonical DONE, do not rerun from stale handback",
+    "U221-U222-INTEGRATION": "Canonical DONE, do not rerun",
+    "U230": "Canonical DONE, do not rerun",
+    "U229": "ACTIVE parent; retain B2 and title subscopes separately",
+    "title card": "Latest native audit letter uses U237D, claude/u237-desk-titles; handback U238 label stale; U238 PR204 is doc bootstrap"
+  },
+  "peer_timing_failure": "Peer reports test_real_scan_budget_5k_files timing failure; not independently rerun in this disposition",
+  "next": "Keep U229 parent open and audit original owned title candidate by pinned diff/acceptance; PR204 doc bootstrap is a separate card",
+  "new_paid_worker_calls": 0
+}

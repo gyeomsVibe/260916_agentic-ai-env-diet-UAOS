@@ -1,0 +1,19 @@
+{
+  "work_id": "U239B-RELEASE",
+  "message": "relay_486ac3ec5d06ece9fd0b3ee3015dddf8",
+  "state": "PUBLISHED_AGY_ANSWERED",
+  "reply": "relay_6776e0b8a6bb42a80a978c798d7a82b3",
+  "reply_content_read": "Located in ack folder: peer explicitly confirms U239B/U237D release hold, supersedes prior PASS, and reports no further installs or workers pending revised contract",
+  "reported_usage": {
+    "input_tokens": 35275,
+    "output_tokens": 1271,
+    "thinking_tokens": 268,
+    "cache_read_tokens": 0,
+    "total_tokens": 36546
+  },
+  "runtime_last_verified": "0.3.0-f4723bc9dd46",
+  "source_edits": 0,
+  "cost_saving": "UNMEASURED",
+  "receiver_hold_acknowledged": true,
+  "enforcement_evidence": "Peer statement plus independently unchanged current f472 runtime; not a hard installer lock"
+}

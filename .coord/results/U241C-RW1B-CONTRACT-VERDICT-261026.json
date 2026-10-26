@@ -1,0 +1,19 @@
+{
+  "work_id": "U241C-RW1B",
+  "verdict": "PASS_CONTRACT_WITH_FIXED_SUPPLEMENT",
+  "judge": "codex",
+  "manual_sha256": "FBBD8805CD2AEC468FACBCD2A2A7942A76423EE3F3231563B6F088C31C93D7CF",
+  "lint_exit": 0,
+  "native_gate_sha256": "1406DC296522832E0CD2C6E65E62D08FD27D2BE6350159DD884A3614BFEF6D69",
+  "native_independent_red": "4of8 failed, exit1",
+  "old_negative_sha256": "016AAECC2F02103EA004C738A93E2EAD1472EB85749CCDC1EF81CCC3B3E3F625",
+  "registry_gate": "C:/Users/Kimyoongyeom/.codex/worktrees/26e2/260916_agentic-ai-env-diet/.work/desk_261026/native_registry_gate.py",
+  "registry_gate_sha256": "5ED1723270C49D874FD22AAAC16D8BDEE1CF1B7AFC0226AF59109D0F829794D4",
+  "registry_independent_red": "1test,3subcases:2failures1error,exit1",
+  "bootstrap_decision": "Allow existing human status bootstrap only for genuinely absent or valid empty desk registration; malformed or unreadable or invalid-schema registry is UNKNOWN and fails closed",
+  "authorization": "Bounded local single-function dry runs only after current hashes, root supplement and meaningful per-slice acceptance are pinned and linted. No automatic source promotion; Codex judges bundles.",
+  "full_acceptance": "Existing original+7+8 tests and external0FD586 unchanged, plus fixed registry gate. Full aggregate must pass on completed candidate before integration approval.",
+  "caps": "180seconds and12000tokens per bounded slice; remote0; no fallback",
+  "release_hold": true,
+  "runtime_or_push_approval": false
+}

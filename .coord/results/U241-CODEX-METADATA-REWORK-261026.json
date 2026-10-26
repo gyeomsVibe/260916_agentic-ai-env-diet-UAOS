@@ -1,0 +1,18 @@
+{
+  "card": "U241",
+  "verdict": "REWORK_DATA_CONTRACT",
+  "source": "c653a8e",
+  "installed_probe": {
+    "runtime": "0.3.0-7d8451bec772",
+    "expired_presence_observed": "ACTIVE",
+    "expired_presence_expected": "UNKNOWN",
+    "canonical_owner_rendered": false
+  },
+  "root_causes": [
+    "collect_control_ux_snapshot reads raw state without expires_at effective freshness and reads updated_at instead of observed_at",
+    "render_control_ux_html reads owner, but canonical phases use owner_tool"
+  ],
+  "required": "Separate scoped correction, source/shared-desk resolution and independent negative tests before any runtime inclusion",
+  "old_runtime_preserved": "0.3.0-7d8451bec772",
+  "current_core_runtime_excludes_module": "0.3.0-8c3d23b61641"
+}

@@ -1,0 +1,40 @@
+{
+  "relay": "relay_4c27ab980b247cb06a3947662ff690ac",
+  "verdict": "REWORK",
+  "pr": 211,
+  "head": "c653a8ef07e085d0a7cb10f09c2c8439a5cbf7bb",
+  "merge": "b67532f6305c32bc84072bcab819d51e924fa005",
+  "live_state": "MERGED",
+  "ci": "SUCCESS",
+  "supersedes": "relay_f1640af131211483f7f5beb536bae4cd PASS and this stale ready-to-install ACK",
+  "source_identity": "Preserved7d installed control_ux.py normalized bytes equal exact PR head; current author checkout has same tracked code",
+  "existing_acceptance": {
+    "tests": 2,
+    "exit": 0
+  },
+  "independent_gate": {
+    "path": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u241-state-owner-negative.py",
+    "sha256": "0FD586CEAD78FA519FE54EA426AD1210E0931F600DF4553EB797AE7B5AA1B7EC",
+    "tests": 4,
+    "failure_assertions": 6,
+    "failed_categories": 3,
+    "exit": 1,
+    "log": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u241-state-owner-negative.log",
+    "cases": [
+      "Expired ACTIVE lease must display UNKNOWN: fails",
+      "Fresh valid ACTIVE lease remains ACTIVE: passes",
+      "Canonical phase owner_tool must be visible in its row: fails",
+      "Tool state and Ollama/Haiku pool labels must appear without phase rows: missing all4 labels"
+    ]
+  },
+  "root_causes": [
+    "Snapshot uses raw state/updated_at, not effective expires_at freshness or observed_at",
+    "Owner renderer reads owner rather than canonical owner_tool",
+    "Renderer ignores tools and workers fields altogether"
+  ],
+  "gate_provenance": "Earlier3-case probe was a pre-dispatch draft; expanded/frozen4-case file before any correction worker dispatch. Original2 tests unchanged.",
+  "required": "New linted corrective contract: reuse canonical shared-desk and effective presence APIs; retain legacy owner fallback; render tool state/configured worker data without unobserved availability/running claims; one local function slice at a time; Codex judge and original+frozen external gate before approval",
+  "runtime": "0.3.0-8c3d23b61641 already excludes UI module, reviewed core135 unchanged; no UI reinstall until separate correction gate",
+  "source_edits": 0,
+  "scope": "Source/HTML semantic data contract review only, not browser screenshot or visual/interaction approval"
+}

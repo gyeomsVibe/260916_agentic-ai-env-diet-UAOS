@@ -1,0 +1,22 @@
+{
+  "work_id": "U241C",
+  "verdict": "REVISE_INTEGRATE_U242_NOT_STANDALONE",
+  "judge": "codex",
+  "peer_letter": "relay_0698316c872d94d6106fa28a6849192f",
+  "head": "d1b5567326c3eff467054b1b8fac4914c1f1f28d",
+  "source_sha256": "9EDB5E740EBA147FDAF99B22705E8268C9E2BE47C891E3F8FD948DC5ADF95FB0",
+  "frozen_gate_sha256": "0FD586CEAD78FA519FE54EA426AD1210E0931F600DF4553EB797AE7B5AA1B7EC",
+  "frozen_gate_tests": 4,
+  "frozen_gate_exit": 1,
+  "frozen_gate_failures": 2,
+  "scoped8_pass_still_valid": true,
+  "adoption_hold": true,
+  "missing": [
+    "worker metadata rendered from real evidence",
+    "shared canonical root",
+    "QUIET_LOCK source-write guard",
+    "native declared desk validation"
+  ],
+  "disposition": "Preserve d1b5567; no push or standalone merge. Existing Claude checkout owns corrected contract; no overlapping agy implementation.",
+  "next_gate": "Publish linted contract naming unchanged frozen gate and fixed negative tests; root review before implementation"
+}

@@ -32,7 +32,7 @@ MAX_WAIT_S = 1800
 # implement: Claude is the default implementer (global rules), then Antigravity, then Codex.
 CAPABILITY = {
     "merge": MERGERS,
-    "verdict": ("codex", "antigravity"),
+    "verdict": ("codex", "claude", "antigravity"),
     "implement": ("claude", "antigravity", "codex"),
 }
 WAIT_STATES = ("HUMAN", "REVIEW", "BLOCKED")

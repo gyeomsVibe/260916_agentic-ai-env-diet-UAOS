@@ -1,0 +1,23 @@
+{
+  "work_id": "U243",
+  "verdict": "PASS_SCOPED_TITLE_BEHAVIOR",
+  "judge": "codex",
+  "pr": "https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/214",
+  "live_pr_state": "MERGED",
+  "head": "d9d52ed0e88d6d73719dc171459e17ece160565e",
+  "merge": "896afd463d5d94a62aa53d586b0c808b2f991cf7",
+  "ci": "test SUCCESS",
+  "independent_checkout": "C:/Users/Kimyoongyeom/.codex/worktrees/26e2/260916_agentic-ai-env-diet/.work/u243-review-d9d",
+  "independent_tests": 46,
+  "reported_peer_tests": 44,
+  "independent_command": "python -B -m unittest tests.test_u243_dynamic_process_titles tests.test_u237_desk_titles tests.test_u229_independent_title tests.test_u229_title_worker tests.test_u150_user_window",
+  "independent_exit": 0,
+  "diff_check_exit": 0,
+  "source_user_window_sha256": "F89FDF93E06313F8527D5DBCAA9E9AB61E839B6D665727190BEC0D8D31A34697",
+  "desk_title_sha256": "581F23CD9134B1F5691459B4677C7A87BE91DB4FC70DCC139036DA538246B93F",
+  "source_protection_limit": "U243 checks project-local QUIET_LOCK only; U241C canonical-root and native-origin guards remain independent requirements",
+  "u243_l1_failure": "Original SOURCE_DIVERGED receipt retained, not converted to success",
+  "u241c_integration_gate": "Do not overwrite merged U243 on_prompt/topic logic using old A7EA1BBC whole-function source. Old-base local candidates remain quarantined; re-pin current merged input and preserve U243 suites before integration.",
+  "runtime_approval": false,
+  "merge_repeated": false
+}

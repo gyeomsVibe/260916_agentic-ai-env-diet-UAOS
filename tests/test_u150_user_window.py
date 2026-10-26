@@ -139,16 +139,22 @@ class Adapters(unittest.TestCase):
     def test_agy_rename_backs_up_then_sets_title(self):
         db = self.root / "conversation_summaries.db"
         con = sqlite3.connect(db)
-        con.execute("create table conversation_summaries (conversation_id text, title text)")
-        con.execute("insert into conversation_summaries values ('c1', 'Checking Claude Code Progress')")
+        con.execute("create table conversation_summaries (conversation_id text, title text, preview text)")
+        con.execute("insert into conversation_summaries values ('c1', 'Checking Claude Code Progress', 'Checking Claude Code Progress')")
         con.commit()
         con.close()
+        ann_dir = self.root / "annotations"
+        ann_dir.mkdir()
+        pbtxt = ann_dir / "c1.pbtxt"
+        pbtxt.write_text('title:"Old Title"  last_user_view_time:{seconds:123}\n', encoding="utf-8")
         backup_dir = self.root / "backup"
-        self.assertTrue(uw.rename_agy("c1", "[사용자 대화창구-261004-1]", db=db, backup_dir=backup_dir))
+        self.assertTrue(uw.rename_agy("c1", "[사용자 대화창구-261004-1]", db=db, annotations_dir=ann_dir, backup_dir=backup_dir))
         con = sqlite3.connect(db)
-        self.assertEqual("[사용자 대화창구-261004-1]",
-                         con.execute("select title from conversation_summaries").fetchone()[0])
+        row = con.execute("select title, preview from conversation_summaries").fetchone()
+        self.assertEqual("[사용자 대화창구-261004-1]", row[0])
+        self.assertEqual("[사용자 대화창구-261004-1]", row[1])
         con.close()
+        self.assertIn('title:"[사용자 대화창구-261004-1]"', pbtxt.read_text(encoding="utf-8"))
         self.assertEqual(1, len(list(backup_dir.glob("conversation_summaries*.db"))))
 
     def test_hook_line_for_claude_asks_for_the_rename(self):
