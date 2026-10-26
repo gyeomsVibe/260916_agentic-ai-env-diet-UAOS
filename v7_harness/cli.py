@@ -573,6 +573,25 @@ def cmd_pilot_reconcile(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+def cmd_coord_capacity(args: argparse.Namespace) -> int:
+    from .coord.capacity_planner import (
+        collect_capacity_snapshot,
+        render_html_dashboard,
+        render_terminal_dashboard,
+    )
+
+    snap = collect_capacity_snapshot(Path(args.project))
+    if args.html:
+        render_html_dashboard(snap, Path(args.html))
+    if args.format == "json":
+        print(json.dumps(snap, ensure_ascii=False, indent=2))
+    else:
+        print(render_terminal_dashboard(snap))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="v7_harness", description="v7 Minimal Automation Harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -915,6 +934,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_stall.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_stall.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_stall.set_defaults(func=cmd_coord_stall)
+
+    p_coord_cap = p_coord_subs.add_parser(
+        "capacity",
+        help="U256: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, schedule assignments, and dashboard",
+    )
+    p_coord_cap.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_cap.add_argument("--format", choices=["json", "table"], default="table")
+    p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
+    p_coord_cap.set_defaults(func=cmd_coord_capacity)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
