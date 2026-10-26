@@ -59,7 +59,7 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertEqual(eng["codex"]["presence_state"], "LIMITED")
         self.assertEqual(eng["codex"]["usable_cards_capacity"], 0)
         self.assertGreater(eng["antigravity"]["used_5h_effective_tokens"], 0)
-        self.assertGreater(eng["antigravity"]["usable_remaining_5h_tokens"], 1000000)
+        self.assertEqual(eng["antigravity"]["usable_remaining_5h_tokens"], "UNKNOWN")
         self.assertIsNone(eng["ollama"]["usable_remaining_5h_tokens"])
         self.assertEqual(eng["ollama"]["status_tier"], "UNLIMITED_LOCAL")
         self.assertAlmostEqual(snap["offload_efficiency_24h"]["offload_share_pct"], 66.7, places=1)
@@ -70,6 +70,11 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         mark_presence(self.root, "claude", "ACTIVE", now=now)
         mark_presence(self.root, "antigravity", "ACTIVE", now=now)
 
+        (self.root / ".coord/usage").mkdir(parents=True, exist_ok=True)
+        (self.root / ".coord/usage/capacity_policy.json").write_text(json.dumps({
+            "tool_caps_5h": {"codex": 1500000, "claude": 1200000, "antigravity": 2000000, "haiku": 3000000, "ollama": None},
+            "tool_caps_source": {"origin": "test_measured_fixture", "policy_docs": ["docs/27_token-budget-routing-policy.md"]},
+        }), encoding="utf-8")
         sched = {
             "phases": [
                 {"phase_id": "U253", "state": "REVIEW", "author_tool": "antigravity", "owner_tool": "antigravity"},
@@ -106,7 +111,6 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
 C = CP
 
 def engines(**rem):
-
     return {t: {"presence_state": "ACTIVE" if rem.get(t, 0) > 0 else "LIMITED", "usable_remaining_5h_tokens": rem.get(t, 0)}
             for t in C.PAID_TOOLS}
 
@@ -147,6 +151,26 @@ class U256Counter(unittest.TestCase):
         caps = C.DEFAULT_POLICY["tool_caps_5h"]
         src = C.DEFAULT_POLICY.get("tool_caps_source") or C.DEFAULT_POLICY.get("sources")
         self.assertTrue(src, f"tool_caps_5h {caps} carry no recorded source")
+
+    def test_cited_policy_docs_are_committed_and_state_the_caps(self):
+        # A source is evidence only if it ships in the tree (git ls-files) and states the number it is cited for.
+        import subprocess
+        src = C.DEFAULT_POLICY.get("tool_caps_source") or {}
+        docs = src.get("policy_docs") or []
+        tracked = set(subprocess.run(["git", "ls-files"], capture_output=True, text=True, encoding="utf-8").stdout.splitlines())
+        for d in docs:
+            self.assertTrue(d in tracked, f"cited {d} is not a committed file")
+        text = "".join(Path(d).read_text(encoding="utf-8") for d in docs if d in tracked).replace(",", "").replace("_", "")
+        for tool, cap in C.DEFAULT_POLICY["tool_caps_5h"].items():
+            if cap is not None:
+                self.assertIn(str(cap), text, f"{tool} cap {cap} is stated in no cited doc")
+
+    def test_paid_tool_remaining_is_unknown_by_default(self):
+        # Never convert a quota guess to tokens: with no measured ledger, remaining capacity must be UNKNOWN, not a cap.
+        snap = C.collect_capacity_snapshot(self.root)
+        for tool in C.PAID_TOOLS:
+            rem = (snap.get("engines", snap).get(tool) or {}).get("usable_remaining_5h_tokens")
+            self.assertIn(rem, (None, "UNKNOWN"), f"{tool} remaining {rem} with no ledger")
 
 
 if __name__ == "__main__":

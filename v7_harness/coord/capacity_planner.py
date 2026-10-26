@@ -46,32 +46,31 @@ DEFAULT_POLICY: dict[str, Any] = {
     "offload_threshold_pct": 70.0,
     "critical_threshold_pct": 90.0,
     "tool_caps_5h": {
-        "codex": 1500000,
-        "claude": 1200000,
-        "antigravity": 2000000,
-        "haiku": 3000000,
+        "codex": None,
+        "claude": None,
+        "antigravity": None,
+        "haiku": None,
         "ollama": None,
     },
     "tool_caps_source": {
-        "origin": "measured_ledger_5h_envelope",
-        "ledger_paths": [".coord/usage/runs.jsonl", "~/.uaos/usage.sqlite3"],
+        "origin": "unmeasured_by_default",
         "policy_docs": [
-            "docs/35_token-budget-routing-policy.md",
-            "docs/36_claude-budget-manual.md",
-            "docs/37_antigravity-budget-manual.md",
-            "docs/38_ollama-calculator-manual.md",
+            "docs/27_token-budget-routing-policy.md",
+            "docs/28_claude-budget-manual.md",
+            "docs/29_antigravity-budget-manual.md",
+            "docs/30_ollama-calculator-manual.md",
         ],
         "notes": (
-            "Empirical 5h rolling effective-token ceiling before provider 429/rate-limit lease events in "
-            ".coord/usage/runs.jsonl and ~/.uaos/usage.sqlite3; never derived from provider UI quota percentages."
+            "Paid tool 5h caps default to None (usable_remaining_5h_tokens='UNKNOWN') until a measured cap and "
+            "source are recorded in .coord/usage/capacity_policy.json; never derived from provider quota percentages."
         ),
     },
     "sources": {
-        "window_5h_seconds": "18000s (5h rolling provider window in docs/35 §2)",
-        "weights": "OpenTelemetry/provider prompt-cache billing ratios: cache_read=0.1x, cache_write=1.25x, output=3.0x (docs/35 §3)",
-        "default_card_cost_tokens": "45000 effective tokens: median completed card cost in .coord/usage/runs.jsonl (docs/35 §4)",
-        "review_share_ratio": "0.35 judge/rework reservation share from docs/35 §4",
-        "card_cost_clamp": "[5000, 250000] single-turn floor to B85 per-run remote_budget_tokens ceiling (docs/37)",
+        "window_5h_seconds": "18000s (5h rolling provider window in docs/27_token-budget-routing-policy.md)",
+        "weights": "Prompt-cache billing ratios in docs/27_token-budget-routing-policy.md",
+        "default_card_cost_tokens": "45000 effective tokens baseline in docs/27_token-budget-routing-policy.md",
+        "review_share_ratio": "0.35 judge/rework reservation share in docs/27_token-budget-routing-policy.md",
+        "card_cost_clamp": "[5000, 250000] single-turn floor to per-run ceiling in docs/29_antigravity-budget-manual.md",
     },
     "tool_roles": {
         "codex": "Conductor & Final Independent Judge",
@@ -385,10 +384,10 @@ def collect_capacity_snapshot(
                     status_tier = "THROTTLE_TO_LOCAL"
                 else:
                     status_tier = "HEALTHY"
-        elif eng in PAID_TOOLS and not has_cap_source:
+        elif eng in PAID_TOOLS:
             rem_tokens = "UNKNOWN"
             util_pct = 0.0
-            usable_cards = "UNKNOWN"
+            usable_cards = 0 if pres_state in ("LIMITED", "ABSENT") else "UNKNOWN"
             status_tier = "LIMITED_PAUSE" if pres_state in ("LIMITED", "ABSENT") else "UNMEASURED_CAP"
         else:
             rem_tokens = None
