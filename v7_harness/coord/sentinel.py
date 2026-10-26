@@ -307,6 +307,47 @@ def _passed_since(passed: dict[str, float], payload: dict[str, Any]) -> bool:
     return done > blocked_at
 
 
+_TERMINAL_PHASE_STATES = frozenset({"DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED"})
+
+
+def _schedule_closed_since(project_root: Path, payload: dict[str, Any]) -> bool:
+    """U260: the master schedule closed the letter's step, or its card (`U241C` for `U241C-S4`), after the letter.
+
+    Most cards close through a merged PR, never a ledger PASS, so U88 alone kept 212 stale letters in every P1 wake.
+    The phase's own `updated_at` is its close time, else the schedule's; no time, an open phase or an unreadable
+    schedule keeps the alert.
+    """
+    from datetime import datetime
+
+    step, stamp = payload.get("step"), payload.get("ts")
+    if not isinstance(step, str) or not isinstance(stamp, str):
+        return False
+    try:
+        blocked_at = datetime.fromisoformat(stamp).timestamp()
+        schedule = json.loads((project_root / ".coord" / "master_schedule.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    phases = schedule.get("phases") if isinstance(schedule, dict) else None
+    if not isinstance(phases, list):
+        return False
+    card = re.match(r"U\d+[A-Za-z]?(?=-|$)", step)
+    wanted = {step.upper(), card.group(0).upper()} if card else {step.upper()}
+    for phase in phases:
+        if not isinstance(phase, dict) or str(phase.get("phase_id", "")).upper() not in wanted:
+            continue
+        if phase.get("state") not in _TERMINAL_PHASE_STATES:
+            continue
+        closed = phase.get("updated_at") or schedule.get("updated_at")
+        try:
+            closed_at = float(closed) if isinstance(closed, (int, float)) and not isinstance(closed, bool) \
+                else datetime.fromisoformat(str(closed)).timestamp()
+        except ValueError:
+            continue
+        if closed_at > blocked_at:
+            return True
+    return False
+
+
 EXHAUSTED_SCHEMA = "u190b-exhausted-v1"
 WAKE_SEEN_SCHEMA = "u189-wake-seen-v1"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -581,7 +622,9 @@ def run_sentinel_cycle(
             and float(expires_at) <= t0
         ):
             continue
-        if payload.get("kind") == "BLOCKED" and not payload.get("is_p1") and _passed_since(passed, payload):
+        if payload.get("kind") == "BLOCKED" and not payload.get("is_p1") and (
+            _passed_since(passed, payload) or _schedule_closed_since(project_root, payload)
+        ):
             p1_superseded.append(str(payload.get("step")))
             continue
         if payload.get("kind") == "BLOCKED" or payload.get("is_p1"):
