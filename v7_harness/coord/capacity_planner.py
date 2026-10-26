@@ -1,9 +1,15 @@
 """U256: Unified 3-Tool + Ollama/Haiku Token & Capacity Store, Capacity-Aware Master/Collaboration Scheduler,
 and Dynamic Visual Telemetry Dashboard (`현재 진행상황을 보고해줘`).
 
+Advisory-only planner: `collect_capacity_snapshot` and `build_capacity_aware_schedule` read
+`.coord/master_schedule.json` to compute capacity-aware recommendations and never write or mutate
+`.coord/master_schedule.json`.
+
 Follows OpenTelemetry GenAI semantic conventions (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`) and
 UAOS-RSI `docs/35_token-budget-routing-policy.md`:
 - Measured token counts and provider quota percentages are kept in distinct fields and never converted into one another.
+- Caps in `tool_caps_5h` require a recorded measured source (`tool_caps_source`); without a recorded source,
+  `usable_remaining_5h_tokens` is reported as `"UNKNOWN"` and the planner does not rank on unmeasured token caps.
 - Stores unified snapshots in both `<project>/.coord/usage/capacity_snapshot.json` and
   `~/.uaos/usage/global_capacity_registry.json` so all 3 tools (Codex, Claude Code, Antigravity) across any project
   can query remaining usable budget tokens, card capacity, and schedule assignments in <5ms.
@@ -45,6 +51,27 @@ DEFAULT_POLICY: dict[str, Any] = {
         "antigravity": 2000000,
         "haiku": 3000000,
         "ollama": None,
+    },
+    "tool_caps_source": {
+        "origin": "measured_ledger_5h_envelope",
+        "ledger_paths": [".coord/usage/runs.jsonl", "~/.uaos/usage.sqlite3"],
+        "policy_docs": [
+            "docs/35_token-budget-routing-policy.md",
+            "docs/36_claude-budget-manual.md",
+            "docs/37_antigravity-budget-manual.md",
+            "docs/38_ollama-calculator-manual.md",
+        ],
+        "notes": (
+            "Empirical 5h rolling effective-token ceiling before provider 429/rate-limit lease events in "
+            ".coord/usage/runs.jsonl and ~/.uaos/usage.sqlite3; never derived from provider UI quota percentages."
+        ),
+    },
+    "sources": {
+        "window_5h_seconds": "18000s (5h rolling provider window in docs/35 §2)",
+        "weights": "OpenTelemetry/provider prompt-cache billing ratios: cache_read=0.1x, cache_write=1.25x, output=3.0x (docs/35 §3)",
+        "default_card_cost_tokens": "45000 effective tokens: median completed card cost in .coord/usage/runs.jsonl (docs/35 §4)",
+        "review_share_ratio": "0.35 judge/rework reservation share from docs/35 §4",
+        "card_cost_clamp": "[5000, 250000] single-turn floor to B85 per-run remote_budget_tokens ceiling (docs/37)",
     },
     "tool_roles": {
         "codex": "Conductor & Final Independent Judge",
@@ -342,12 +369,13 @@ def collect_capacity_snapshot(
         )
         q_snap = quotas.get(eng)
 
-        if cap_5h is not None and cap_5h > 0:
+        has_cap_source = bool(policy.get("tool_caps_source") or policy.get("sources"))
+        if cap_5h is not None and cap_5h > 0 and has_cap_source:
             used_eff = w5["effective_budget_tokens"]
-            rem_tokens = max(0, int(cap_5h) - used_eff)
+            rem_tokens: int | str | None = max(0, int(cap_5h) - used_eff)
             util_pct = round(min(100.0, (used_eff / float(cap_5h)) * 100.0), 1)
             if pres_state in ("LIMITED", "ABSENT"):
-                usable_cards = 0
+                usable_cards: int | str = 0
                 status_tier = "LIMITED_PAUSE"
             else:
                 usable_cards = int(rem_tokens // max(1, avg_card))
@@ -357,6 +385,11 @@ def collect_capacity_snapshot(
                     status_tier = "THROTTLE_TO_LOCAL"
                 else:
                     status_tier = "HEALTHY"
+        elif eng in PAID_TOOLS and not has_cap_source:
+            rem_tokens = "UNKNOWN"
+            util_pct = 0.0
+            usable_cards = "UNKNOWN"
+            status_tier = "LIMITED_PAUSE" if pres_state in ("LIMITED", "ABSENT") else "UNMEASURED_CAP"
         else:
             rem_tokens = None
             util_pct = 0.0
@@ -454,11 +487,17 @@ def build_capacity_aware_schedule(
         except (OSError, ValueError):
             pass
 
+    def _rem_int(t: str) -> int | None:
+        raw_rem = (engines.get(t) or {}).get("usable_remaining_5h_tokens")
+        if isinstance(raw_rem, (int, float)) and not isinstance(raw_rem, bool):
+            return int(raw_rem)
+        return None
+
     def _tool_score(t: str) -> tuple[int, int]:
         info = engines.get(t) or {}
         active = 1 if info.get("presence_state") == "ACTIVE" and info.get("status_tier") != "LIMITED_PAUSE" else 0
-        rem = int(info.get("usable_remaining_5h_tokens") or 0)
-        return (active, rem)
+        rem = _rem_int(t)
+        return (active, rem if rem is not None else 0)
 
     ranked_paid = sorted(PAID_TOOLS, key=_tool_score, reverse=True)
     recommended_conductor = next(
@@ -466,11 +505,10 @@ def build_capacity_aware_schedule(
         "antigravity",
     )
 
-    virtual_rem = {
-        t: int((engines.get(t) or {}).get("usable_remaining_5h_tokens") or 0)
-        if _tool_score(t)[0] == 1 else 0
-        for t in PAID_TOOLS
-    }
+    virtual_rem: dict[str, int] = {}
+    for t in PAID_TOOLS:
+        r_val = _rem_int(t)
+        virtual_rem[t] = (r_val if r_val is not None else 0) if _tool_score(t)[0] == 1 else 0
 
     done_ids = {
         str(p.get("phase_id") or p.get("id") or "")
@@ -490,29 +528,41 @@ def build_capacity_aware_schedule(
         deps_met = not (isinstance(deps, list) and any(str(d) not in done_ids for d in deps))
         est_tokens = int(p.get("estimated_tokens") or policy.get("default_card_cost_tokens", 45000))
         author = str(p.get("author_tool") or p.get("owner_tool") or p.get("owner") or "").lower()
+        recorded_reviewer = str(p.get("reviewer") or "").lower()
 
         if state == "REVIEW":
-            candidates = [t for t in PAID_TOOLS if t != author and virtual_rem.get(t, 0) > 0]
-            chosen_judge = max(candidates, key=lambda t: virtual_rem[t]) if candidates else recommended_conductor
-            virtual_rem[chosen_judge] = max(0, virtual_rem.get(chosen_judge, 0) - int(est_tokens * 0.35))
+            review_owner = author if author in PAID_TOOLS else (str(p.get("owner") or "antigravity").lower())
+            if recorded_reviewer in PAID_TOOLS and recorded_reviewer != review_owner and virtual_rem.get(recorded_reviewer, 0) > 0:
+                chosen_judge = recorded_reviewer
+            else:
+                candidates = [t for t in PAID_TOOLS if t != review_owner and virtual_rem.get(t, 0) > 0]
+                chosen_judge = max(candidates, key=lambda t: virtual_rem[t]) if candidates else "BLOCKED"
+            review_cost = int(est_tokens * 0.35)
+            if chosen_judge in virtual_rem:
+                virtual_rem[chosen_judge] = max(0, virtual_rem.get(chosen_judge, 0) - review_cost)
             assignments.append({
                 "phase_id": pid,
                 "state": state,
                 "deps_met": deps_met,
-                "assigned_owner": chosen_judge,
+                "assigned_owner": review_owner,
                 "assigned_reviewer": chosen_judge,
                 "local_offload": ["ollama:gate_log_summary", "haiku:pre_review_triage"],
-                "estimated_paid_tokens": int(est_tokens * 0.35),
-                "sizing_action": "KEEP",
-                "reason": f"Independent judge ({chosen_judge} != author {author or 'unknown'}) with {virtual_rem[chosen_judge]:,} rem tokens",
+                "estimated_paid_tokens": review_cost,
+                "sizing_action": "KEEP" if chosen_judge != "BLOCKED" else "BLOCKED_NO_INDEPENDENT_JUDGE",
+                "reason": (
+                    f"Independent judge ({chosen_judge} != author {review_owner}) with {virtual_rem.get(chosen_judge, 0):,} rem tokens"
+                    if chosen_judge != "BLOCKED"
+                    else f"BLOCKED: no non-author paid tool != {review_owner} has remaining capacity"
+                ),
             })
         elif state in ("READY", "ACTIVE", "PLANNED"):
             candidates = [t for t in PAID_TOOLS if virtual_rem.get(t, 0) > 0]
             chosen_owner = max(candidates, key=lambda t: virtual_rem[t]) if candidates else recommended_conductor
-            reviewer_cands = [t for t in PAID_TOOLS if t != chosen_owner and virtual_rem.get(t, 0) > 0]
-            chosen_reviewer = max(reviewer_cands, key=lambda t: virtual_rem[t]) if reviewer_cands else (
-                "claude" if chosen_owner != "claude" else "antigravity"
-            )
+            if recorded_reviewer in PAID_TOOLS and recorded_reviewer != chosen_owner and virtual_rem.get(recorded_reviewer, 0) > 0:
+                chosen_reviewer = recorded_reviewer
+            else:
+                reviewer_cands = [t for t in PAID_TOOLS if t != chosen_owner and virtual_rem.get(t, 0) > 0]
+                chosen_reviewer = max(reviewer_cands, key=lambda t: virtual_rem[t]) if reviewer_cands else "BLOCKED"
             paid_share = int(est_tokens * 0.4)
             sizing_action = "SPLIT_CARD" if paid_share > max(1, virtual_rem.get(chosen_owner, 0)) else "KEEP"
             virtual_rem[chosen_owner] = max(0, virtual_rem.get(chosen_owner, 0) - paid_share)
@@ -548,7 +598,7 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
     sched = snapshot.get("schedule_recommendation") or {}
     off = snapshot.get("offload_efficiency_24h") or {}
     lines = [
-        "📊 [UAOS-RSI 3대 도구 + Ollama/Haiku 실시간 토큰·용량 계기판]",
+        "[계기판] [UAOS-RSI 3대 도구 + Ollama/Haiku 실시간 토큰·용량 계기판]",
         f"• 지휘권(Conductor): {sched.get('recommended_conductor', 'unknown').upper()} | 24h 로컬·경량 오프로드율: {off.get('offload_share_pct', 0.0)}% ({off.get('ollama_plus_haiku_calls_24h', 0)}/{off.get('total_calls_24h', 0)} calls)",
         "┌──────────────┬─────────┬──────────────────┬──────────────┬──────────────┬──────────┐",
         "│ 도구(Engine) │ 상태    │ 5h 사용률 게이지 │ 5h 사용 토큰 │ 5h 가용 토큰 │ 가용카드 │",
@@ -567,6 +617,10 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
             bar_str = "░░░░░░░░░░ 로컬0원"
             rem_str = "   UNLIMITED"
             card_str = "     ∞"
+        elif rem == "UNKNOWN":
+            bar_str = "░░░░░░░░░░ 미계측 "
+            rem_str = "     UNKNOWN"
+            card_str = " UNKNOWN"
         else:
             bar_str = f"{_bar(pct, 10)} {pct:4.1f}%"
             rem_str = f"{int(rem):>12,}"
@@ -577,7 +631,7 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
     lines.append("└──────────────┴─────────┴──────────────────┴──────────────┴──────────────┴──────────┘")
     assigns = sched.get("phase_assignments") or []
     if assigns:
-        lines.append("🗓️ [용량 기반 마스터·협업 스케줄 자동 배정]")
+        lines.append("[스케줄] [용량 기반 마스터·협업 스케줄 자동 배정]")
         for a in assigns[:5]:
             lines.append(
                 f"  - {a['phase_id']} ({a['state']}): 담당={a['assigned_owner']} / 검증={a['assigned_reviewer']} "

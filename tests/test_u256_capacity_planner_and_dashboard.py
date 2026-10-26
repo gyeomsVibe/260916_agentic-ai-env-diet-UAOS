@@ -103,5 +103,51 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertIn("UAOS-RSI 3대 도구 실시간 토큰", html_text)
 
 
+C = CP
+
+def engines(**rem):
+
+    return {t: {"presence_state": "ACTIVE" if rem.get(t, 0) > 0 else "LIMITED", "usable_remaining_5h_tokens": rem.get(t, 0)}
+            for t in C.PAID_TOOLS}
+
+
+class U256Counter(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / ".coord").mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def plan(self, phases, eng):
+        (self.root / ".coord" / "master_schedule.json").write_text(json.dumps({"phases": phases}), encoding="utf-8")
+        out = C.build_capacity_aware_schedule(self.root, eng)
+        return {r.get("phase_id"): r for r in out["phase_assignments"]}
+
+    def test_review_never_assigned_to_its_author(self):
+        # Only the author has capacity: the fallback must not make the author judge its own work.
+        rows = self.plan([{"phase_id": "R1", "state": "REVIEW", "author_tool": "claude"}], engines(claude=500000))
+        self.assertNotEqual("claude", rows["R1"]["assigned_reviewer"])
+
+    def test_review_owner_is_the_author_not_the_judge(self):
+        # A REVIEW phase's owner stays the author; giving the judge ownership lets the judge edit what it judges.
+        rows = self.plan([{"phase_id": "R3", "state": "REVIEW", "owner": "antigravity", "reviewer": "claude"}],
+                         engines(claude=900000, antigravity=100000))
+        self.assertNotEqual(rows["R3"]["assigned_owner"], rows["R3"]["assigned_reviewer"])
+
+    def test_recorded_reviewer_is_kept(self):
+        # U254: a verdict owed by the recorded reviewer is that reviewer's next step; capacity must not silently swap judges.
+        rows = self.plan([{"phase_id": "R2", "state": "REVIEW", "owner": "antigravity", "reviewer": "claude"}],
+                         engines(claude=100000, antigravity=900000, codex=0))
+        self.assertEqual("claude", rows["R2"]["assigned_reviewer"])
+
+    def test_tool_caps_have_a_recorded_source(self):
+        # Global rule: an unexplained number is a defect; caps that drive routing need a measured source in the policy.
+        caps = C.DEFAULT_POLICY["tool_caps_5h"]
+        src = C.DEFAULT_POLICY.get("tool_caps_source") or C.DEFAULT_POLICY.get("sources")
+        self.assertTrue(src, f"tool_caps_5h {caps} carry no recorded source")
+
+
 if __name__ == "__main__":
     unittest.main()
