@@ -13,6 +13,7 @@
 # 조율 스트림과 브리핑은 도구 간 런타임 상태다. 원본 매니페스트에서도 제외한다.
 .coord/stream/
 .coord/codex_brief.md
+.coord/WAIT_STATUS.md
 # 음성사서함(우편함)과 출석부도 런타임 상태다. 올리면 다른 PC의 메시지·출석과 섞인다.
 .coord/mailbox/
 .coord/presence/

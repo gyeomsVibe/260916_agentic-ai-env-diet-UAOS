@@ -2123,6 +2123,7 @@ UAOS_GITIGNORE_LINES = (
     ".coord/pilot/",
     ".coord/stream/",
     ".coord/codex_brief.md",
+    ".coord/WAIT_STATUS.md",
     ".coord/mailbox/",
     ".coord/presence/",
     ".coord/usage/runs.jsonl",

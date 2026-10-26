@@ -7,6 +7,7 @@ Antigravity's Stop hook documents only `decision`/`reason` (https://antigravity.
 is left as it is."""
 import inspect
 import json
+import subprocess
 import tempfile
 import time
 import unittest
@@ -104,6 +105,132 @@ class WaitReason(unittest.TestCase):
     def test_default_now_is_the_clock(self):
         self.presence("codex", "LIMITED", time.time() + 600)
         self.assertEqual(1, len(wait_reason.reasons(self.project, "claude")))
+
+    def test_u263_schedule_review_and_active_waits_and_stop_hook_writes_status_report(self):
+        sched = {
+            "schedule_id": "U263",
+            "phases": [
+                {"phase_id": "U259", "state": "REVIEW", "author_tool": "antigravity", "reviewer": "claude", "waiting_on": "quota-reset"},
+                {"phase_id": "U263", "state": "ACTIVE", "owner_tool": "antigravity", "waiting_on": "implementation"},
+            ],
+        }
+        (self.project / ".coord" / "master_schedule.json").write_text(json.dumps(sched), encoding="utf-8")
+        lines = wait_reason.reasons(self.project, "claude", now=NOW)
+        self.assertEqual(2, len(lines), lines)
+        self.assertIn("U259 판정 대기 중(state=REVIEW, 작성=antigravity, 판정자=claude, 대기사유=quota-reset)", lines[0])
+        self.assertNotIn("전체 테스트·검증 수행 중", lines[0])
+        self.assertNotIn("즉시 병합·배포", lines[0])
+        self.assertIn("U263 작업 대기 중(state=ACTIVE, 담당=antigravity, 대기사유=implementation)", lines[1])
+        # Verify stop_output (called by cmd_coord_stop_gate) writes .coord/WAIT_STATUS.md in real use
+        md_file = self.project / ".coord" / "WAIT_STATUS.md"
+        self.assertFalse(md_file.is_file())
+        out = wait_reason.stop_output(None, self.project, "antigravity", now=NOW)
+        self.assertIsNone(out)
+        self.assertTrue(md_file.is_file())
+        self.assertIn("U263", md_file.read_text(encoding="utf-8"))
+
+    def test_u263_missing_invalid_or_empty_schedule_never_claims_all_done(self):
+        sched_file = self.project / ".coord" / "master_schedule.json"
+        # 1) Missing master_schedule.json
+        rep_missing = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("UNKNOWN", rep_missing["state"])
+        self.assertFalse(rep_missing["all_done"])
+        self.assertFalse(rep_missing["ok"])
+        # 2) Invalid JSON
+        sched_file.write_text("{invalid json", encoding="utf-8")
+        rep_invalid = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("UNKNOWN", rep_invalid["state"])
+        self.assertFalse(rep_invalid["all_done"])
+        # 3) Empty phases
+        sched_file.write_text(json.dumps({"schedule_id": "EMPTY", "phases": []}), encoding="utf-8")
+        rep_empty = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("UNKNOWN", rep_empty["state"])
+        self.assertFalse(rep_empty["all_done"])
+        # 4) Mixed valid DONE row + malformed rows (non-dict, missing phase_id, empty dict, invalid state) -> UNKNOWN & all_done=False
+        for bad_row in [
+            "ACTIVE",
+            {"state": "ACTIVE", "owner_tool": "antigravity"},
+            {},
+            {"phase_id": "U263", "state": ""},
+            {"phase_id": "U263", "state": "BOGUS"},
+        ]:
+            sched_file.write_text(
+                json.dumps({"schedule_id": "MIXED", "phases": [{"phase_id": "U259", "state": "DONE"}, bad_row]}),
+                encoding="utf-8",
+            )
+            rep_mixed = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+            self.assertEqual("UNKNOWN", rep_mixed["state"], bad_row)
+            self.assertFalse(rep_mixed["all_done"], bad_row)
+            self.assertFalse(rep_mixed["ok"], bad_row)
+            self.assertTrue(len(rep_mixed["remaining"]) >= 1, bad_row)
+        # 5) Valid all-DONE schedule with no active waits -> ALL_DONE
+        sched_file.write_text(
+            json.dumps({"schedule_id": "DONE", "phases": [{"phase_id": "U259", "state": "DONE"}]}),
+            encoding="utf-8",
+        )
+        rep_done = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("ALL_DONE", rep_done["state"])
+        self.assertTrue(rep_done["all_done"])
+        self.assertTrue(rep_done["ok"])
+
+    def test_u258_claude_can_judge_agy_pr_and_raw_gh_merge_is_denied_in_pre_tool_use(self):
+        from v7_harness import olla
+        from v7_harness.coord import merge_route
+        head = "c" * 40
+        other_head = "d" * 40
+        vid = "relay_" + "9" * 32
+        inbox = self.project / ".coord" / "mailbox" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / f"{vid}.json").write_text(
+            json.dumps({"actor": "claude", "message": f"PASS on head {head}"}),
+            encoding="utf-8",
+        )
+        res = merge_route.require_same_head_peer_verdict(
+            self.project, branch="agy/u263-wait", head=head, verdict_relay=vid
+        )
+        self.assertTrue(res["ok"])
+        # Refused when author == judge
+        with self.assertRaises(merge_route.MergeRefused):
+            merge_route.require_same_head_peer_verdict(
+                self.project, branch="claude/u263-wait", head=head, verdict_relay=vid
+            )
+        # Refused when head mismatches
+        with self.assertRaises(merge_route.MergeRefused):
+            merge_route.require_same_head_peer_verdict(
+                self.project, branch="agy/u263-wait", head=other_head, verdict_relay=vid
+            )
+        # Refused when verdict is missing
+        with self.assertRaises(merge_route.MergeRefused):
+            merge_route.require_same_head_peer_verdict(
+                self.project, branch="agy/u263-wait", head=head, verdict_relay="relay_" + "0" * 32
+            )
+        # PreToolUse hook blocks direct gh pr merge, gh api pulls/<n>/merge, and subprocess.run([gh, "pr", "merge"]) unless UAOS_WORKER=1
+        agy_deny_1 = olla.agy_hook("PreToolUse", {"toolCall": {"name": "run_command", "args": {"CommandLine": "gh pr merge 226 --merge"}}})
+        self.assertEqual("deny", agy_deny_1["decision"])
+        self.assertIn("U258", agy_deny_1["reason"])
+        agy_deny_2 = olla.agy_hook("PreToolUse", {"toolCall": {"name": "run_command", "args": {"CommandLine": "python -c \"subprocess.run([gh, 'pr', 'merge', '226'])\""}}})
+        self.assertEqual("deny", agy_deny_2["decision"])
+        agy_deny_api = olla.agy_hook("PreToolUse", {"toolCall": {"name": "run_command", "args": {"CommandLine": "gh api repos/o/r/pulls/226/merge -X PUT"}}})
+        self.assertEqual("deny", agy_deny_api["decision"])
+        codex_deny = json.loads(olla.shell_read_hint({"hook_event_name": "PreToolUse", "tool_input": {"command": "gh pr merge 226 --merge"}}))
+        self.assertEqual("deny", codex_deny["hookSpecificOutput"]["permissionDecision"])
+        self.assertIsNone(merge_route.raw_gh_merge_denied("gh pr merge 226 --merge", env={"UAOS_WORKER": "1"}))
+        # Harmless prose mentions in commit messages / grep are not denied
+        self.assertIsNone(merge_route.raw_gh_merge_denied('git commit -m "note: never gh pr merge directly"'))
+        self.assertIsNone(merge_route.raw_gh_merge_denied('grep -r "gh pr merge" docs'))
+
+
+        for cmd in (
+            "gh pr merge 226 --merge",
+            "gh -R owner/repo pr merge 226 --merge",
+            "gh --repo owner/repo pr merge 226 --merge",
+            "& \"C:\\Program Files\\GitHub CLI\\gh.exe\" pr merge 226 --merge",
+            "gh.exe pr merge 226 --merge",
+            "gh api repos/o/r/pulls/1/merge -X PUT",
+        ):
+            self.assertIsNotNone(merge_route.raw_gh_merge_denied(cmd, env={}), cmd)
+            self.assertIsNotNone(olla.shell_read_hint({"hook_event_name": "PreToolUse", "tool_input": {"command": cmd}}), cmd)
+            self.assertEqual("deny", olla.agy_hook("PreToolUse", {"toolCall": {"name": "run_command", "args": {"CommandLine": cmd}}})["decision"], cmd)
 
 
 if __name__ == "__main__":

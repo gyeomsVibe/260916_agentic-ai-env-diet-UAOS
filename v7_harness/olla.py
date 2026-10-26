@@ -678,6 +678,13 @@ def shell_read_hint(event: dict) -> str | None:
     base = Path(event.get("cwd") or ".")
     paths = [Path(raw) if Path(raw).is_absolute() else base / raw for raw in shell_read_targets(str(command))]
     if event.get("hook_event_name") == "PreToolUse":
+        from v7_harness.coord.merge_route import raw_gh_merge_denied
+        deny_merge = raw_gh_merge_denied(str(command))
+        if deny_merge:
+            log_usage("deny_raw_gh_merge")
+            return json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": deny_merge}})
         return shell_read_deny(paths)
     for path in paths:
         hint = read_hint({"tool_input": {"file_path": str(path)}})
@@ -1128,6 +1135,14 @@ def cmd_hook_bash(args: argparse.Namespace) -> int:
         target = deep_cd_target(command, str(event.get("cwd") or ""))
     except (ValueError, AttributeError, TypeError):
         return 0
+    from v7_harness.coord.merge_route import raw_gh_merge_denied
+    deny_merge = raw_gh_merge_denied(command)
+    if deny_merge:
+        log_usage("deny_raw_gh_merge")
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason": deny_merge}}))
+        return 0
     if not target and event.get("tool_name") == "Bash" and noisy_command(command):
         updated = dict(event.get("tool_input") or {})
         updated["command"] = squeeze_rewrite(command)
@@ -1212,6 +1227,11 @@ def agy_hook(event_name: str, event: dict) -> dict | None:
         call = event.get("toolCall") or {}
         args = call.get("args") or {}
         if call.get("name") == "run_command":
+            from v7_harness.coord.merge_route import raw_gh_merge_denied
+            deny_merge = raw_gh_merge_denied(str(args.get("CommandLine") or ""))
+            if deny_merge:
+                log_usage("deny_raw_gh_merge")
+                return {"decision": "deny", "reason": deny_merge}
             target = deep_cd_target(str(args.get("CommandLine") or ""), str(args.get("Cwd") or ""))
             if target:
                 log_usage("deny_deep_cd", chars=len(target))
