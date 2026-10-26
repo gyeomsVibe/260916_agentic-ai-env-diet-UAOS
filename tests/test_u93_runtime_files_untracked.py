@@ -17,7 +17,7 @@ from v7_harness.cli import UAOS_GITIGNORE_LINES
 
 ROOT = Path(__file__).resolve().parents[1]
 # The two hook-written files from the receipt; each must stay in the installer list this repo mirrors.
-HOOK_WRITTEN = (".coord/codex_brief.md", ".coord/usage/runs.jsonl")
+HOOK_WRITTEN = (".coord/codex_brief.md", ".coord/WAIT_STATUS.md", ".coord/usage/runs.jsonl")
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:

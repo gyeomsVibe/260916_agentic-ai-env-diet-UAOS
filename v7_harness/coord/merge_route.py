@@ -118,17 +118,23 @@ def gate(view: dict[str, Any], head: str, letter: dict[str, Any]) -> None:
         raise MergeRefused("verdict letter does not pass this exact head")
 
 
-_RAW_GH_MERGE_RE = re.compile(r"""(?:\bgh(?:\.exe)?\s+pr\s+merge\b|["']pr["']\s*,\s*["']merge["'])""", re.IGNORECASE)
+_RAW_GH_MERGE_RE = re.compile(
+    r"(?:^|[;&|\n]\s*)(?:&\s*)?(?:(?:\$env:\w+\s*=\s*[^;]+;\s*)|(?:[A-Za-z_]\w*=\S+\s+))*"
+    r"(?:[^\s;&|]+[/\\])?gh(?:\.exe)?\s+(?:pr\s+merge\b|api\b[^;&|\n]*?\bpulls/\d+/merge\b)"
+    r"|[\x27\"](?:pr[\x27\"]\s*,\s*[\x27\"]merge|api[\x27\"]\s*,[^\]]*?\bpulls/\d+/merge)\b",
+    re.IGNORECASE,
+)
 
 
 def raw_gh_merge_denied(command: str, env: dict[str, str] | None = None) -> str | None:
-    """U258: refuse direct `gh pr merge` (shell or inline subprocess) outside a gated `uaos coord merge` worker."""
+    """U258: refuse direct `gh pr merge` or `gh api .../pulls/<N>/merge` outside a gated `uaos coord merge` worker."""
     if (env if env is not None else os.environ).get("UAOS_WORKER") == "1":
         return None
     if _RAW_GH_MERGE_RE.search(str(command or "")):
         return (
-            "Direct 'gh pr merge' is refused (U258); run 'uaos coord merge --pr <N> --head <40-hex> "
-            "--verdict <relay_id>' so a same-head non-author PASS verdict is verified first."
+            "Direct 'gh pr merge' / 'gh api .../pulls/<N>/merge' is refused (U258); run "
+            "'uaos coord merge --pr <N> --head <40-hex> --verdict <relay_id>' so a same-head "
+            "non-author PASS verdict is verified first."
         )
     return None
 
