@@ -105,6 +105,42 @@ class WaitReason(unittest.TestCase):
         self.presence("codex", "LIMITED", time.time() + 600)
         self.assertEqual(1, len(wait_reason.reasons(self.project, "claude")))
 
+    def test_u260_schedule_review_and_active_waits_and_status_report_visible(self):
+        sched = {
+            "schedule_id": "U260",
+            "phases": [
+                {"phase_id": "U259", "state": "REVIEW", "author_tool": "antigravity", "reviewer": "claude"},
+                {"phase_id": "U260", "state": "ACTIVE", "owner_tool": "antigravity"},
+            ],
+        }
+        (self.project / ".coord" / "master_schedule.json").write_text(json.dumps(sched), encoding="utf-8")
+        lines = wait_reason.reasons(self.project, "claude", now=NOW)
+        self.assertEqual(2, len(lines), lines)
+        self.assertIn("U259 판정 대기 중", lines[0])
+        self.assertIn("U260 작업 대기 중", lines[1])
+        rep = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertFalse(rep["all_done"])
+        self.assertTrue(Path(rep["report_path"]).is_file())
+
+    def test_u258_claude_can_judge_agy_pr_and_same_head_peer_verdict_required(self):
+        from v7_harness.coord import merge_route
+        head = "c" * 40
+        vid = "relay_" + "9" * 32
+        inbox = self.project / ".coord" / "mailbox" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / f"{vid}.json").write_text(
+            json.dumps({"actor": "claude", "message": f"PASS on head {head}"}),
+            encoding="utf-8",
+        )
+        res = merge_route.require_same_head_peer_verdict(
+            self.project, branch="agy/u260-wait", head=head, verdict_relay=vid
+        )
+        self.assertTrue(res["ok"])
+        with self.assertRaises(merge_route.MergeRefused):
+            merge_route.require_same_head_peer_verdict(
+                self.project, branch="claude/u260-wait", head=head, verdict_relay=vid
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

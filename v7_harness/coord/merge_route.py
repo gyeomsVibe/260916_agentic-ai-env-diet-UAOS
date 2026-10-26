@@ -30,7 +30,7 @@ RELAY_RE = re.compile(r"^relay_[0-9a-f]{32}$")
 # The verdict is a letter from an independent judge, not a commit trailer: the author writes its own trailers, so a
 # trailer is self-approval (Antigravity design audit relay_45a03503, defect 2). The letter must come from a judge tool
 # that is not the PR's author, name this exact head, and its first verdict word must be PASS or APPROVE.
-JUDGES = ("codex", "antigravity")
+JUDGES = ("codex", "claude", "antigravity")
 VERDICT_WORD_RE = re.compile(r"\b(PASS|APPROVE|REVISE|FAIL|REJECT|BLOCK)\b")
 LETTER_DIRS = ("inbox", "claimed", "ack")
 # Feature branches are named <tool>/<card>-...; the prefix is the authoring tool.
@@ -116,6 +116,15 @@ def gate(view: dict[str, Any], head: str, letter: dict[str, Any]) -> None:
     words = VERDICT_WORD_RE.findall(message.upper())
     if head not in message or not words or words[0] not in ("PASS", "APPROVE"):
         raise MergeRefused("verdict letter does not pass this exact head")
+
+
+def require_same_head_peer_verdict(project: Path, *, branch: str, head: str, verdict_relay: str) -> dict[str, Any]:
+    """U258: hard pre-merge guard ensuring a same-head non-author PASS/APPROVE relay exists before any merge."""
+    check_args(1, head, verdict_relay)
+    letter = read_verdict(project, verdict_relay)
+    fake_view = {"state": "OPEN", "mergeable": "MERGEABLE", "headRefOid": head, "headRefName": branch}
+    gate(fake_view, head, letter)
+    return {"ok": True, "head": head, "verdict": verdict_relay, "judge": letter.get("actor")}
 
 
 def _text(raw: Any) -> str:
