@@ -108,14 +108,23 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+KEYPOINT_CANON_PATHS = (
+    "uaos_global_rule_block.md",
+    "uaos_everywhere/adapters/",
+    "firewall_audit.py",
+    "calculator_gate.py",
+    "binding_gate.py",
+    "stop_gate.py",
+    "sandbox",
+)
+
+
 def is_codex_exclusive_keypoint(phase: dict[str, Any]) -> bool:
     """Return True if phase requires Codex's core architectural/security/canon judgment ($20 Plus Astra keypoint)."""
     if not isinstance(phase, dict):
         return False
     if phase.get("codex_keypoint") is True:
         return True
-    if phase.get("routine_approval") is True or phase.get("codex_keypoint") is False:
-        return False
     tier = str(phase.get("tier") or "").strip().lower()
     kind = str(phase.get("kind") or "").strip().lower()
     if tier in CODEX_EXCLUSIVE_KEYPOINTS or kind in CODEX_EXCLUSIVE_KEYPOINTS:
@@ -123,6 +132,18 @@ def is_codex_exclusive_keypoint(phase: dict[str, Any]) -> bool:
     tags = {str(t).strip().lower() for t in (phase.get("tags") or []) if t}
     if tags & CODEX_EXCLUSIVE_KEYPOINTS:
         return True
+    file_fields = (
+        list(phase.get("files") or [])
+        + list(phase.get("changed_files") or [])
+        + list(phase.get("allowed_files") or [])
+        + list(phase.get("paths") or [])
+    )
+    for f in file_fields:
+        norm = str(f).replace("\\", "/").lower()
+        if any(pat.lower() in norm for pat in KEYPOINT_CANON_PATHS):
+            return True
+    if phase.get("routine_approval") is True or phase.get("codex_keypoint") is False:
+        return False
     blob = f"{phase.get('title', '')} {phase.get('note', '')}".lower()
     return any(kp in blob for kp in CODEX_EXCLUSIVE_KEYPOINTS)
 
@@ -161,8 +182,14 @@ def verify_supreme_quality_gate(phase: dict[str, Any], *, judge_tool: str = "") 
             "error": "MISSING_PRIMARY_SOURCES",
             "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
         }
+    has_evidence = (
+        bool(str(phase.get("accept_cmd") or "").strip())
+        and phase.get("accept_exit_code") is not None
+        and int(phase.get("accept_exit_code")) == 0
+    )
     return {
         "ok": True,
+        "verdict": "PASS" if has_evidence else "UNKNOWN",
         "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
         "financial_frame": UAOS_CORE_FINANCIAL_FRAME,
         "judge_tool": judge_tool,
@@ -1337,13 +1364,15 @@ class AntigravityModerator:
                 if judge != "codex":
                     continue
 
-                if is_codex_exclusive_keypoint(phase):
+                is_kp = is_codex_exclusive_keypoint(phase)
+                if is_kp:
                     if "codex" in active_tools:
                         phase["codex_keypoint_preserved"] = True
                         phase["quality_frame"] = UAOS_CORE_FOUNDING_PRINCIPLE
                         preserved_keypoints.append(pid)
                         changed = True
                         continue
+                    phase["codex_rereview_required"] = True
 
                 author = str(phase.get("author_tool") or phase.get("owner_tool") or "")
                 excluded_authors = {str(phase.get("author_tool") or ""), str(phase.get("owner_tool") or "")} - {""}
@@ -1391,7 +1420,7 @@ class AntigravityModerator:
                         "from_tool": "codex",
                         "to_tool": helper_judge,
                         "author": author,
-                        "quality_gate": "PASS",
+                        "quality_gate": "PENDING_JUDGE",
                     }
                 )
                 wakes_sent.append({"phase_id": pid, "target": helper_judge, "relay_id": relay_id})

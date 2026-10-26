@@ -29,7 +29,7 @@ class TestU257CodexKeypointAndQualityFrame(unittest.TestCase):
         self.assertTrue(is_codex_exclusive_keypoint({"phase_id": "U257-SEC", "tier": "security_boundary"}))
         self.assertTrue(is_codex_exclusive_keypoint({"phase_id": "U257-TAGS", "tags": ["rsi_canon"]}))
         self.assertFalse(is_codex_exclusive_keypoint({"phase_id": "U257-ROUTINE", "state": "REVIEW"}))
-        self.assertFalse(
+        self.assertTrue(
             is_codex_exclusive_keypoint({"phase_id": "U257-OVERRIDE", "tier": "architectural_core", "routine_approval": True})
         )
 
@@ -139,6 +139,48 @@ class TestU257CodexKeypointAndQualityFrame(unittest.TestCase):
             self.assertEqual(by_id["U257-ROUTINE"]["reviewer"], "claude")
             self.assertTrue(by_id["U257-ROUTINE"]["codex_astra_quota_saved"])
             self.assertEqual(by_id["U257-ROUTINE"]["quality_frame"], UAOS_CORE_FOUNDING_PRINCIPLE)
+
+
+ALL_ACTIVE = {"codex": {"state": "ACTIVE"}, "claude": {"state": "ACTIVE"}, "antigravity": {"state": "ACTIVE"}}
+
+
+class U257Counter(unittest.TestCase):
+    def route(self, phase, desk):
+        with tempfile.TemporaryDirectory() as tmp:
+            coord = Path(tmp) / ".coord"
+            coord.mkdir()
+            base = {"phase_id": "K1", "state": "REVIEW", "owner_tool": "antigravity", "author_tool": "antigravity",
+                    "reviewer": "codex", "waiting_on": "codex-verdict"}
+            (coord / "master_schedule.json").write_text(json.dumps({"phases": [{**base, **phase}]}), encoding="utf-8")
+            res = AntigravityModerator(Path(tmp)).route_codex_keypoint_and_routine_approvals(desk=desk, now=5000.0)
+            row = json.loads((coord / "master_schedule.json").read_text(encoding="utf-8"))["phases"][0]
+            return res, row
+
+    def test_author_cannot_opt_a_keypoint_out_of_codex(self):
+        # The author sets routine_approval; letting it override a keypoint tier lets the author pick a softer judge.
+        self.assertTrue(is_codex_exclusive_keypoint({"tier": "security_boundary", "routine_approval": True}))
+
+    def test_canon_files_make_a_keypoint_without_tags(self):
+        # U257 itself edits the global rule block and adapters; an untagged card touching them is rsi_canon.
+        phase = {"files": ["uaos_everywhere/uaos_global_rule_block.md", "uaos_everywhere/adapters/codex.md"]}
+        self.assertTrue(is_codex_exclusive_keypoint(phase))
+
+    def test_keypoint_offloaded_while_codex_absent_is_marked_for_rereview(self):
+        desk = {**ALL_ACTIVE, "codex": {"state": "LIMITED"}}
+        _, row = self.route({"tier": "security_boundary"}, desk)
+        if row.get("reviewer") != "codex":
+            self.assertTrue(row.get("codex_rereview_required"), f"keypoint moved to {row.get('reviewer')} with no Codex re-review mark")
+
+    def test_no_evidence_is_not_a_quality_pass(self):
+        # Global rule: missing evidence is UNKNOWN, never PASS.
+        res = verify_supreme_quality_gate({"phase_id": "E", "author_tool": "antigravity"}, judge_tool="claude")
+        self.assertNotEqual(True, res.get("ok") and res.get("verdict", "PASS") == "PASS",
+                            "a phase with no accept_cmd, exit code or test count passes the quality gate")
+
+    def test_offload_record_does_not_claim_a_pass_before_judging(self):
+        res, _ = self.route({}, ALL_ACTIVE)
+        for row in res["offloaded_routine"]:
+            self.assertNotEqual("PASS", row.get("quality_gate"), "routing records PASS before the judge has judged")
 
 
 if __name__ == "__main__":
