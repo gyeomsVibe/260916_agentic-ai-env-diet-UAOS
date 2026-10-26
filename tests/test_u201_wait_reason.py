@@ -109,22 +109,52 @@ class WaitReason(unittest.TestCase):
         sched = {
             "schedule_id": "U260",
             "phases": [
-                {"phase_id": "U259", "state": "REVIEW", "author_tool": "antigravity", "reviewer": "claude"},
-                {"phase_id": "U260", "state": "ACTIVE", "owner_tool": "antigravity"},
+                {"phase_id": "U259", "state": "REVIEW", "author_tool": "antigravity", "reviewer": "claude", "waiting_on": "quota-reset"},
+                {"phase_id": "U260", "state": "ACTIVE", "owner_tool": "antigravity", "waiting_on": "implementation"},
             ],
         }
         (self.project / ".coord" / "master_schedule.json").write_text(json.dumps(sched), encoding="utf-8")
         lines = wait_reason.reasons(self.project, "claude", now=NOW)
         self.assertEqual(2, len(lines), lines)
-        self.assertIn("U259 판정 대기 중", lines[0])
-        self.assertIn("U260 작업 대기 중", lines[1])
+        self.assertIn("U259 판정 대기 중(state=REVIEW, 작성=antigravity, 판정자=claude, 대기사유=quota-reset)", lines[0])
+        self.assertNotIn("전체 테스트·검증 수행 중", lines[0])
+        self.assertNotIn("즉시 병합·배포", lines[0])
+        self.assertIn("U260 작업 대기 중(state=ACTIVE, 담당=antigravity, 대기사유=implementation)", lines[1])
         rep = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("WAITING", rep["state"])
         self.assertFalse(rep["all_done"])
         self.assertTrue(Path(rep["report_path"]).is_file())
+
+    def test_u260_missing_invalid_or_empty_schedule_never_claims_all_done(self):
+        sched_file = self.project / ".coord" / "master_schedule.json"
+        # 1) Missing master_schedule.json
+        rep_missing = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("UNKNOWN", rep_missing["state"])
+        self.assertFalse(rep_missing["all_done"])
+        self.assertFalse(rep_missing["ok"])
+        # 2) Invalid JSON
+        sched_file.write_text("{invalid json", encoding="utf-8")
+        rep_invalid = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("UNKNOWN", rep_invalid["state"])
+        self.assertFalse(rep_invalid["all_done"])
+        # 3) Empty phases
+        sched_file.write_text(json.dumps({"schedule_id": "EMPTY", "phases": []}), encoding="utf-8")
+        rep_empty = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("UNKNOWN", rep_empty["state"])
+        self.assertFalse(rep_empty["all_done"])
+        # 4) Valid all-DONE schedule with no active waits -> ALL_DONE
+        sched_file.write_text(
+            json.dumps({"schedule_id": "DONE", "phases": [{"phase_id": "U259", "state": "DONE"}]}),
+            encoding="utf-8",
+        )
+        rep_done = wait_reason.write_wait_status_report(self.project, "claude", now=NOW)
+        self.assertEqual("ALL_DONE", rep_done["state"])
+        self.assertTrue(rep_done["all_done"])
 
     def test_u258_claude_can_judge_agy_pr_and_same_head_peer_verdict_required(self):
         from v7_harness.coord import merge_route
         head = "c" * 40
+        other_head = "d" * 40
         vid = "relay_" + "9" * 32
         inbox = self.project / ".coord" / "mailbox" / "inbox"
         inbox.mkdir(parents=True, exist_ok=True)
@@ -136,9 +166,20 @@ class WaitReason(unittest.TestCase):
             self.project, branch="agy/u260-wait", head=head, verdict_relay=vid
         )
         self.assertTrue(res["ok"])
+        # Refused when author == judge
         with self.assertRaises(merge_route.MergeRefused):
             merge_route.require_same_head_peer_verdict(
                 self.project, branch="claude/u260-wait", head=head, verdict_relay=vid
+            )
+        # Refused when head mismatches
+        with self.assertRaises(merge_route.MergeRefused):
+            merge_route.require_same_head_peer_verdict(
+                self.project, branch="agy/u260-wait", head=other_head, verdict_relay=vid
+            )
+        # Refused when verdict is missing
+        with self.assertRaises(merge_route.MergeRefused):
+            merge_route.require_same_head_peer_verdict(
+                self.project, branch="agy/u260-wait", head=head, verdict_relay="relay_" + "0" * 32
             )
 
 

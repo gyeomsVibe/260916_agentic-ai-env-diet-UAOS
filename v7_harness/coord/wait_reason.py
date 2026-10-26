@@ -49,7 +49,7 @@ def _gate_stops(project: Path, tool: str, moment: float) -> list[str]:
 
 
 def _schedule_waits(project: Path, tool: str) -> list[str]:
-    """U260: surface live REVIEW / peer-ACTIVE waits from `.coord/master_schedule.json` so the user always sees why work waits."""
+    """U260: surface live REVIEW / peer-ACTIVE waits from `.coord/master_schedule.json` using observed fields only."""
     sched_path = Path(project) / ".coord" / "master_schedule.json"
     if not sched_path.is_file():
         return []
@@ -67,13 +67,15 @@ def _schedule_waits(project: Path, tool: str) -> list[str]:
         pid = str(phase["phase_id"])
         state = str(phase.get("state") or "")
         if state == "REVIEW":
-            reviewer = str(phase.get("reviewer") or phase.get("waiting_on") or "peer")
-            author = str(phase.get("author_tool") or phase.get("owner_tool") or "peer")
-            out.append(f"{pid} 판정 대기 중: 판정자({reviewer})가 전체 테스트·검증 수행 중(작성: {author}) → 판정 즉시 병합·배포")
+            reviewer = str(phase.get("reviewer") or "unspecified")
+            author = str(phase.get("author_tool") or phase.get("owner_tool") or "unspecified")
+            waiting_on = str(phase.get("waiting_on") or "verdict-pending")
+            out.append(f"{pid} 판정 대기 중(state=REVIEW, 작성={author}, 판정자={reviewer}, 대기사유={waiting_on})")
         elif state == "ACTIVE":
             owner = str(phase.get("owner_tool") or "")
             if owner and owner != tool:
-                out.append(f"{pid} 작업 대기 중: 담당 도구({owner})가 구현·테스트 수행 중 → 완료 즉시 다음 단계 인계")
+                waiting_on = str(phase.get("waiting_on") or "in-progress")
+                out.append(f"{pid} 작업 대기 중(state=ACTIVE, 담당={owner}, 대기사유={waiting_on})")
     return out
 
 
@@ -94,7 +96,7 @@ def reasons(project: Path, tool: str, *, now: float | None = None) -> list[str]:
                 back = _dt.datetime.fromtimestamp(record["expires_at"], SEOUL).strftime("%H:%M")
                 lines.append(f"{other} 사용량 한도로 멈춤 → {back} 복귀 예정")
             else:
-                lines.append(f"{other} 사용량 한도(LIMITED)로 멈춤 → 남은 활성 도구 교차 승인으로 대체 진행")
+                lines.append(f"{other} 사용량 한도로 멈춤(state=LIMITED, 복귀시각 미정)")
     for card in _gate_stops(project, tool, moment):
         lines.append(f"{card} 진행 없이 다시 멈춰 자동 재시작 중단 → 다음 카드 대기")
     lines.extend(_schedule_waits(project, tool))
@@ -102,36 +104,47 @@ def reasons(project: Path, tool: str, *, now: float | None = None) -> list[str]:
 
 
 def write_wait_status_report(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any]:
-    """U260: write human-readable `.coord/WAIT_STATUS.md` explaining exact wait reasons or confirming 100% completion."""
+    """U260: write human-readable `.coord/WAIT_STATUS.md` explaining observed wait reasons or completion state."""
     moment = time.time() if now is None else now
     wait_lines = reasons(project, tool, now=moment)
     sched_path = Path(project) / ".coord" / "master_schedule.json"
     active_or_ready: list[str] = []
     done_count = 0
+    schedule_valid = False
     if sched_path.is_file():
         try:
             sched = json.loads(sched_path.read_text(encoding="utf-8"))
-            for ph in (sched.get("phases") or []):
-                if not isinstance(ph, dict) or not ph.get("phase_id"):
-                    continue
-                st = str(ph.get("state") or "")
-                if st in ("DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED"):
-                    done_count += 1
-                else:
-                    active_or_ready.append(f"{ph['phase_id']}({st})")
+            phases = sched.get("phases") if isinstance(sched, dict) else None
+            if isinstance(phases, list):
+                for ph in phases:
+                    if not isinstance(ph, dict) or not ph.get("phase_id"):
+                        continue
+                    schedule_valid = True
+                    st = str(ph.get("state") or "")
+                    if st in ("DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED"):
+                        done_count += 1
+                    else:
+                        active_or_ready.append(f"{ph['phase_id']}({st})")
         except (OSError, ValueError):
-            pass
-    all_done = len(active_or_ready) == 0
-    headline = (
-        f"✅ 모든 프로세스 완결 (완료 카드 {done_count}건, 잔여 진행 카드 0건 — 대기 작업 없음)"
-        if all_done and not wait_lines
-        else "⏸ 현재 대기·진행 사유: " + (" · ".join(wait_lines) if wait_lines else ", ".join(active_or_ready))
-    )
+            schedule_valid = False
+    if not schedule_valid:
+        status_state = "UNKNOWN"
+        all_done = False
+        headline = "❓ 일정 상태 미확인(UNKNOWN): 유효한 .coord/master_schedule.json 일정이 없습니다"
+    else:
+        all_done = done_count > 0 and len(active_or_ready) == 0 and len(wait_lines) == 0
+        status_state = "ALL_DONE" if all_done else "WAITING"
+        headline = (
+            f"✅ 모든 프로세스 완결 (완료 카드 {done_count}건, 잔여 진행 카드 0건 — 대기 작업 없음)"
+            if all_done
+            else "⏸ 현재 대기·진행 사유: " + (" · ".join(wait_lines) if wait_lines else ", ".join(active_or_ready))
+        )
     md_path = Path(project) / ".coord" / "WAIT_STATUS.md"
     md_path.parent.mkdir(parents=True, exist_ok=True)
     body = [
         "# UAOS 실시간 대기·진행 상태 브리핑 (U260)",
         "",
+        f"- **상태 (`state`)**: `{status_state}`",
         f"- **요약**: {headline}",
         f"- **전체 프로세스 완결 여부 (`all_done`)**: `{all_done}` (완료: {done_count}건, 잔여: {len(active_or_ready)}건)",
     ]
@@ -141,7 +154,8 @@ def write_wait_status_report(project: Path, tool: str, *, now: float | None = No
             body.append(f"  - {wl}")
     md_path.write_text(chr(10).join(body) + chr(10), encoding="utf-8")
     return {
-        "ok": True,
+        "ok": schedule_valid,
+        "state": status_state,
         "all_done": all_done,
         "done_count": done_count,
         "remaining": active_or_ready,
