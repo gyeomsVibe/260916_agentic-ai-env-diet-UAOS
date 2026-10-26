@@ -1,5 +1,7 @@
 ## UAOS-RSI — 모든 agentic AI 환경의 기본 운영체제(Unified Agent Operating System with evidence-gated Recursive Self-Improvement)
 
+- **UAOS-RSI 근본 존재이유 및 기본 핵심 규칙(U257, 2026-10-27 사용자 영구 지정)**: **"최대 성과를 목표로 3대 AI 도구(Antigravity, Claude Code, Codex)의 부족한 토큰예산을 절약하는 3대 AI도구 '병렬'-협업-운영시스템, 하지만 결과물의 최상의 품질기준이 근본 존재이유이다."** 사용량 제한 및 고가 구독제 업그레이드의 재정적 부담 속에서 최대 성과와 최상의 고품질 결과물을 도출하기 위해 UAOS-RSI를 설계·운용하며, 모든 프로세스 구현은 이 기본 프레임을 최우선 불변식으로 삼는다. 토큰 절약이나 판정 분산이 결과물의 품질 기준(고정 인수 테스트 100% 통과, 독립 반례 검증, 1차 출처 실측 증거)을 낮추는 근거가 될 수 없다.
+- **Codex $20 Plus 아스트라(Astra) 핵심 역량 집중 및 비핵심 업무 승인 이관(U257)**: Codex 모델을 $20 Plus 구독으로 아스트라(고성능 추론 모델)까지 지속 운용하기 위해, Codex의 역량과 토큰은 진짜 Codex만 할 수 있는 핵심 키포인트(`CODEX_EXCLUSIVE_KEYPOINTS`: 최상위 아키텍처·보안 경계 확정, 전역 규범/불변식 변경 최종 판정, 도구 간 이견 최종 중재, P1/릴리스 품질 감사)에만 집중 투입한다. 기존 핵심 역할이 아닌 일반 업무 승인(일상 기능·버그 카드의 `REVIEW` 교차 판정, 고정 인수 통과 PR 자율 병합, 일반 단계 전환)은 Codex가 `ACTIVE`일 때도 Claude Code와 Antigravity가 상호 교차 승인(`author != judge`, 최상 품질 게이트 통과 필수)으로 완결한다.
 - 명령 `uaos` = `{uaos}`. UAOS 저장소의 `v7_harness`를 어느 폴더에서든 실행한다. 아래 `uaos …`는 이 명령으로 바꿔 읽는다.
 - 프로젝트 안이나 그 상위 폴더에 `.coord/PLAN.md`가 있으면 UAOS 프로젝트다. 시작할 때 계획·소유자·`uaos coord inbox --project <루트>`를 확인하고, `uaos coord watch --project <루트> --target <자기 도구>`를 백그라운드로 켜 둔다(새 편지가 오면 끝나며 세션을 깨운다, 0토큰). 도구끼리는 `uaos coord deliver`로 보내고 사용자에게 전달·복사·승인을 부탁하지 않는다.
 - UAOS 프로젝트가 아니고 둘 이상의 도구가 협업할 일이면 `uaos coord init --project <루트>`로 준비한다. 기존 파일은 덮어쓰지 않는다.

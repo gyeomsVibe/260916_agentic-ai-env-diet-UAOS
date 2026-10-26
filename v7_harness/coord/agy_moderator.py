@@ -37,6 +37,24 @@ DEFAULT_LAN_CUT_THRESHOLD_S = 30.0
 DEFAULT_MAX_LAN_AGE_S = 3600.0
 DEFAULT_QUIET_LOCK_MAX_AGE_S = 3600.0
 MAX_CONSENSUS_TURNS = 5
+UAOS_CORE_FOUNDING_PRINCIPLE = (
+    "최대 성과를 목표로 3대 AI 도구 (Antigravity, Claude Code, Codex)의 부족한 토큰예산을 절약하는 "
+    "3대 AI도구 '병렬'-협업-운영시스템, 하지만 결과물의 최상의 품질기준이 근본 존재이유이다."
+)
+UAOS_CORE_FINANCIAL_FRAME = (
+    "UAOS의 핵심 목표는 최대성과, 고품질의 결과를 도출하는 것이며, 사용량 제한 및 구독제 업그레이드의 "
+    "재정적 부담으로 UAOS-RSI 운영 시스템을 만든 것이다."
+)
+CODEX_EXCLUSIVE_KEYPOINTS = frozenset(
+    {
+        "architectural_core",
+        "security_boundary",
+        "rsi_canon",
+        "p1_escalation",
+        "final_quality_audit",
+        "tie_break",
+    }
+)
 PRIMARY_SOURCES_DEFAULT = (
     "https://zdnet.co.kr/view/?no=20261019165618",
     "https://github.com/langchain-ai/langgraph-supervisor-py",
@@ -88,6 +106,67 @@ def _pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def is_codex_exclusive_keypoint(phase: dict[str, Any]) -> bool:
+    """Return True if phase requires Codex's core architectural/security/canon judgment ($20 Plus Astra keypoint)."""
+    if not isinstance(phase, dict):
+        return False
+    if phase.get("codex_keypoint") is True:
+        return True
+    if phase.get("routine_approval") is True or phase.get("codex_keypoint") is False:
+        return False
+    tier = str(phase.get("tier") or "").strip().lower()
+    kind = str(phase.get("kind") or "").strip().lower()
+    if tier in CODEX_EXCLUSIVE_KEYPOINTS or kind in CODEX_EXCLUSIVE_KEYPOINTS:
+        return True
+    tags = {str(t).strip().lower() for t in (phase.get("tags") or []) if t}
+    if tags & CODEX_EXCLUSIVE_KEYPOINTS:
+        return True
+    blob = f"{phase.get('title', '')} {phase.get('note', '')}".lower()
+    return any(kp in blob for kp in CODEX_EXCLUSIVE_KEYPOINTS)
+
+
+def verify_supreme_quality_gate(phase: dict[str, Any], *, judge_tool: str = "") -> dict[str, Any]:
+    """Enforce UAOS-RSI's supreme quality invariant before any peer approval is accepted."""
+    excluded = {str(phase.get("author_tool") or ""), str(phase.get("owner_tool") or "")} - {""}
+    if judge_tool and judge_tool in excluded:
+        return {
+            "ok": False,
+            "error": "SELF_APPROVAL_FORBIDDEN",
+            "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+        }
+    if phase.get("require_accept_cmd", False) and not str(phase.get("accept_cmd") or "").strip():
+        return {
+            "ok": False,
+            "error": "MISSING_ACCEPT_CMD",
+            "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+        }
+    exit_code = phase.get("accept_exit_code")
+    if exit_code is not None and int(exit_code) != 0:
+        return {
+            "ok": False,
+            "error": "ACCEPT_GATE_FAILED",
+            "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+        }
+    if int(phase.get("tests_failed") or 0) > 0:
+        return {
+            "ok": False,
+            "error": "TESTS_FAILED",
+            "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+        }
+    if phase.get("require_primary_sources", False) and not (phase.get("primary_source_urls") or []):
+        return {
+            "ok": False,
+            "error": "MISSING_PRIMARY_SOURCES",
+            "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+        }
+    return {
+        "ok": True,
+        "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+        "financial_frame": UAOS_CORE_FINANCIAL_FRAME,
+        "judge_tool": judge_tool,
+    }
 
 
 class PersonalAssistantOrchestrator:
@@ -693,6 +772,9 @@ class AntigravityModerator:
                 if state == "REVIEW":
                     if phase.get("bottleneck_relieved_from"):
                         continue
+                    if is_codex_exclusive_keypoint(phase) and "codex" in active_tools:
+                        phase["codex_keypoint_preserved"] = True
+                        continue
                     author = str(phase.get("author_tool") or phase.get("owner_tool") or "")
                     excluded_authors = {str(phase.get("author_tool") or ""), str(phase.get("owner_tool") or "")} - {""}
                     wo = str(phase.get("waiting_on") or "")
@@ -1195,6 +1277,148 @@ class AntigravityModerator:
             proposals[proposal_id] = entry
             _atomic_write_json(self.consensus_path, ledger)
             return {"ok": True, "proposal": entry}
+
+    def route_codex_keypoint_and_routine_approvals(
+        self,
+        *,
+        desk: dict[str, dict[str, Any]] | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """U257: Preserve Codex $20 Plus Astra quota for core keypoints while offloading routine approvals to Claude/Antigravity under the Supreme Quality gate."""
+        moment = time.time() if now is None else now
+        if desk is None:
+            desk = read_all(self.project_root, now=moment)
+        active_tools = [t for t in TOOLS if (desk.get(t) or {}).get("state") == "ACTIVE"]
+
+        preserved_keypoints: list[str] = []
+        offloaded_routine: list[dict[str, Any]] = []
+        rejected_quality: list[dict[str, Any]] = []
+        wakes_sent: list[dict[str, Any]] = []
+
+        self.moderator_dir.mkdir(parents=True, exist_ok=True)
+        lock_file = self.moderator_dir / ".schedule.lock"
+        with _exclusive(lock_file):
+            sched = _read_json(self.schedule_path, {})
+            phases = sched.get("phases") if isinstance(sched, dict) else None
+            if not isinstance(phases, list):
+                return {
+                    "ok": True,
+                    "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+                    "financial_frame": UAOS_CORE_FINANCIAL_FRAME,
+                    "preserved_keypoints": [],
+                    "offloaded_routine": [],
+                    "rejected_quality": [],
+                }
+
+            active_load: dict[str, int] = {t: 0 for t in TOOLS}
+            review_load: dict[str, int] = {t: 0 for t in TOOLS}
+            for phase in phases:
+                if not isinstance(phase, dict):
+                    continue
+                st = str(phase.get("state") or "")
+                ow = str(phase.get("owner_tool") or "")
+                if st == "ACTIVE" and ow in active_load:
+                    active_load[ow] += 1
+                if st == "REVIEW":
+                    rv = str(phase.get("reviewer") or "")
+                    if rv in review_load:
+                        review_load[rv] += 1
+
+            changed = False
+            for phase in phases:
+                if not isinstance(phase, dict) or not phase.get("phase_id"):
+                    continue
+                pid = str(phase["phase_id"])
+                state = str(phase.get("state") or "")
+                if state != "REVIEW":
+                    continue
+                wo = str(phase.get("waiting_on") or "")
+                judge = str(phase.get("reviewer") or (wo.split("-")[0] if wo.endswith("-verdict") else ""))
+                if judge != "codex":
+                    continue
+
+                if is_codex_exclusive_keypoint(phase):
+                    if "codex" in active_tools:
+                        phase["codex_keypoint_preserved"] = True
+                        phase["quality_frame"] = UAOS_CORE_FOUNDING_PRINCIPLE
+                        preserved_keypoints.append(pid)
+                        changed = True
+                        continue
+
+                author = str(phase.get("author_tool") or phase.get("owner_tool") or "")
+                excluded_authors = {str(phase.get("author_tool") or ""), str(phase.get("owner_tool") or "")} - {""}
+                candidates = [
+                    t
+                    for t in ("claude", "antigravity")
+                    if t in active_tools and t not in excluded_authors
+                ]
+                if not candidates:
+                    continue
+                candidates.sort(key=lambda t: (active_load.get(t, 0), review_load.get(t, 0)))
+                helper_judge = candidates[0]
+
+                q_gate = verify_supreme_quality_gate(phase, judge_tool=helper_judge)
+                if not q_gate["ok"]:
+                    rejected_quality.append({"phase_id": pid, "error": q_gate["error"]})
+                    continue
+
+                phase["reviewer"] = helper_judge
+                phase["waiting_on"] = f"{helper_judge}-verdict"
+                phase["bottleneck_relieved_from"] = "codex"
+                phase["codex_astra_quota_saved"] = True
+                phase["quality_frame"] = UAOS_CORE_FOUNDING_PRINCIPLE
+                phase["moderated_at"] = moment
+                review_load["codex"] = max(0, review_load.get("codex", 1) - 1)
+                review_load[helper_judge] = review_load.get(helper_judge, 0) + 1
+                changed = True
+
+                delta = f"CODEX ASTRA QUOTA SAVED (ROUTINE APPROVAL OFFLOAD): {pid} (codex->{helper_judge}, author={author})"
+                msg = (
+                    f"ACTIONABLE_DELTA VERDICT_REQUESTED=YES [U257 Codex Astra Quota Preservation] "
+                    f"Routine non-keypoint approval for {pid} (author={author}) delegated to {helper_judge} "
+                    f"under Supreme Quality Gate ({UAOS_CORE_FOUNDING_PRINCIPLE})."
+                )
+                relay_id = self._emit_wake(
+                    target=helper_judge,
+                    card=pid,
+                    delta=delta,
+                    message=msg,
+                    verdict_requested=True,
+                )
+                offloaded_routine.append(
+                    {
+                        "phase_id": pid,
+                        "from_tool": "codex",
+                        "to_tool": helper_judge,
+                        "author": author,
+                        "quality_gate": "PASS",
+                    }
+                )
+                wakes_sent.append({"phase_id": pid, "target": helper_judge, "relay_id": relay_id})
+
+            if changed:
+                _atomic_write_json(self.schedule_path, sched)
+
+        if preserved_keypoints or offloaded_routine or rejected_quality:
+            self._record_official_ledger(
+                role="구청공무원/사회자",
+                action="U257_CODEX_KEYPOINT_AND_QUALITY_ROUTE",
+                details={
+                    "preserved_keypoints": preserved_keypoints,
+                    "offloaded_routine": offloaded_routine,
+                    "rejected_quality": rejected_quality,
+                },
+                now=moment,
+            )
+        return {
+            "ok": True,
+            "founding_principle": UAOS_CORE_FOUNDING_PRINCIPLE,
+            "financial_frame": UAOS_CORE_FINANCIAL_FRAME,
+            "preserved_keypoints": preserved_keypoints,
+            "offloaded_routine": offloaded_routine,
+            "rejected_quality": rejected_quality,
+            "wakes_sent": wakes_sent,
+        }
 
     def run_all_roles_cycle(
         self,
