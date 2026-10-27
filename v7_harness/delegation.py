@@ -174,13 +174,14 @@ def disjoint_parallel_errors(contract: dict[str, Any]) -> list[str]:
     worker = str(contract.get("worker") or "").strip().lower()
     model = str(contract.get("model") or "").strip().lower()
 
-    if ("haiku" in worker or "haiku" in model) and caller in ("codex", "antigravity", "agy"):
+    is_haiku_55 = ("haiku" in worker or "haiku-5-5" in model or "haiku-5.5" in model or model == "haiku")
+    if is_haiku_55 and caller in ("codex", "antigravity", "agy"):
         errors.append(
             f"HAIKU_QUARANTINED_ON_TOOL: Haiku 5.5 is restricted to Claude Code internal subagent use; "
             f"{caller} must use 0-token Ollama + native subscription engine"
         )
 
-    if "haiku" in worker or "haiku" in model:
+    if is_haiku_55:
         try:
             budget = int(contract.get("remote_budget_tokens") or 0)
         except ValueError:
