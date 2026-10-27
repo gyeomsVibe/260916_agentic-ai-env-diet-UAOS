@@ -170,7 +170,7 @@ def load_policy(project_root: Path) -> dict[str, Any]:
 
 
 def _parse_ts(row: dict[str, Any]) -> float | None:
-    for key in ("ts", "timestamp", "window_end", "observed_at"):
+    for key in ("ts", "timestamp", "window_end", "observed_at", "resets_at"):
         val = row.get(key)
         if isinstance(val, (int, float)) and not isinstance(val, bool) and val > 0:
             return float(val)
@@ -408,6 +408,7 @@ def _parse_brain_planner_lines(lines: list[str], conv_id: str) -> list[dict[str,
             continue
         parsed.append({
             "engine": "antigravity",
+            "source_kind": "brain_step",
             "ts": ts,
             "work_id": f"agy-brain-{conv_id[:8]}-{row.get('step_index', 0)}",
             "conv_id": conv_id,
@@ -465,7 +466,6 @@ def _scan_agy_brain_transcripts(
                 continue
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
             cached = wm_files.get(f_key)
-
             cached_ok = False
             if isinstance(cached, dict) and isinstance(cached.get("events"), list):
                 try:
@@ -812,6 +812,7 @@ def collect_capacity_snapshot(
             "resets_at_7d": (q_7d or {}).get("resets_at") if isinstance(q_7d, dict) else None,
             "reset_in_seconds_5h": (q_5h or {}).get("reset_in_seconds") if isinstance(q_5h, dict) else (q_snap or {}).get("reset_in_seconds") if isinstance(q_snap, dict) else None,
             "quota_reset_ready": quota_reset_ready,
+            "wake_on_reset_ready": bool(quota_reset_ready and pres_state != "ACTIVE"),
             "predictive_exhaustion": predictive_exhaustion,
         }
 
@@ -820,6 +821,7 @@ def collect_capacity_snapshot(
             "role": policy["tool_roles"].get(eng, ""),
             "presence_state": pres_state,
             "quota_reset_ready": quota_reset_ready,
+            "wake_on_reset_ready": bool(quota_reset_ready and pres_state != "ACTIVE"),
             "status_tier": status_tier,
             "budget_cap_5h_tokens": cap_5h,
             "budget_cap_7d_tokens": ref_cap_7d if (cap_5h is not None or cap_7d_cfg is not None) else None,
@@ -842,7 +844,15 @@ def collect_capacity_snapshot(
             "window_7d": w7,
         }
 
-    total_calls_24h = sum(engines_summary[e]["window_24h"]["calls"] for e in ALL_ENGINES)
+    raw_step_calls_24h = sum(engines_summary[e]["window_24h"]["calls"] for e in ALL_ENGINES)
+    agy_ev_24h = [e for e in events if e["engine"] == "antigravity" and e["ts"] >= cutoff_24h]
+    agy_brain_convs_24h = len({str(e.get("conv_id") or "") for e in agy_ev_24h if e.get("source_kind") == "brain_step" and e.get("conv_id")})
+    agy_non_brain_24h = sum(1 for e in agy_ev_24h if e.get("source_kind") != "brain_step")
+    agy_work_units_24h = agy_brain_convs_24h + agy_non_brain_24h
+    total_calls_24h = (
+        sum(engines_summary[e]["window_24h"]["calls"] for e in ALL_ENGINES if e != "antigravity")
+        + agy_work_units_24h
+    )
     offload_calls_24h = (
         engines_summary["ollama"]["window_24h"]["calls"]
         + engines_summary["haiku"]["window_24h"]["calls"]
@@ -863,6 +873,7 @@ def collect_capacity_snapshot(
         ),
         "offload_efficiency_24h": {
             "total_calls_24h": total_calls_24h,
+            "raw_step_calls_24h": raw_step_calls_24h,
             "ollama_plus_haiku_calls_24h": offload_calls_24h,
             "offload_share_pct": offload_ratio_pct,
         },
@@ -888,7 +899,9 @@ def collect_capacity_snapshot(
         _atomic_write_json(sub_sched_file, sub_process_schedule)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
         local_head.parent.mkdir(parents=True, exist_ok=True)
-        local_head.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        head_tmp = local_head.with_name(f".capacity_head.{os.getpid()}.{time.time_ns()}.tmp")
+        head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(head_tmp, local_head)
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -949,8 +962,9 @@ def build_capacity_aware_schedule(
     def _tool_score(t: str) -> tuple[int, int]:
         info = engines.get(t) or {}
         is_online = (
-            info.get("presence_state") == "ACTIVE" or bool(info.get("quota_reset_ready"))
-        ) and info.get("status_tier") != "LIMITED_PAUSE"
+            info.get("presence_state") == "ACTIVE"
+            and info.get("status_tier") != "LIMITED_PAUSE"
+        )
         active = 1 if is_online else 0
         return (active, _schedulable_rem(t))
 
@@ -1084,9 +1098,19 @@ def build_capacity_aware_schedule(
         else "BALANCED_3TOOL_COLLAB"
     )
 
+    wake_ready_tools = [
+        t for t in PAID_TOOLS
+        if bool((engines.get(t) or {}).get("wake_on_reset_ready"))
+    ]
+    wake_ready_tools = [
+        t for t in PAID_TOOLS
+        if bool((engines.get(t) or {}).get("wake_on_reset_ready"))
+    ]
     return {
         "recommended_conductor": recommended_conductor,
         "ranked_paid_tools": ranked_paid,
+        "wake_ready_tools": wake_ready_tools,
+        "wake_ready_tools": wake_ready_tools,
         "argon_tier_mode": argon_mode,
         "argon_used_5h_share_pct": agy_used_share_pct,
         "argon_remaining_5h_share_pct": agy_rem_share_pct,
@@ -1147,6 +1171,7 @@ def build_sub_process_schedule(
     card_sub_schedules: list[dict[str, Any]] = []
 
     raw_master_owners: dict[str, str] = {}
+    recent_done_phases: list[dict[str, Any]] = []
     sched_path = Path(desk) / ".coord" / "master_schedule.json"
     if sched_path.is_file():
         try:
@@ -1155,10 +1180,27 @@ def build_sub_process_schedule(
                 if isinstance(mp, dict):
                     mp_id = str(mp.get("phase_id") or mp.get("id") or "").strip()
                     mp_ow = str(mp.get("owner_tool") or mp.get("owner") or "").strip().lower()
+                    mp_st = str(mp.get("state") or "").strip().upper()
                     if mp_id and mp_ow:
                         raw_master_owners[mp_id] = mp_ow
+                    if mp_id and mp_st == "DONE" and not mp_id.startswith("RSI-U251-AUTO-"):
+                        recent_done_phases.append(mp)
         except (OSError, ValueError):
             pass
+
+    showing_recent_done = False
+    if not assigns and recent_done_phases:
+        showing_recent_done = True
+        for dp in recent_done_phases[-3:]:
+            dp_ow = str(dp.get("owner_tool") or dp.get("owner") or "antigravity").lower()
+            dp_rev = str(dp.get("reviewer") or ("claude" if dp_ow != "claude" else "codex")).lower()
+            assigns.append({
+                "phase_id": str(dp.get("phase_id") or dp.get("id") or ""),
+                "state": "DONE",
+                "assigned_owner": dp_ow if dp_ow in PAID_TOOLS else "antigravity",
+                "assigned_reviewer": dp_rev if dp_rev in PAID_TOOLS and dp_rev != dp_ow else ("claude" if dp_ow != "claude" else "antigravity"),
+                "estimated_paid_tokens": int(dp.get("estimated_tokens") or 18000),
+            })
 
     for idx, item in enumerate(assigns):
         pid = str(item.get("phase_id") or "")
@@ -1215,11 +1257,14 @@ def build_sub_process_schedule(
         merger_primary = "antigravity" if _risk_of("antigravity") != "IMMINENT_EXHAUSTION" else "codex"
         merger_secondary = "codex" if merger_primary == "antigravity" else "antigravity"
 
-        sp1_state = "DONE" if state in ("ACTIVE", "REVIEW") else "READY"
-        sp2_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
-        sp3_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
-        sp4_state = "ACTIVE" if state == "REVIEW" else "PLANNED"
-        sp5_state = "READY" if state == "REVIEW" else "PLANNED"
+        if state == "DONE":
+            sp1_state = sp2_state = sp3_state = sp4_state = sp5_state = "DONE"
+        else:
+            sp1_state = "DONE" if state in ("ACTIVE", "REVIEW") else "READY"
+            sp2_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
+            sp3_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
+            sp4_state = "ACTIVE" if state == "REVIEW" else "PLANNED"
+            sp5_state = "READY" if state == "REVIEW" else "PLANNED"
 
         code_slice_limit = 30 if owner_risk != "SAFE" else 20
         test_doc_worker = "haiku" if effective_owner == "claude" else "ollama"
@@ -1322,9 +1367,11 @@ def build_sub_process_schedule(
 
     return {
         "schema": "uaos-sub-process-schedule-v1",
+        "showing_recent_completed_dag": showing_recent_done,
         "total_active_cards": len(card_sub_schedules),
         "total_sub_processes": sum(len(c["sub_processes"]) for c in card_sub_schedules),
         "preemptive_handoff_tools": preemptive_tools,
+        "wake_ready_tools": list(schedule_plan.get("wake_ready_tools") or []),
         "fluid_rebalance_events": rebalance_events,
         "disjoint_parallel_policy": {
             "ollama_50pct_lane": "v7_harness/*.py (20~30 line slice, 0 paid tokens)",
@@ -1636,8 +1683,8 @@ def refresh_capacity_zero_token(
                 and brain_mtime <= last_ts
             ):
                 if html_out is not None and not Path(html_out).is_file():
-                    snap_data = json.loads(snap_path.read_text(encoding="utf-8"))
-                    render_html_dashboard(snap_data, Path(html_out))
+                    snap_cached = json.loads(snap_path.read_text(encoding="utf-8"))
+                    render_html_dashboard(snap_cached, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
         except (OSError, ValueError):
             pass
