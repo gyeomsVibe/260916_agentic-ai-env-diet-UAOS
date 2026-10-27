@@ -124,7 +124,7 @@ class TestU269U251RsiOperationalEvolution(unittest.TestCase):
                 self.assertEqual(spec.get("observation_count"), 1)
                 self.assertTrue(spec.get("accept_cmd"))
 
-            # 2nd run: verify idempotency (no duplicate phases added; observation_count incremented to 2)
+            # 2nd run: verify idempotency (no duplicate phases added; same evidence within 1 h stays one observation, U272)
             res2 = record_u251_operational_telemetry_and_schedule_rsi(
                 root,
                 target_path="v7_harness/cli.py",
@@ -138,8 +138,8 @@ class TestU269U251RsiOperationalEvolution(unittest.TestCase):
             rsi_phases2 = [p for p in sched2["phases"] if str(p.get("phase_id", "")).startswith("RSI-U251-AUTO-")]
             self.assertEqual(len(rsi_phases2), len(rsi_phases))
             for p in rsi_phases2:
-                self.assertEqual(p["self_healing_spec"]["observation_count"], 2)
-            self.assertTrue(all(c["action"] == "UPDATED_EXISTING" for c in res2["scheduled_self_healing_cards"]))
+                self.assertEqual(p["self_healing_spec"]["observation_count"], 1)
+            self.assertTrue(all(c["action"] == "SAME_EPISODE" for c in res2["scheduled_self_healing_cards"]))
 
     def test_2_quiet_lock_prevents_mutation(self) -> None:
         """Under .work/QUIET_LOCK, record_u251_operational_telemetry_and_schedule_rsi must not write schedule or ledger."""

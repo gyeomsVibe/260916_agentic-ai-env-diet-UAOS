@@ -91,6 +91,7 @@ REMEDIES: dict[str, tuple[str, str]] = {
     "ACCEPT_INFRA": ("environment", "Fix the environment (interpreter, PYTHONPATH, missing tool) before retrying; the worker is not at fault"),
     "ACCEPT_NOT_RUN": ("environment", "Make the acceptance command runnable in the staging directory"),
     "SOURCE_DIVERGED": ("environment", "Keep a single writer during pilot runs (QUIET_LOCK); retry after the other writer finishes"),
+    "EXTERNAL_WRITE": ("environment", "Keep pilot staging and auxiliary outputs under .work/ so source tree stays untouched during pilot runs"),
 }
 
 # Classes that say only "the worker failed"; the detail may name the real cause (U81).
