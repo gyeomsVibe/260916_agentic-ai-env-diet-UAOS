@@ -218,6 +218,8 @@ class WaitReason(unittest.TestCase):
         # Harmless prose mentions in commit messages / grep are not denied
         self.assertIsNone(merge_route.raw_gh_merge_denied('git commit -m "note: never gh pr merge directly"'))
         self.assertIsNone(merge_route.raw_gh_merge_denied('grep -r "gh pr merge" docs'))
+        self.assertIsNone(merge_route.raw_gh_merge_denied("gh pr list --search merge"))
+        self.assertIsNone(merge_route.raw_gh_merge_denied('git commit -m "docs; gh pr merge should use review"'))
 
 
         for cmd in (

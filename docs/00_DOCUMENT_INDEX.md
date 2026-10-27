@@ -103,5 +103,18 @@
 | 89 | [89_MIA_UAOS_RSI_v0.5.html](89_MIA_UAOS_RSI_v0.5.html) | 2026-10-25 16:04 | UAOS-RSI v0.5 MIA 11-Stage Evaluation & Architecture Report (평가 및 설계 보고서) |
 | 90 | [90_MIA_UAOS_RSI_v0.5_Full_Master_Schedule_Completion_Report.html](90_MIA_UAOS_RSI_v0.5_Full_Master_Schedule_Completion_Report.html) | 2026-10-26 01:26 | UAOS-RSI v0.5 — 무승인 논스톱 티키타카 마스터 스케줄 전 구간 완결 보고서 (U236a·U229B2·U233·U237·U237D·U238·U239·U240) |
 | 91 | [91_MIA_U241_Antigravity_Main_Control_UX_and_3Tool_Parallel_Visibility.html](91_MIA_U241_Antigravity_Main_Control_UX_and_3Tool_Parallel_Visibility.html) | 2026-10-26 01:14 | MIA 전략스킬 11단계 실행 보고서 — U239C·U237E 완결 및 U241 Antigravity 메인 컨트롤 UX/UI·백그라운드 가시성 엔진 |
+| 92 | [92_MIA_Library_Full_Audit_OpenRig_AgentCodeGUI_Report.html](92_MIA_Library_Full_Audit_OpenRig_AgentCodeGUI_Report.html) | 2026-10-26 04:30 | MIA 라이브러리 전수 감사: OpenRig & AgentCodeGUI 구조 분석 보고서 |
+| 93 | [93_MIA_REA_Reverse_Engineer_Anything_Deep_Audit_and_UAOS_RSI_Master_Schedule.html](93_MIA_REA_Reverse_Engineer_Anything_Deep_Audit_and_UAOS_RSI_Master_Schedule.html) | 2026-10-26 07:15 | MIA 기술 심층 분석: REA (Reverse Engineer Anything) 및 UAOS-RSI 마스터 연계 계획서 |
+| 94 | [94_3대벤치마킹저장소_UAOS-RSI_로직선별_및_이식설계서.md](94_3대벤치마킹저장소_UAOS-RSI_로직선별_및_이식설계서.md) | 2026-10-26 12:00 | 3대 벤치마킹 저장소(OpenRig, ShowGN, REA) UAOS-RSI 핵심 로직 선별 및 이식 설계서 |
+| 95 | [95_3대벤치마킹_OpenRig_ShowGN_REA_통합이식_초보자_완전해설서.html](95_3대벤치마킹_OpenRig_ShowGN_REA_통합이식_초보자_완전해설서.html) | 2026-10-26 14:20 | 3대 벤치마킹 오픈소스 통합 이식 초보자 완전 해설서 |
+| 96 | [96_MIA_Antigravity_U260_U263_Role_and_Wait_Transparency_Report.html](96_MIA_Antigravity_U260_U263_Role_and_Wait_Transparency_Report.html) | 2026-10-27 09:45 | Antigravity 역할 확충 및 대기 사유 실시간 표시(U260/U263) 상세 시각화 보고서 |
+| 97 | [97_MIA_전략절차_생성문서_docs폴더_부재_원인_전수분석_및_문제점_탐색_보고서.md](97_MIA_전략절차_생성문서_docs폴더_부재_원인_전수분석_및_문제점_탐색_보고서.md) | 2026-10-27 09:47 | MIA 전략절차 11단계 전수분석 보고서: 생성된 HTML 문서의 docs 폴더 부재 원인 규명 및 영구 해결책 |
+| 98 | [98_MIA_Claude_전속일꾼_올라마_Haiku55_전수분석_및_병렬운용_개선설계서.md](98_MIA_Claude_전속일꾼_올라마_Haiku55_전수분석_및_병렬운용_개선설계서.md) | 2026-10-27 10:25 | MIA 전략절차 11단계 보고서: Claude Code 전속 일꾼 (올라마 CLI vs Haiku 5.5) 전수분석 및 병렬 운용 개선설계서 |
+| 99 | [99_MIA_3대도구_올라마_적극오프로드_및_클로드_5대3대2_이원병렬_실가동_완결보고서.html](99_MIA_3대도구_올라마_적극오프로드_및_클로드_5대3대2_이원병렬_실가동_완결보고서.html) | 2026-10-27 11:03 | U271: 3대 도구 올라마 적극 오프로드 및 클로드 5:3:2 이원 병렬 아키텍처 완결 보고서 |
 | -- | [README.md](README.md) | 2026-10-23 21:42 | Documentation index |
 | 261023 | [261023_usage-accounting.md](261023_usage-accounting.md) | 2026-10-23 21:48 | AI Resource Usage Ledger (AI 자원 사용 원장) |
+
+- `docs/128_uaos-5chip-capacity-dashboard-unification-report.md`: U267 AGY 용량 계기판 + Show GN 5-Chip Telemetry 전수조사 및 통합 보고서
+- `docs/129_uaos-5chip-capacity-dashboard.html`: U267 통합 5-Chip + 5엔진 실시간 토큰·용량·스케줄 계기판 위젯
+| 100 | [`100_MIA_U272_안티그래비티_올라마부스트_및_클로드_5대3대2_이원병렬_구현설계서.html`](100_MIA_U272_안티그래비티_올라마부스트_및_클로드_5대3대2_이원병렬_구현설계서.html) | [MIA 11단계 / U272] 안티그래비티 올라마 적극 오프로드(Boost 180줄/30줄) 및 클로드 5:3:2 황금 비율·이원 분리 병렬 운용 구체화 구현 설계서 (Dual-Deployed HTML) | 2026-10-27 | Antigravity |
+| 101 | [`101_MIA_3대도구_티키타카_무승인_논스톱_병렬협업_유능한신호수_완결보고서.html`](101_MIA_3대도구_티키타카_무승인_논스톱_병렬협업_유능한신호수_완결보고서.html) | [U273] 3대 도구 티키타카 무승인 논스톱 병렬 협업 — 유기적·자율적 유능한 신호수(Autonomous3ToolFlagman) 완결 보고서 |

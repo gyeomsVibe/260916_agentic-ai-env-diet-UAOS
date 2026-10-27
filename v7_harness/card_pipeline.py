@@ -266,6 +266,25 @@ def validate_user_status_lines(text: str) -> list[str]:
     return problems
 
 
+# U271: one compact BLUF report; the same budget the olla report gate measures (olla.REPORT_MAX_*).
+REPORT_MAX_LINES = 5
+REPORT_MAX_CHARS = 600
+NESTED_RE = re.compile(r"^\s+[-*]\s")
+
+
+def compact_report_problems(text: str) -> list[str]:
+    """U271: why a user report is too long: lines, characters, nested bullets, bare-ID status lines."""
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    problems = []
+    if len(lines) > REPORT_MAX_LINES:
+        problems.append(f"OVER_LINES: {len(lines)} > {REPORT_MAX_LINES}")
+    if len(text or "") > REPORT_MAX_CHARS:
+        problems.append(f"OVER_CHARS: {len(text or '')} > {REPORT_MAX_CHARS}")
+    if any(NESTED_RE.match(line) for line in lines):
+        problems.append("NESTED: sub-bullets belong in the PR body or card")
+    return problems + validate_user_status_lines(text)
+
+
 def new_manual(desk, card, title, now: float | None = None) -> dict[str, Any]:
     manual = Path(desk) / ".work" / "cards" / f"{_check(card)}_manual.md"
     if not manual.is_file():
@@ -630,11 +649,12 @@ def done_report(project, card, what, pr_url, head, runtime=None, user_action=Non
     action = _one_line("user_action", user_action) if user_action else None
     if _done_arg_problems(pr_url, head, runtime):
         raise ValueError("; ".join(_done_arg_problems(pr_url, head, runtime)))
-    installed = f"런타임 {runtime}에 설치됐습니다" if runtime else "런타임 설치가 필요 없는 변경입니다"
-    last = f"- **남은 일**: {action}" if action else "- 다음: 사용자가 할 일은 없습니다. 새 세션부터 바로 적용됩니다."
-    card_label = f"{core_title}({card})" if core_title else f"{card} 작업"
-    return "\n".join((f"**결과**: {name}의 {card_label}이 완료됐습니다 — {what}",
-                      f"- 근거: 변경이 {pr_url} 로 병합됐고(커밋 {head[:7]}), {installed}.", last))
+    installed = f"런타임 {runtime}" if runtime else "런타임 설치가 필요 없는 변경"
+    last = f"- **남은 일**: {action}" if action else "- 다음: 없음(새 세션부터 적용)"
+    card_label = f"{core_title}({card})" if core_title else f"{name} {card} 작업"
+    pr_no = pr_url.rsplit("/", 1)[1]  # U271: a short link label instead of a bare 70-character url
+    return "\n".join((f"**결과**: {card_label} 완료 — {what}",
+                      f"- 근거: [PR #{pr_no}]({pr_url}) 병합 {head[:7]} · {installed}", last))
 
 
 def _head_ok(view, head) -> bool:

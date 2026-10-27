@@ -970,6 +970,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
 
+    p_coord_tp = p_coord_subs.add_parser(
+        "transplant-status",
+        help="U251/U269: Live 5-Chip Telemetry (Show GN), OpenRig Seat Failover, REA 2-Tier Router, and RSI Self-Healing Scheduler",
+    )
+    p_coord_tp.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_tp.add_argument("--target", default="v7_harness/cli.py", help="Target path/description for REA tier routing")
+    p_coord_tp.add_argument("--foreground-wait-s", type=float, default=0.0, help="Foreground wait elapsed seconds")
+    p_coord_tp.add_argument("--acting-tool", default="antigravity", choices=["codex", "claude", "antigravity"])
+    p_coord_tp.add_argument("--auto-schedule", action="store_true", help="Automatically schedule/update self-healing RSI cards on anomaly")
+    p_coord_tp.add_argument("--format", choices=["json", "table"], default="json")
+    p_coord_tp.set_defaults(func=cmd_coord_transplant_status)
+
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_route.set_defaults(func=cmd_coord_route)
@@ -2112,6 +2124,43 @@ def cmd_coord_stall(args: argparse.Namespace) -> int:
     result = scan(Path(args.project), args.tool)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result.get("blocked") or result.get("error") else 0
+
+
+def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
+    """U251/U269: Live 5-Chip Telemetry + OpenRig Seat Continuity + REA Tier + RSI Self-Healing Evolution."""
+    from .benchmark_logic_transplant import record_u251_operational_telemetry_and_schedule_rsi
+
+    report = record_u251_operational_telemetry_and_schedule_rsi(
+        Path(args.project),
+        target_path=str(getattr(args, "target", "v7_harness/cli.py")),
+        foreground_wait_s=float(getattr(args, "foreground_wait_s", 0.0)),
+        acting_tool=str(getattr(args, "acting_tool", "antigravity")),
+        auto_schedule=bool(getattr(args, "auto_schedule", False)),
+    )
+    if getattr(args, "format", "json") == "table":
+        chips = (report.get("five_chip_telemetry") or {}).get("chips") or {}
+        c1 = chips.get("1_todos_schedule") or {}
+        c2 = chips.get("2_three_tool_seats") or {}
+        c3 = chips.get("3_background_watchers") or {}
+        c4 = chips.get("4_changed_files_diff") or {}
+        c5 = chips.get("5_quota_and_reset_timer") or {}
+        rea = report.get("rea_tier_routing") or {}
+        anomalies = report.get("anomalies") or []
+        cards = report.get("scheduled_self_healing_cards") or []
+        lines = [
+            f"[U251 5-Chip 실시간 계기판 & RSI 자가진화 상태] ({report.get('observed_at')})",
+            f"  Chip 1 (일정): {c1.get('headline')} | 잔여={c1.get('remaining')} (ACTIVE={c1.get('active')}, REVIEW={c1.get('review')}, READY={c1.get('ready')})",
+            f"  Chip 2 (좌석): 모드={c2.get('mode')} | 지휘={c2.get('conductor')} | 활성유료={c2.get('active_paid_tools')}",
+            f"  Chip 3 (워처): 활성={c3.get('watcher_count')}개 {c3.get('watchers')} | 대기판정={(c3.get('wait_decision') or {}).get('action')}",
+            f"  Chip 4 (Diff): 변경={c4.get('file_count')}개 파일 (+{c4.get('lines_added')}/-{c4.get('lines_removed')})",
+            f"  Chip 5 (쿼터): 상태={c5.get('presence_states')} | 5h가용={c5.get('usable_remaining_5h_tokens')} | 리셋자동재개={c5.get('auto_resume_on_reset')}",
+            f"  REA 라우팅   : {rea.get('selected_tier')} (절약={rea.get('paid_schema_tokens_saved_per_call', 0)} tok/call)",
+            f"  RSI 이상감지 : {len(anomalies)}건 {[a.get('anomaly_code') for a in anomalies]} | 자동스케줄={len(cards)}건 {[c.get('phase_id') for c in cards]}",
+        ]
+        print("\n".join(lines))
+        return 0
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
 
 
 def cmd_coord_push_check(args: argparse.Namespace) -> int:

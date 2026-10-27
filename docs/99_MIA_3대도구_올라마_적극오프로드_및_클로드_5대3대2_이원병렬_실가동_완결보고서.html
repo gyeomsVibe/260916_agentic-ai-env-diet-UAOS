@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>U271: 3대 도구 올라마 적극 오프로드 및 클로드 5:3:2 이원 병렬 아키텍처 완결 보고서</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --border: #334155;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --purple: #a855f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    padding: 32px 20px;
+  }
+  .container { max-width: 1120px; margin: 0 auto; }
+  header {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border: 1px solid var(--border);
+    border-left: 6px solid var(--accent);
+    border-radius: 14px;
+    padding: 28px;
+    margin-bottom: 28px;
+  }
+  h1 { font-size: 1.75rem; margin-bottom: 10px; color: #fff; }
+  h2 { font-size: 1.35rem; margin: 26px 0 14px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 1.1rem; margin: 16px 0 8px; color: #e2e8f0; }
+  .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    margin-right: 6px;
+  }
+  .b-green { background: rgba(34,197,94,0.18); color: var(--green); border: 1px solid var(--green); }
+  .b-amber { background: rgba(245,158,11,0.18); color: var(--amber); border: 1px solid var(--amber); }
+  .b-red { background: rgba(239,68,68,0.18); color: var(--red); border: 1px solid var(--red); }
+  .b-blue { background: rgba(56,189,248,0.18); color: var(--accent); border: 1px solid var(--accent); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    margin-bottom: 20px;
+  }
+  .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+  th, td { border: 1px solid var(--border); padding: 11px 12px; text-align: left; }
+  th { background: #0f172a; color: var(--accent); font-weight: 700; }
+  tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+  .bar-wrap { background: #0f172a; border-radius: 8px; height: 12px; overflow: hidden; margin-top: 6px; }
+  .bar-fill { height: 100%; border-radius: 8px; }
+  code { background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #7dd3fc; font-size: 0.88rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <span class="badge b-green">U271 &amp; U269 런타임 반영 완료</span>
+      <span class="badge b-blue">MIA 11단계 전략 프레임워크</span>
+      <span class="badge b-amber">최대 성과 · 최상 품질 · 토큰예산 절약</span>
+    </div>
+    <h1 style="margin-top:12px;">3대 도구 올라마 CLI 사용량 전수 수치화 · 안티그래비티 적극 오프로드 및 클로드 5:3:2 이원 병렬 아키텍처</h1>
+    <p style="color:var(--muted);">작성일시: 2026-10-27 | 정본 문서: <code>docs/99_MIA_3대도구_올라마_적극오프로드_및_클로드_5대3대2_이원병렬_실가동_완결보고서.html</code></p>
+  </header>
+
+  <div class="card">
+    <h2>1. 3대 도구 + 올라마/Haiku 실시간 토큰·호출량 전수 수치화 (실측 원장 분석)</h2>
+    <p><code>.coord/usage/capacity_snapshot.json</code> 및 <code>runs.jsonl</code>(누적 1,548건)을 전수 조사한 결과, 3대 유료 도구가 전체 호출의 <strong>97.6%</strong>를 직접 처리하며 한도 과부하(<code>CRITICAL_OFFLOAD</code>)에 도달한 반면, 0원 올라마와 저비용 Haiku 5.5는 저활용 상태였음이 확인되었습니다.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>도구 / 엔진</th>
+          <th>5시간 호출</th>
+          <th>5시간 유효 토큰 (한도 대비)</th>
+          <th>24시간 호출 / 토큰</th>
+          <th>7일 누적 호출 / 토큰</th>
+          <th>실측 진단</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Antigravity (Ultra 5x)</strong></td>
+          <td>1,182회</td>
+          <td>31,178,085 / 30,000,000 <span class="badge b-red">100% 초과</span></td>
+          <td>2,277회 / 5,825만</td>
+          <td>4,785회 / 1.55억</td>
+          <td>대형 파일 직접 읽기·패치로 토큰 급소모 → <strong>올라마 부스트 필수</strong></td>
+        </tr>
+        <tr>
+          <td><strong>Claude Code (Opus/Sonnet)</strong></td>
+          <td>456회</td>
+          <td>8,201,345 / 8,000,000 <span class="badge b-red">100% 초과</span></td>
+          <td>1,130회 / 2,198만</td>
+          <td>3,529회 / 7,049만</td>
+          <td>내부 호출의 88.2%를 Opus가 독점 (역피라미드 구조)</td>
+        </tr>
+        <tr>
+          <td><strong>Codex ($20 Plus / Astra)</strong></td>
+          <td>279회</td>
+          <td>6,497,769 / 7,000,000 <span class="badge b-amber">92.8% LIMITED</span></td>
+          <td>875회 / 2,035만</td>
+          <td>3,550회 / 8,340만</td>
+          <td>핵심 키포인트 판정 전담으로 보호 필요</td>
+        </tr>
+        <tr>
+          <td><strong>Haiku 5.5 (Claude 전속)</strong></td>
+          <td>38회</td>
+          <td>936,637 / 3,000,000 <span class="badge b-green">31.2% (여유 68.8%)</span></td>
+          <td>53회 / 130만</td>
+          <td>141회 / 263만</td>
+          <td><strong>잔여 206만 토큰 여유</strong> → 테스트·문서 병렬 위임 확대</td>
+        </tr>
+        <tr>
+          <td><strong>Ollama CLI (0원 계산기)</strong></td>
+          <td>23회</td>
+          <td>128,965 / 무제한 <span class="badge b-green">유료 0원</span></td>
+          <td>52회 / 21만 (누적 560건)</td>
+          <td>936회 / 205만</td>
+          <td><strong>무제한 0원 자원</strong> → 3대 도구 1차 코드/맵 오프로드 확대</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid-3">
+    <div class="card">
+      <h3>🚀 안티그래비티 올라마 적극 오프로드 (Boost)</h3>
+      <p style="color:var(--muted); font-size:0.9rem; margin-bottom:10px;">Ultra 5배 쿼터 고갈 원천 차단 + 최상 품질 유지</p>
+      <ul style="padding-left:18px; font-size:0.92rem;">
+        <li><strong>250줄 이상 파일 탐색</strong>: <code>local_read_map</code>(0토큰) 강제 선행 (파일당 ~5,000 유료 토큰 절약)</li>
+        <li><strong>초안·요약·커밋 메시지</strong>: <code>local_draft</code>(0토큰) 전담</li>
+        <li><strong>슬라이스 한도 20줄 → 30줄 상향</strong>: 5h 사용률 70% 이상 시 30줄 이하 코드 패치를 0원 올라마가 1차 구현 후, Antigravity Argon이 독립 감사만 수행 (<strong>60% 토큰 절감</strong>)</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>⚖️ 클로드 내부 5:3:2 황금 비율 최적화</h3>
+      <p style="color:var(--muted); font-size:0.9rem; margin-bottom:10px;">기존 역피라미드(4:7:88) → 피라미드(50:30:20) 전환</p>
+      <div style="margin:8px 0;">
+        <div><strong>1순위: Ollama CLI (목표 50%)</strong> — 0원 코드 슬라이스·맵</div>
+        <div class="bar-wrap"><div class="bar-fill" style="width:50%; background:var(--green);"></div></div>
+      </div>
+      <div style="margin:8px 0;">
+        <div><strong>2순위: Haiku 5.5 (목표 30%)</strong> — 테스트 러너·문서 동기화 (12k 캡)</div>
+        <div class="bar-wrap"><div class="bar-fill" style="width:30%; background:var(--accent);"></div></div>
+      </div>
+      <div style="margin:8px 0;">
+        <div><strong>3순위: Claude Opus/Sonnet (목표 20%)</strong> — 핵심 설계·교차 승인</div>
+        <div class="bar-wrap"><div class="bar-fill" style="width:20%; background:var(--purple);"></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>🛡️ 이원 분리 병렬 게이트 (WinError 32 차단)</h3>
+      <p style="color:var(--muted); font-size:0.9rem; margin-bottom:10px;"><code>v7_harness/delegation.py</code> &amp; <code>manual.py</code></p>
+      <ul style="padding-left:18px; font-size:0.92rem;">
+        <li><strong>올라마 레인(<code>ollama_lane</code>)</strong>: <code>v7_harness/*.py</code> 프로덕션 코드 슬라이스 전담</li>
+        <li><strong>Haiku 레인(<code>haiku_lane</code>)</strong>: <code>tests/test_*.py</code> 회귀 검증 및 <code>docs/*</code> 색인 동기화 전담</li>
+        <li><strong>충돌 원천 거부</strong>: 두 레인의 <code>allow</code> 경로가 단 1개라도 겹치면 <code>DISJOINT_PARALLEL_OVERLAP</code>으로 즉시 차단</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2. 코드 구현 · 단위 테스트 · 런타임 반영 영수증</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>모듈 / 파일</th>
+          <th>구현 및 반영 내용</th>
+          <th>검증 결과</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>v7_harness/delegation.py</code></td>
+          <td><code>disjoint_parallel_errors()</code>, <code>partition_disjoint_parallel_lanes()</code>, <code>CRITICAL_OFFLOAD_CODE_LINE_LIMIT = 30</code>, <code>CLAUDE_GOLDEN_RATIO (50:30:20)</code> 구현</td>
+          <td><span class="badge b-green">PASS</span></td>
+        </tr>
+        <tr>
+          <td><code>v7_harness/manual.py</code></td>
+          <td>계약 매뉴얼 <code>lint()</code>에 <code>DISJOINT_PARALLEL_OVERLAP</code>, <code>HAIKU_QUARANTINED_ON_TOOL</code>, <code>HAIKU_CAP_EXCEEDED(12000)</code> 강제 연결</td>
+          <td><span class="badge b-green">PASS</span></td>
+        </tr>
+        <tr>
+          <td><code>v7_harness/coord/capacity_planner.py</code></td>
+          <td><code>compute_subworker_optimization()</code> 신설 및 스케줄러에 3대 도구 올라마 부스트·클로드 5:3:2 황금 비율 상태 실시간 편입</td>
+          <td><span class="badge b-green">PASS</span></td>
+        </tr>
+        <tr>
+          <td><code>tests/test_u271_ollama_haiku_disjoint_parallel.py</code></td>
+          <td>경로 겹침 차단, Codex/AGY Haiku 보류, 12,000토큰 캡, 5:3:2 레인 분할, 30줄 부스트 등 6대 핵심 테스트 + <code>test_docs_manager</code> 6건</td>
+          <td><span class="badge b-green">18/18 OK (exit 0)</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

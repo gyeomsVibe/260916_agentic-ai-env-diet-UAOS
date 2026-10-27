@@ -105,5 +105,23 @@ class TestDocsManager(unittest.TestCase):
         self.assertIn("Bar Title", index_text)
 
 
+
+    def test_dual_deployment_artifact_copy(self):
+        from v7_harness.docs_manager import deploy_artifact_to_docs
+        # Create a mock artifact HTML file
+        artifact_path = self.project / 'sample_artifact.html'
+        artifact_content = '<html><head><title>Artifact Title</title></head><body>Hello Artifact</body></html>'
+        artifact_path.write_text(artifact_content, encoding='utf-8')
+
+        deployed_path = deploy_artifact_to_docs(self.project, artifact_path, title='MIA HTML Artifact Report')
+        self.assertTrue(deployed_path.is_file())
+        self.assertEqual(deployed_path.name, '01_MIA_HTML_Artifact_Report.html')
+        self.assertEqual(deployed_path.read_text(encoding='utf-8'), artifact_content)
+
+        index_text = (self.project / 'docs' / INDEX_FILENAME).read_text(encoding='utf-8')
+        self.assertIn('01_MIA_HTML_Artifact_Report.html', index_text)
+        self.assertIn('Artifact Title', index_text)
+
+
 if __name__ == "__main__":
     unittest.main()

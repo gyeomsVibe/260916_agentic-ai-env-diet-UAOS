@@ -37,7 +37,8 @@ DEFAULT_EXCLUDES = {
     ".coord/stream",
     ".coord/mailbox",  # Runtime mailbox is transport evidence and must not trigger SOURCE_DIVERGED
     ".coord/usage",    # Runtime telemetry ledger and must not trigger SOURCE_DIVERGED
-    ".coord/presence",  # Heartbeats written by other tools' session hooks while a pilot runs
+    ".coord/presence",
+    ".coord/mediator",  # Heartbeats written by other tools' session hooks while a pilot runs
     ".coord/codex_brief.md",
     ".coord/WAIT_STATUS.md",
     # U48-W1: `pilot run` defaults to `--work-dir .coord`, which puts the broker DB and its writer lock inside the
