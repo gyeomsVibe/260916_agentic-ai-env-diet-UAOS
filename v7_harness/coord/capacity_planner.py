@@ -355,14 +355,17 @@ def _scan_agy_brain_transcripts(
                 cur_prefix_sha = ""
                 try:
                     with tf.open("rb") as fh:
+                        head_256 = fh.read(min(256, f_size))
+                        cur_prefix_sha = hashlib.sha256(head_256).hexdigest()[:16] if head_256 else ""
                         if (
                             isinstance(cached, dict)
                             and 0 < prev_offset <= f_size
                             and prev_prefix_sha
+                            and prev_prefix_sha == cur_prefix_sha
                             and isinstance(cached.get("events"), list)
                         ):
-                            prefix_bytes = fh.read(prev_offset)
-                            if hashlib.sha256(prefix_bytes).hexdigest()[:16] == prev_prefix_sha:
+                            fh.seek(prev_offset - 1)
+                            if fh.read(1) == b"\n":
                                 can_seek = True
                                 raw_chunk = fh.read(f_size - prev_offset)
                             else:
@@ -378,8 +381,6 @@ def _scan_agy_brain_transcripts(
                         else:
                             complete_bytes = raw_chunk[: last_nl + 1]
                             new_offset = (prev_offset + last_nl + 1) if can_seek else (last_nl + 1)
-                        fh.seek(0)
-                        cur_prefix_sha = hashlib.sha256(fh.read(new_offset)).hexdigest()[:16] if new_offset > 0 else ""
                 except OSError:
                     continue
 
@@ -901,17 +902,28 @@ def build_compact_capacity_head(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_compact_status_line(snapshot: dict[str, Any]) -> str:
-    """Single-line (<=200 chars / ~40 tok) status for routine turns so chat history is never bloated by tables."""
+    """Single-line (<=200 chars / ~40 tok) status for routine turns; naturally bounded <=185 chars without truncation."""
     head = snapshot.get("compact_head") or build_compact_capacity_head(snapshot)
     rem = head.get("rem_5h") or {}
     cards = head.get("cards_5h") or {}
-    line = (
-        f"[용량헤더] 지휘={str(head.get('conductor')).upper()}({head.get('mode')}) "
-        f"| 5h가용(카드): agy={rem.get('antigravity')}({cards.get('antigravity')}) "
-        f"claude={rem.get('claude')}({cards.get('claude')}) codex={rem.get('codex')}({cards.get('codex')}) "
-        f"| 오프로드={head.get('offload_pct')}% | 상태={head.get('wait_status')}"
+
+    def _f_rem(v: Any) -> str:
+        return str(min(999_999_999, max(0, int(v)))) if isinstance(v, (int, float)) and not isinstance(v, bool) else "UNK"
+
+    def _f_crd(v: Any) -> str:
+        return str(min(9999, max(0, int(v)))) if isinstance(v, (int, float)) and not isinstance(v, bool) else "UNK"
+
+    cond = str(head.get("conductor") or "antigravity").upper()[:12]
+    mode = str(head.get("mode") or "BALANCED_3TOOL_COLLAB")[:36]
+    off_pct = round(float(head.get("offload_pct") or 0.0), 1)
+    w_stat = str(head.get("wait_status") or "UNKNOWN")[:12]
+    return (
+        f"[용량헤더] 지휘={cond}({mode}) "
+        f"| 5h가용(카드): agy={_f_rem(rem.get('antigravity'))}({_f_crd(cards.get('antigravity'))}) "
+        f"claude={_f_rem(rem.get('claude'))}({_f_crd(cards.get('claude'))}) "
+        f"codex={_f_rem(rem.get('codex'))}({_f_crd(cards.get('codex'))}) "
+        f"| 오프로드={off_pct}% | 상태={w_stat}"
     )
-    return line[:200]
 
 
 def refresh_capacity_zero_token(

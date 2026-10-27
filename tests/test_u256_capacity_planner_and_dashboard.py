@@ -437,6 +437,22 @@ class U256Counter(unittest.TestCase):
         self.assertEqual(results, [2, 2, 2, 2])
         persisted = json.loads(wm_conc.read_text(encoding="utf-8"))
         self.assertEqual(len(persisted["files"][str(tf)]["events"]), 2)
+        self.assertEqual(len(persisted["files"][str(tf)]["prefix_sha"]), 16)
+
+        # 5) Worst-case compact status line is naturally <= 200 chars and ends with '상태=' without truncation
+        worst_line = C.render_compact_status_line({
+            "compact_head": {
+                "conductor": "ANTIGRAVITY_LONG_NAME",
+                "mode": "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON_EXTRA",
+                "rem_5h": {"antigravity": 999999999999, "claude": 999999999999, "codex": 999999999999},
+                "cards_5h": {"antigravity": 999999, "claude": 999999, "codex": 999999},
+                "offload_pct": 100.0,
+                "wait_status": "WAITING_LONG_STATUS",
+            }
+        })
+        self.assertLessEqual(len(worst_line), 200)
+        self.assertIn("| 상태=WAITING_LONG", worst_line)
+        self.assertTrue(worst_line.endswith("WAITING_LONG"))
 
 
 if __name__ == "__main__":
