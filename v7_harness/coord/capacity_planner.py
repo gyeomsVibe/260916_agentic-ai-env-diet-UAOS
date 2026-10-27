@@ -297,77 +297,118 @@ def _scan_agy_brain_transcripts(
     cutoff_ts: float,
     watermark_path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Incrementally ingest Antigravity (Gemini 4 Argon) PLANNER_RESPONSE token counts using byte-offset watermarks."""
+    """Incrementally ingest Antigravity (Gemini 4 Argon) PLANNER_RESPONSE token counts using newline-safe byte watermarks."""
+    import hashlib
+
+    from v7_harness.coord.stream import _exclusive
+
     brain_root = home_dir / ".gemini" / "antigravity" / "brain"
     if not brain_root.is_dir():
         return []
     wm_file = watermark_path or (home_dir / ".uaos" / "usage" / "brain_transcript_watermark.json")
-    wm_files: dict[str, dict[str, Any]] = {}
-    if wm_file.is_file():
-        try:
-            raw_wm = json.loads(wm_file.read_text(encoding="utf-8"))
-            if isinstance(raw_wm, dict) and isinstance(raw_wm.get("files"), dict):
-                wm_files = raw_wm["files"]
-        except (OSError, ValueError):
-            wm_files = {}
-
-    dirty = False
-    out: list[dict[str, Any]] = []
-    for tf in brain_root.glob("*/.system_generated/logs/transcript.jsonl"):
-        try:
-            st = tf.stat()
-            f_size = int(st.st_size)
-            f_mtime = float(st.st_mtime)
-        except OSError:
-            continue
-        f_key = str(tf)
-        if cutoff_ts <= time.time() and f_mtime < cutoff_ts and f_key not in wm_files:
-            continue
-        conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
-        cached = wm_files.get(f_key)
-        if (
-            isinstance(cached, dict)
-            and int(cached.get("size") or -1) == f_size
-            and abs(float(cached.get("mtime") or 0.0) - f_mtime) < 1e-3
-            and isinstance(cached.get("events"), list)
-        ):
-            file_events = cached["events"]
-        elif (
-            isinstance(cached, dict)
-            and 0 < int(cached.get("size") or 0) < f_size
-            and isinstance(cached.get("events"), list)
-        ):
-            prev_size = int(cached["size"])
+    wm_file.parent.mkdir(parents=True, exist_ok=True)
+    with _exclusive(wm_file.with_suffix(".lock")):
+        wm_files: dict[str, dict[str, Any]] = {}
+        if wm_file.is_file():
             try:
-                with tf.open("rb") as fh:
-                    fh.seek(prev_size)
-                    tail_bytes = fh.read(f_size - prev_size)
-                tail_lines = tail_bytes.decode("utf-8", errors="replace").splitlines()
+                raw_wm = json.loads(wm_file.read_text(encoding="utf-8"))
+                if isinstance(raw_wm, dict) and isinstance(raw_wm.get("files"), dict):
+                    wm_files = raw_wm["files"]
+            except (OSError, ValueError):
+                wm_files = {}
+
+        dirty = False
+        out: list[dict[str, Any]] = []
+        seen_f_keys: set[str] = set()
+
+        for tf in brain_root.glob("*/.system_generated/logs/transcript.jsonl"):
+            try:
+                st = tf.stat()
+                f_size = int(st.st_size)
+                f_mtime = float(st.st_mtime)
             except OSError:
                 continue
-            new_ev = _parse_brain_planner_lines(tail_lines, conv_id)
-            file_events = list(cached["events"]) + new_ev
-            wm_files[f_key] = {"size": f_size, "mtime": f_mtime, "events": file_events}
-            dirty = True
-        else:
-            try:
-                lines = tf.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
+            f_key = str(tf)
+            seen_f_keys.add(f_key)
+            if cutoff_ts <= time.time() and f_mtime < cutoff_ts:
+                if f_key in wm_files:
+                    wm_files.pop(f_key, None)
+                    dirty = True
                 continue
-            file_events = _parse_brain_planner_lines(lines, conv_id)
-            wm_files[f_key] = {"size": f_size, "mtime": f_mtime, "events": file_events}
+            conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
+            cached = wm_files.get(f_key)
+
+            if (
+                isinstance(cached, dict)
+                and int(cached.get("file_size") or -1) == f_size
+                and abs(float(cached.get("mtime") or 0.0) - f_mtime) < 1e-3
+                and isinstance(cached.get("events"), list)
+            ):
+                file_events = [ev for ev in cached["events"] if float(ev.get("ts") or 0.0) >= cutoff_ts]
+                if len(file_events) != len(cached["events"]):
+                    wm_files[f_key]["events"] = file_events
+                    dirty = True
+            else:
+                prev_offset = int(cached.get("offset") or 0) if isinstance(cached, dict) else 0
+                prev_prefix_sha = str(cached.get("prefix_sha") or "") if isinstance(cached, dict) else ""
+                can_seek = False
+                cur_prefix_sha = ""
+                try:
+                    with tf.open("rb") as fh:
+                        if (
+                            isinstance(cached, dict)
+                            and 0 < prev_offset <= f_size
+                            and prev_prefix_sha
+                            and isinstance(cached.get("events"), list)
+                        ):
+                            prefix_bytes = fh.read(prev_offset)
+                            if hashlib.sha256(prefix_bytes).hexdigest()[:16] == prev_prefix_sha:
+                                can_seek = True
+                                raw_chunk = fh.read(f_size - prev_offset)
+                            else:
+                                fh.seek(0)
+                                raw_chunk = fh.read(f_size)
+                        else:
+                            fh.seek(0)
+                            raw_chunk = fh.read(f_size)
+                        last_nl = raw_chunk.rfind(b"\n")
+                        if last_nl == -1:
+                            complete_bytes = b""
+                            new_offset = prev_offset if can_seek else 0
+                        else:
+                            complete_bytes = raw_chunk[: last_nl + 1]
+                            new_offset = (prev_offset + last_nl + 1) if can_seek else (last_nl + 1)
+                        fh.seek(0)
+                        cur_prefix_sha = hashlib.sha256(fh.read(new_offset)).hexdigest()[:16] if new_offset > 0 else ""
+                except OSError:
+                    continue
+
+                chunk_lines = complete_bytes.decode("utf-8", errors="replace").splitlines()
+                parsed_new = _parse_brain_planner_lines(chunk_lines, conv_id)
+                base_events = list(cached["events"]) if (can_seek and isinstance(cached, dict)) else []
+                file_events = [ev for ev in (base_events + parsed_new) if float(ev.get("ts") or 0.0) >= cutoff_ts]
+                wm_files[f_key] = {
+                    "offset": new_offset,
+                    "file_size": f_size,
+                    "mtime": f_mtime,
+                    "prefix_sha": cur_prefix_sha,
+                    "events": file_events,
+                }
+                dirty = True
+
+            out.extend(file_events)
+
+        stale_keys = [k for k in wm_files if k not in seen_f_keys]
+        for k in stale_keys:
+            wm_files.pop(k, None)
             dirty = True
 
-        for ev in file_events:
-            if float(ev.get("ts") or 0.0) >= cutoff_ts:
-                out.append(ev)
-
-    if dirty:
-        try:
-            _atomic_write_json(wm_file, {"schema": "uaos-brain-watermark-v1", "files": wm_files})
-        except OSError:
-            pass
-    return out
+        if dirty:
+            try:
+                _atomic_write_json(wm_file, {"schema": "uaos-brain-watermark-v1", "files": wm_files})
+            except OSError:
+                pass
+        return out
 
 
 def collect_capacity_snapshot(
@@ -756,14 +797,7 @@ def build_capacity_aware_schedule(
         agy_rem_share_pct = "UNKNOWN"
     argon_mode = (
         "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON"
-        if (
-            (ranked_paid and ranked_paid[0] == "antigravity")
-            or (
-                (engines.get("antigravity") or {}).get("presence_state") == "ACTIVE"
-                and agy_used_5h > 0
-                and agy_used_5h >= max(int((engines.get(t) or {}).get("used_5h_effective_tokens") or 0) for t in PAID_TOOLS)
-            )
-        )
+        if ranked_paid and ranked_paid[0] == "antigravity"
         else "BALANCED_3TOOL_COLLAB"
     )
 
@@ -787,20 +821,30 @@ def extract_wait_transparency(desk: Path) -> dict[str, Any]:
     try:
         raw = json.loads(sched_path.read_text(encoding="utf-8"))
         phases = raw.get("phases") if isinstance(raw, dict) else None
-        if not isinstance(phases, list):
-            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 형식 오류", "items": []}
+        if not isinstance(phases, list) or len(phases) == 0:
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 형식 오류 또는 빈 일정", "items": []}
     except (OSError, ValueError):
         return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 읽기 실패", "items": []}
 
     terminal = {"DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED", "MERGED"}
+    active_states = {"READY", "ACTIVE", "REVIEW", "WAITING", "BLOCKED", "IN_PROGRESS", "PENDING", "QUEUED"}
+    valid_states = terminal | active_states
     items: list[dict[str, str]] = []
+    done_count = 0
     for p in phases:
         if not isinstance(p, dict):
-            continue
-        st = str(p.get("state") or "UNKNOWN").upper()
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 행 형식 오류", "items": []}
+        pid_raw = p.get("phase_id")
+        st_raw = p.get("state")
+        if not isinstance(pid_raw, str) or not pid_raw.strip() or not isinstance(st_raw, str) or not st_raw.strip():
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 필수 필드 누락", "items": []}
+        pid = pid_raw.strip()
+        st = st_raw.strip().upper()
+        if st not in valid_states:
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": f"미지원 상태값({st})", "items": []}
         if st in terminal:
+            done_count += 1
             continue
-        pid = str(p.get("phase_id") or "")
         owner = str(p.get("owner_tool") or p.get("owner") or "unknown")
         reviewer = str(p.get("reviewer") or p.get("judge") or "")
         wait_on = str(p.get("waiting_on") or p.get("blocker_reason") or "")
@@ -811,7 +855,7 @@ def extract_wait_transparency(desk: Path) -> dict[str, Any]:
             "reviewer": reviewer,
             "waiting_on": wait_on or (f"{reviewer}-verdict" if st == "REVIEW" and reviewer else "execution"),
         })
-    if not items:
+    if not items and done_count > 0:
         return {
             "status": "ALL_DONE",
             "active_or_waiting_count": 0,
@@ -828,34 +872,46 @@ def extract_wait_transparency(desk: Path) -> dict[str, Any]:
 
 
 def build_compact_capacity_head(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Return an ultra-compact (<260B / ~45 tok) routing header so scheduling never loads 9,750B snapshot JSON."""
+    """Return an ultra-compact (<=320B / ~50 tok) routing header so scheduling never loads 9,750B snapshot JSON."""
     sched = snapshot.get("schedule_recommendation") or {}
     engines = snapshot.get("engines") or {}
     off = snapshot.get("offload_efficiency_24h") or {}
     wait_info = snapshot.get("wait_transparency") or {}
+
+    def _clamp_rem(val: Any) -> int | str:
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return min(999_999_999, max(0, int(val)))
+        return "UNKNOWN"
+
+    def _clamp_cards(val: Any) -> int | str:
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return min(9999, max(0, int(val)))
+        return "UNKNOWN"
+
     return {
         "schema": "uaos-capacity-head-v1",
         "ts": int(float(snapshot.get("timestamp") or 0)),
-        "conductor": sched.get("recommended_conductor", "antigravity"),
-        "mode": sched.get("argon_tier_mode", "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON"),
-        "rem_5h": {t: (engines.get(t) or {}).get("usable_remaining_5h_tokens", "UNKNOWN") for t in PAID_TOOLS},
-        "cards_5h": {t: (engines.get(t) or {}).get("usable_cards_capacity", "UNKNOWN") for t in PAID_TOOLS},
-        "offload_pct": off.get("offload_share_pct", 0.0),
-        "wait_status": wait_info.get("status", "UNKNOWN"),
+        "conductor": str(sched.get("recommended_conductor", "antigravity"))[:12],
+        "mode": str(sched.get("argon_tier_mode", "BALANCED_3TOOL_COLLAB"))[:36],
+        "rem_5h": {t: _clamp_rem((engines.get(t) or {}).get("usable_remaining_5h_tokens")) for t in PAID_TOOLS},
+        "cards_5h": {t: _clamp_cards((engines.get(t) or {}).get("usable_cards_capacity")) for t in PAID_TOOLS},
+        "offload_pct": round(float(off.get("offload_share_pct") or 0.0), 1),
+        "wait_status": str(wait_info.get("status", "UNKNOWN"))[:12],
     }
 
 
 def render_compact_status_line(snapshot: dict[str, Any]) -> str:
-    """Single-line (<160 chars / ~35 tok) status for routine turns so chat history is never bloated by tables."""
+    """Single-line (<=200 chars / ~40 tok) status for routine turns so chat history is never bloated by tables."""
     head = snapshot.get("compact_head") or build_compact_capacity_head(snapshot)
     rem = head.get("rem_5h") or {}
     cards = head.get("cards_5h") or {}
-    return (
+    line = (
         f"[용량헤더] 지휘={str(head.get('conductor')).upper()}({head.get('mode')}) "
         f"| 5h가용(카드): agy={rem.get('antigravity')}({cards.get('antigravity')}) "
         f"claude={rem.get('claude')}({cards.get('claude')}) codex={rem.get('codex')}({cards.get('codex')}) "
         f"| 오프로드={head.get('offload_pct')}% | 상태={head.get('wait_status')}"
     )
+    return line[:200]
 
 
 def refresh_capacity_zero_token(
@@ -866,13 +922,15 @@ def refresh_capacity_zero_token(
     min_interval_s: float = 60.0,
     html_out: Path | None = None,
 ) -> dict[str, Any]:
-    """Zero-paid-token background/hook updater with debounce to prevent redundant disk scans and LLM tool turns."""
+    """Zero-paid-token background/hook updater with debounce across runs, schedule, and brain transcript mtimes."""
     moment = float(now if now is not None else time.time())
     desk = shared_desk(Path(project_root))
+    home_dir = Path(home) if home is not None else Path.home()
     snap_path = desk / ".coord" / "usage" / "capacity_snapshot.json"
     head_path = desk / ".coord" / "usage" / "capacity_head.json"
     runs_path = ledger_file(desk)
     sched_path = desk / ".coord" / "master_schedule.json"
+    brain_root = home_dir / ".gemini" / "antigravity" / "brain"
 
     if snap_path.is_file() and head_path.is_file() and min_interval_s > 0:
         try:
@@ -880,12 +938,21 @@ def refresh_capacity_zero_token(
             last_ts = float(head_data.get("ts") or 0.0)
             runs_mtime = runs_path.stat().st_mtime if runs_path.is_file() else 0.0
             sched_mtime = sched_path.stat().st_mtime if sched_path.is_file() else 0.0
-            if (moment - last_ts) < min_interval_s and runs_mtime <= last_ts and sched_mtime <= last_ts:
+            brain_mtime = max(
+                (p.stat().st_mtime for p in brain_root.glob("*/.system_generated/logs/transcript.jsonl")),
+                default=0.0,
+            ) if brain_root.is_dir() else 0.0
+            if (
+                (moment - last_ts) < min_interval_s
+                and runs_mtime <= last_ts
+                and sched_mtime <= last_ts
+                and brain_mtime <= last_ts
+            ):
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
         except (OSError, ValueError):
             pass
 
-    snap = collect_capacity_snapshot(desk, home=home, now=moment, persist=True)
+    snap = collect_capacity_snapshot(desk, home=home_dir, now=moment, persist=True)
     if html_out is not None:
         render_html_dashboard(snap, Path(html_out))
     return {"ok": True, "debounced": False, "paid_tokens_used": 0, "head": snap["compact_head"]}

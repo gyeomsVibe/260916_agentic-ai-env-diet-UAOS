@@ -578,15 +578,40 @@ def cmd_pilot_reconcile(args: argparse.Namespace) -> int:
 def cmd_coord_capacity(args: argparse.Namespace) -> int:
     from .coord.capacity_planner import (
         collect_capacity_snapshot,
+        refresh_capacity_zero_token,
+        render_compact_status_line,
         render_html_dashboard,
         render_terminal_dashboard,
     )
 
-    snap = collect_capacity_snapshot(Path(args.project))
-    if args.html:
-        render_html_dashboard(snap, Path(args.html))
+    project = Path(args.project)
+    html_out = Path(args.html) if args.html else None
+    if getattr(args, "debounce", 0.0) and float(args.debounce) > 0:
+        res = refresh_capacity_zero_token(project, min_interval_s=float(args.debounce), html_out=html_out)
+        if args.format == "head":
+            print(json.dumps(res["head"], ensure_ascii=False, separators=(",", ":")))
+            return 0
+        if args.format == "compact":
+            print(render_compact_status_line({"compact_head": res["head"]}))
+            return 0
+        if res.get("debounced"):
+            snap_file = project / ".coord" / "usage" / "capacity_snapshot.json"
+            if snap_file.is_file():
+                snap = json.loads(snap_file.read_text(encoding="utf-8"))
+            else:
+                snap = collect_capacity_snapshot(project)
+        else:
+            snap = collect_capacity_snapshot(project)
+    else:
+        snap = collect_capacity_snapshot(project)
+        if html_out:
+            render_html_dashboard(snap, html_out)
     if args.format == "json":
         print(json.dumps(snap, ensure_ascii=False, indent=2))
+    elif args.format == "head":
+        print(json.dumps(snap.get("compact_head"), ensure_ascii=False, separators=(",", ":")))
+    elif args.format == "compact":
+        print(render_compact_status_line(snap))
     else:
         print(render_terminal_dashboard(snap))
     return 0
@@ -937,10 +962,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_coord_cap = p_coord_subs.add_parser(
         "capacity",
-        help="U256: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, schedule assignments, and dashboard",
+        help="U256/U265: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, compact head, and dashboard",
     )
     p_coord_cap.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_cap.add_argument("--format", choices=["json", "table"], default="table")
+    p_coord_cap.add_argument("--format", choices=["json", "table", "head", "compact"], default="table")
+    p_coord_cap.add_argument("--debounce", type=float, default=0.0, help="Debounce interval in seconds for 0-paid-token refresh")
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
 
@@ -1869,8 +1895,15 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             if args.tool and args.state:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
                 # U134: a turn start clears a stale LIMITED/ABSENT lease; an ACTIVE beat sends queued letters.
+                is_turn_start = hook_turn_start(stdin_text) and not getattr(args, "post_tool", False)
                 mark(project, args.tool, args.state, ttl_s=args.ttl, session=hook_session(stdin_text),
-                     turn_start=hook_turn_start(stdin_text) and not getattr(args, "post_tool", False), dispatch=True)
+                     turn_start=is_turn_start, dispatch=True)
+                if is_turn_start:
+                    try:
+                        from .coord.capacity_planner import refresh_capacity_zero_token
+                        refresh_capacity_zero_token(project, min_interval_s=60.0)
+                    except Exception:  # noqa: BLE001
+                        pass
             presence = read_all(project)
             if say == "agy":
                 line = agy_line(project, presence, stdin_text)
