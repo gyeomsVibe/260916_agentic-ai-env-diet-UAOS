@@ -486,6 +486,39 @@ class U256Counter(unittest.TestCase):
         self.assertTrue(deb_html["debounced"])
         self.assertTrue(html_target.is_file())
 
+    def test_u267_unified_five_chip_telemetry_in_snapshot_and_dashboards(self):
+        sched_path = self.root / ".coord/master_schedule.json"
+        sched_before = {
+            "phases": [
+                {"phase_id": "U267-A", "owner_tool": "codex", "state": "READY"},
+                {"phase_id": "U267-B", "owner_tool": "antigravity", "state": "MERGED"},
+            ]
+        }
+        sched_path.write_text(json.dumps(sched_before), encoding="utf-8")
+        raw_before = sched_path.read_text(encoding="utf-8")
+
+        snap = C.collect_capacity_snapshot(self.root, persist=True)
+        self.assertEqual(sched_path.read_text(encoding="utf-8"), raw_before)
+        fc = snap.get("five_chip_telemetry") or {}
+        self.assertEqual(fc.get("schema"), "uaos.five_chip_telemetry.v1")
+        self.assertTrue(fc.get("read_only"))
+        chips = fc.get("chips") or {}
+        self.assertEqual(chips["1_todos_schedule"]["total"], 2)
+        self.assertEqual(chips["1_todos_schedule"]["done"], 1)
+        self.assertEqual(chips["1_todos_schedule"]["remaining"], 1)
+        self.assertEqual(len(chips["2_three_tool_seats"]["seats"]), 5)
+        self.assertTrue(chips["5_quota_and_reset_timer"]["auto_resume_on_reset"])
+
+        term = C.render_terminal_dashboard(snap)
+        self.assertIn("[5-Chip 상태바]", term)
+        self.assertIn("①일정:1/2(남은1)", term)
+
+        html_out = self.root / ".work/u267_dash.html"
+        C.render_html_dashboard(snap, html_out)
+        html_text = html_out.read_text(encoding="utf-8")
+        self.assertIn('id="five-chip-bar"', html_text)
+        self.assertIn("① 할 일 · 마스터 일정 (Todos)", html_text)
+
 
 if __name__ == "__main__":
     unittest.main()
