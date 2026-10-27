@@ -1080,6 +1080,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_card_result.add_argument("--mergeable", required=True, choices=["yes", "no"])
     p_card_result.add_argument("--tests", required=True, help="<run>/<fail>, e.g. 1590/0")
     p_card_result.add_argument("--blocker", default="none", help="none, or one line naming the blocker")
+    p_card_result.add_argument("--title", default=None, help="U267: concise Korean core title for user status reporting")
     p_card_result.set_defaults(func=cmd_card_result)
     p_card_results = p_card_subs.add_parser(
         "results", help="List the RESULT lines of the main checkout and every worktree (newest per card)")
@@ -1092,6 +1093,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_card_done.add_argument("--name", required=True, help="Project name the user knows")
     p_card_done.add_argument("--card", required=True, help="Card id, e.g. U221")
     p_card_done.add_argument("--what", required=True, help="One plain sentence: what works now")
+    p_card_done.add_argument("--title", default=None, help="U267: concise Korean core title for the card")
     p_card_done.add_argument("--pr-url", required=True, help="https://github.com/<owner>/<repo>/pull/<n> of the merged PR")
     p_card_done.add_argument("--head", required=True, help="40-hex PR head sha (or its merge commit for squash/rebase)")
     p_card_done.add_argument("--runtime", help="Installed runtime version, if the card needed a reinstall")
@@ -1532,7 +1534,7 @@ def cmd_card_result(args: argparse.Namespace) -> int:
 
     try:
         result = card_pipeline.write_result(Path(args.project), args.card, args.pr, args.mergeable, args.tests,
-                                            args.blocker)
+                                            args.blocker, title=getattr(args, "title", None))
     except ValueError as exc:
         _print_json({"ok": False, "error": str(exc)})
         return 2
@@ -1546,7 +1548,7 @@ def cmd_card_done(args: argparse.Namespace) -> int:
 
     try:
         report = card_pipeline.done_report(args.name, args.card, args.what, args.pr_url, args.head, args.runtime,
-                                           args.user_action)
+                                           args.user_action, title=getattr(args, "title", None) or card_pipeline.card_title(Path(args.project), args.card) or None)
     except ValueError as exc:
         _print_json({"ok": False, "error": str(exc)})
         return 2

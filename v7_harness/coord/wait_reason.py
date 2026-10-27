@@ -48,6 +48,22 @@ def _gate_stops(project: Path, tool: str, moment: float) -> list[str]:
     return cards
 
 
+def _phase_title(project: Path, phase: dict[str, Any] | None, card_id: str) -> str:
+    """U267: resolve a phase or card's concise Korean core title from the phase row or `.coord/cards/` / `.work/cards/`."""
+    if isinstance(phase, dict):
+        for key in ("title", "name", "summary", "topic"):
+            val = phase.get(key)
+            if isinstance(val, str) and val.strip():
+                from ..card_pipeline import clean_core_title, is_bare_id_label
+
+                cleaned = clean_core_title(val)
+                if cleaned and not is_bare_id_label(cleaned):
+                    return cleaned
+    from ..card_pipeline import card_title
+
+    return card_title(project, card_id)
+
+
 def _schedule_waits(project: Path, tool: str) -> list[str]:
     """U263: surface live REVIEW / peer-ACTIVE waits from `.coord/master_schedule.json` using observed fields only."""
     sched_path = Path(project) / ".coord" / "master_schedule.json"
@@ -66,16 +82,18 @@ def _schedule_waits(project: Path, tool: str) -> list[str]:
             continue
         pid = str(phase["phase_id"])
         state = str(phase.get("state") or "")
+        title = _phase_title(project, phase, pid)
+        prefix = f"[{title}] " if title else ""
         if state == "REVIEW":
             reviewer = str(phase.get("reviewer") or "unspecified")
             author = str(phase.get("author_tool") or phase.get("owner_tool") or "unspecified")
             waiting_on = str(phase.get("waiting_on") or "verdict-pending")
-            out.append(f"{pid} 판정 대기 중(state=REVIEW, 작성={author}, 판정자={reviewer}, 대기사유={waiting_on})")
+            out.append(f"{prefix}{pid} 판정 대기 중(state=REVIEW, 작성={author}, 판정자={reviewer}, 대기사유={waiting_on})")
         elif state == "ACTIVE":
             owner = str(phase.get("owner_tool") or "")
             if owner and owner != tool:
                 waiting_on = str(phase.get("waiting_on") or "in-progress")
-                out.append(f"{pid} 작업 대기 중(state=ACTIVE, 담당={owner}, 대기사유={waiting_on})")
+                out.append(f"{prefix}{pid} 작업 대기 중(state=ACTIVE, 담당={owner}, 대기사유={waiting_on})")
     return out
 
 
@@ -98,7 +116,9 @@ def reasons(project: Path, tool: str, *, now: float | None = None) -> list[str]:
             else:
                 lines.append(f"{other} 사용량 한도로 멈춤(state=LIMITED, 복귀시각 미정)")
     for card in _gate_stops(project, tool, moment):
-        lines.append(f"{card} 진행 없이 다시 멈춰 자동 재시작 중단 → 다음 카드 대기")
+        title = _phase_title(project, None, card)
+        prefix = f"[{title}] " if title else ""
+        lines.append(f"{prefix}{card} 진행 없이 다시 멈춰 자동 재시작 중단 → 다음 카드 대기")
     lines.extend(_schedule_waits(project, tool))
     return lines
 
@@ -140,7 +160,9 @@ def write_wait_status_report(project: Path, tool: str, *, now: float | None = No
                     if st_clean in DONE_STATES:
                         done_count += 1
                     else:
-                        active_or_ready.append(f"{pid.strip()}({st_clean})")
+                        title = _phase_title(project, ph, pid.strip())
+                        label = f"{title}({pid.strip()}, {st_clean})" if title else f"{pid.strip()}({st_clean})"
+                        active_or_ready.append(label)
                 schedule_valid = not has_malformed and (done_count + len(active_or_ready) > 0)
         except (OSError, ValueError):
             schedule_valid = False
