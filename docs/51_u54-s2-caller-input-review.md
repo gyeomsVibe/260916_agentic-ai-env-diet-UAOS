@@ -19,7 +19,7 @@
 
 - 모델 출력이 실행 파일·셸 명령이 되는 곳(명령 주입): **0곳**
 - 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **11곳** (U120 `coord/agy_dispatch.py` 추가; U166 병합자 호출은 같은 함수의 `check_args` 검사로 GUARDED)
-- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **18곳** (U103 `coord/desk_delta.py`, U134 `coord/presence.py`, U146-A `coord/next_card.py`·`coord/stop_gate.py`, U146a-R `coord/stop_gate.py` push 허가 읽기, U166 `coord/merge_route.py` PR 읽기, U181 `coord/boot_task.py` 부팅 실행기, U213 `coord/day_brief.py` 최근 병합 읽기 추가)
+- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **19곳** (U277 `coord/deliver.py` 요청 저장소 원격 주소 읽기, U103 `coord/desk_delta.py`, U134 `coord/presence.py`, U146-A `coord/next_card.py`·`coord/stop_gate.py`, U146a-R `coord/stop_gate.py` push 허가 읽기, U166 `coord/merge_route.py` PR 읽기, U181 `coord/boot_task.py` 부팅 실행기, U213 `coord/day_brief.py` 최근 병합 읽기 추가)
 - 사람 운영자(operator)가 명령을 직접 넘기는 도구(OPERATOR_COMMAND): **3곳**
 - 따라서 U54-S2 결론: 지금 코드에는 POLICY_DENIED 관문을 새로 끼울 **실행 지점이 없다**. 새 CALLER_INPUT 지점이 생기면 `tests/test_u54_s2_caller_review.py`가 실패해서 이 검토를 다시 하게 만든다.
 
@@ -32,6 +32,7 @@
 | `calculator_gate.py:64` | DATA_ARG | `parent_digests()`가 병합 중에만 `git show HEAD:<경로>`·`git show MERGE_HEAD:<경로>`를 돌린다. 실행 파일 `git`과 부모 이름은 고정이고, 경로는 git 자신의 스테이지 목록(`git diff --cached --name-only`)에서 온 값이 argv 한 칸으로만 간다. 모델 출력이 닿지 않고 셸 없음. |
 | `coord/deliver.py:71` | DATA_ARG | `codex queue --thread <id> --message <편지>`. 편지 본문은 `--message` 값 한 칸이다. |
 | `coord/deliver.py:195` | DATA_ARG | `claude -p <편지> --output-format json`. 편지는 `-p` 값 한 칸, `--allowedTools`는 발신 코드의 설정값이다. |
+| `coord/deliver.py:1301` | FIXED_PLAN | U277 요청 묶음(binding) 필드. `git -C <프로젝트> config --get remote.origin.url`: 실행 파일·하위 명령·키 이름이 모두 코드 상수이고 프로젝트 경로는 `-C` 값 한 칸이다. 셸 없음, 5초 제한, 읽기 전용, 실패하면 빈 문자열. |
 | `review.py:128` | DATA_ARG | `review_command()`가 `claude` 고정 명령을 만들고 검토 프롬프트는 값 또는 stdin이다. |
 | `review.py:140` | DATA_ARG | 재시도 때 `--resume <session_id>`를 붙인다. session_id는 제공자(provider) JSON에서 오지만 옵션 값 한 칸이고 실행 파일이 아니다. |
 | `judge.py:166` | DATA_ARG | `run_resolved()`는 argv[0]을 PATH에서 찾기만 한다. 부르는 쪽(`pilot judge`)의 argv[0]은 `codex`/`agy` 고정, 판정 프롬프트는 값이다. |
