@@ -158,7 +158,8 @@ def is_bare_id_label(label: str | None) -> bool:
 
 def card_title(project_or_desk: Path | str, card: str) -> str:
     """U267: resolve a card's human-readable core title from `.coord/cards/`, `.work/cards/`, `master_schedule.json`, or `PLAN.md`."""
-    card = _check(card)
+    if not isinstance(card, str) or not CARD_RE.fullmatch(card):
+        return ""
     base = Path(project_or_desk)
     candidates = [base]
     dot = base / ".git"

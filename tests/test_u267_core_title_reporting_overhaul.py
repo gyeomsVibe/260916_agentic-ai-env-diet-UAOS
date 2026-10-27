@@ -108,6 +108,7 @@ class U267CoreTitleReportingOverhaulTests(unittest.TestCase):
             rep = wait_reason.write_wait_status_report(project, "claude", now=1792080000.0)
             self.assertEqual("WAITING", rep["state"])
             self.assertTrue(any("대시보드 0토큰 증분 스캔 및 공식 모델명 정본화" in r for r in rep["remaining"]), rep)
+            self.assertEqual("", card_pipeline.card_title(project, "A"))
 
     def test_4_global_rule_block_and_project_rules_codify_core_title_reporting(self):
         block = (ROOT / "uaos_everywhere" / "uaos_global_rule_block.md").read_text(encoding="utf-8")
