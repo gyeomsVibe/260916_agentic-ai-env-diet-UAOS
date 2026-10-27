@@ -86,6 +86,11 @@ THREE_TOOL_DEFAULT_ROLES: dict[str, dict[str, str]] = {
         "role": "Zero-Paid-Token Local Calculator (qwen2.5-coder:7b)",
         "pod": "local-calculator-pod",
     },
+    "flagman": {
+        "seat_id": "seat-flagman-autonomous",
+        "role": "Independent Autonomic Traffic & 3-Way AST Merge Flagman (0 Paid Tokens)",
+        "pod": "autonomic-nervous-system-pod",
+    },
 }
 
 TIER2_BINARY_EXTENSIONS = frozenset(
