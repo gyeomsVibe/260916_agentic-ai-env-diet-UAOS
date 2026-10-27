@@ -639,6 +639,12 @@ def collect_capacity_snapshot(
     }
 
     snapshot["wait_transparency"] = extract_wait_transparency(desk)
+    snapshot["five_chip_telemetry"] = _collect_unified_five_chip_telemetry(
+        desk=desk,
+        engines_summary=engines_summary,
+        quotas=quotas,
+        wait_transparency=snapshot["wait_transparency"],
+    )
     head_summary = build_compact_capacity_head(snapshot)
     snapshot["compact_head"] = head_summary
 
@@ -872,6 +878,127 @@ def extract_wait_transparency(desk: Path) -> dict[str, Any]:
     }
 
 
+def _collect_active_watchers(desk: Path) -> list[str]:
+    """Deterministically inspect .coord/watch, .coord/sentinel, and .coord/presence with 0 paid tokens."""
+    watchers: list[str] = []
+    coord_dir = Path(desk) / ".coord"
+    watch_dir = coord_dir / "watch"
+    if watch_dir.is_dir():
+        for wf in sorted(watch_dir.iterdir()):
+            if wf.suffix in (".json", ".pid", ".lock"):
+                watchers.append(f"coord watch ({wf.stem})")
+    sentinel_pid = coord_dir / "sentinel" / "loop.pid"
+    if sentinel_pid.is_file():
+        watchers.append("sentinel.loop (0-token daemon)")
+    pres_dir = coord_dir / "presence"
+    if pres_dir.is_dir():
+        for tool in PAID_TOOLS:
+            pf = pres_dir / f"{tool}.json"
+            if pf.is_file():
+                try:
+                    pdata = json.loads(pf.read_text(encoding="utf-8"))
+                    if isinstance(pdata, dict) and str(pdata.get("state") or "").upper() == "ACTIVE":
+                        label = f"coord watch --target {tool}"
+                        if label not in watchers:
+                            watchers.append(label)
+                except (OSError, ValueError):
+                    pass
+    return watchers
+
+
+def _collect_git_diff_chip(desk: Path) -> list[dict[str, Any]]:
+    """Collect working-tree / staged diff stats (file_count, +added, -removed) with 0 paid tokens."""
+    import subprocess
+
+    desk_path = Path(desk)
+    override_file = desk_path / ".coord" / "usage" / "changed_files.json"
+    if override_file.is_file():
+        try:
+            raw_ov = json.loads(override_file.read_text(encoding="utf-8"))
+            if isinstance(raw_ov, list):
+                return [
+                    {
+                        "path": str(item.get("path") or ""),
+                        "added": int(item.get("added") or 0),
+                        "removed": int(item.get("removed") or 0),
+                    }
+                    for item in raw_ov[:25]
+                    if isinstance(item, dict) and item.get("path")
+                ]
+        except (OSError, ValueError, TypeError):
+            pass
+    if not (desk_path / ".git").exists():
+        return []
+
+    changed: list[dict[str, Any]] = []
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(desk_path), "diff", "--numstat", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1.5,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            for ln in proc.stdout.splitlines()[:25]:
+                parts = ln.split("	")
+                if len(parts) >= 3:
+                    add_s, rem_s, fpath = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                    added = int(add_s) if add_s.isdigit() else 0
+                    removed = int(rem_s) if rem_s.isdigit() else 0
+                    changed.append({"path": fpath, "added": added, "removed": removed})
+    except (OSError, subprocess.SubprocessError, ValueError):
+        changed = []
+    return changed
+
+
+def _collect_unified_five_chip_telemetry(
+    *,
+    desk: Path,
+    engines_summary: dict[str, dict[str, Any]],
+    quotas: dict[str, dict[str, Any]],
+    wait_transparency: dict[str, Any],
+) -> dict[str, Any]:
+    """Unify Show GN 5-Chip Telemetry (`benchmark_logic_transplant.py`) into `capacity_planner` read-only snapshot."""
+    from v7_harness.benchmark_logic_transplant import build_five_chip_telemetry_snapshot
+
+    sched_path = Path(desk) / ".coord" / "master_schedule.json"
+    phases: list[dict[str, Any]] = []
+    if sched_path.is_file():
+        try:
+            raw = json.loads(sched_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("phases"), list):
+                phases = [dict(p) for p in raw["phases"] if isinstance(p, dict)]
+        except (OSError, ValueError):
+            phases = []
+
+    presence_states = {
+        t: str((engines_summary.get(t) or {}).get("presence_state") or "ABSENT").upper()
+        for t in PAID_TOOLS
+    }
+    reset_times = {
+        t: str(q["resets_at"])
+        for t, q in (quotas or {}).items()
+        if isinstance(q, dict) and q.get("resets_at")
+    }
+    return build_five_chip_telemetry_snapshot(
+        schedule_phases=phases,
+        presence_states=presence_states,
+        changed_files=_collect_git_diff_chip(desk),
+        active_watchers=_collect_active_watchers(desk),
+        quota_reset_times=reset_times,
+        foreground_wait_s=0.0,
+        is_background_watcher=True,
+        acting_tool="antigravity",
+        mutate_schedule=False,
+        include_haiku=True,
+        engines_summary=engines_summary,
+        wait_transparency=wait_transparency,
+    )
+
+
 def build_compact_capacity_head(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Return an ultra-compact (<=320B / ~50 tok) routing header so scheduling never loads 9,750B snapshot JSON."""
     sched = snapshot.get("schedule_recommendation") or {}
@@ -981,9 +1108,23 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
     engines = snapshot.get("engines") or {}
     sched = snapshot.get("schedule_recommendation") or {}
     off = snapshot.get("offload_efficiency_24h") or {}
+    fc = ((snapshot.get("five_chip_telemetry") or {}).get("chips")) or {}
+    c1 = fc.get("1_todos_schedule") or {}
+    c2 = fc.get("2_three_tool_seats") or {}
+    c3 = fc.get("3_background_watchers") or {}
+    c4 = fc.get("4_changed_files_diff") or {}
+    c5 = fc.get("5_quota_and_reset_timer") or {}
+    w_act = (c3.get("wait_decision") or {}).get("action", "CONTINUE_WAIT")
     lines = [
         "[계기판] [UAOS-RSI 3대 도구 + Ollama/Haiku 실시간 토큰·용량 계기판]",
         f"• 지휘권(Conductor): {sched.get('recommended_conductor', 'unknown').upper()} | 24h 로컬·경량 오프로드율: {off.get('offload_share_pct', 0.0)}% ({off.get('ollama_plus_haiku_calls_24h', 0)}/{off.get('total_calls_24h', 0)} calls)",
+        (
+            f"• [5-Chip 상태바] ①일정:{c1.get('done', 0)}/{c1.get('total', 0)}(남은{c1.get('remaining', 0)}) "
+            f"| ②좌석:{c2.get('mode', 'THREE_TOOL_NORMAL')}({len(c2.get('seats') or [])}석) "
+            f"| ③워처:{len(c3.get('watchers') or [])}개({w_act}) "
+            f"| ④Diff:{c4.get('file_count', 0)}파일(+{c4.get('lines_added', 0)}/-{c4.get('lines_removed', 0)}) "
+            f"| ⑤리셋자동재개:{'ON' if c5.get('auto_resume_on_reset', True) else 'OFF'}"
+        ),
         "┌──────────────┬─────────┬──────────────────┬──────────────┬──────────────┬──────────┐",
         "│ 도구(Engine) │ 상태    │ 5h 사용률 게이지 │ 5h 사용 토큰 │ 5h 가용 토큰 │ 가용카드 │",
         "├──────────────┼─────────┼──────────────────┼──────────────┼──────────────┼──────────┤",
@@ -1047,6 +1188,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       </div>
     </div>
 
+    <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-5 gap-2"></div>
     <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
     <div id="gauges-grid" class="grid grid-cols-1 md:grid-cols-5 gap-2.5"></div>
 
@@ -1092,6 +1234,30 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       const sched = SNAP.schedule_recommendation || {{}};
       const off = SNAP.offload_efficiency_24h || {{}};
       const wt = SNAP.wait_transparency || {{}};
+      const fc = ((SNAP.five_chip_telemetry || {{}}).chips) || {{}};
+      const chipBar = document.getElementById("five-chip-bar");
+      if (chipBar) {{
+        const c1 = fc["1_todos_schedule"] || {{}};
+        const c2 = fc["2_three_tool_seats"] || {{}};
+        const c3 = fc["3_background_watchers"] || {{}};
+        const c4 = fc["4_changed_files_diff"] || {{}};
+        const c5 = fc["5_quota_and_reset_timer"] || {{}};
+        const wDec = (c3.wait_decision || {{}}).action || "CONTINUE_WAIT";
+        const chipItems = [
+          {{ title: "① 할 일 · 마스터 일정 (Todos)", val: `${{c1.done ?? 0}} / ${{c1.total ?? 0}} 완료`, sub: `남은 ${{c1.remaining ?? 0}}건 (진행 ${{c1.active ?? 0}} · 검수 ${{c1.review ?? 0}})` }},
+          {{ title: "② 3대 도구+로컬 좌석 (OpenRig)", val: String(c2.mode || "THREE_TOOL_NORMAL"), sub: `지휘: ${{String(c2.conductor || "antigravity").toUpperCase()}} · 좌석 ${{(c2.seats || []).length}}석` }},
+          {{ title: "③ 백그라운드 워처 · 5초 선점", val: `워처 ${{(c3.watchers || []).length}}개 가동`, sub: `판정: ${{wDec}} (한도 ${{c3.foreground_wait_limit_s ?? 5.0}}s)` }},
+          {{ title: "④ 실시간 변경 파일 Diff", val: `${{c4.file_count ?? 0}}개 파일 변경`, sub: `+${{c4.lines_added ?? 0}} / -${{c4.lines_removed ?? 0}} lines` }},
+          {{ title: "⑤ 쿼터 · 리셋 타이머", val: `자동 재개 ${{c5.auto_resume_on_reset ? "ON" : "OFF"}}`, sub: `리셋 등록: ${{Object.keys(c5.reset_at || {{}}).length}}개 도구` }}
+        ];
+        chipBar.innerHTML = chipItems.map(item => `
+          <div class="border border-[var(--border)] rounded-lg p-2 bg-[var(--secondary)]/20 flex flex-col justify-between">
+            <span class="text-[11px] text-[var(--muted-foreground)] font-medium">${{item.title}}</span>
+            <span class="text-xs font-semibold text-[var(--foreground)] mt-0.5">${{item.val}}</span>
+            <span class="text-[11px] text-[var(--muted-foreground)] mt-0.5">${{item.sub}}</span>
+          </div>
+        `).join("");
+      }}
       const wb = document.getElementById("wait-banner");
       if (wb) {{
         wb.textContent = "🔍 실시간 대기·진행 상태: " + (wt.headline || "상태 정보 없음");
