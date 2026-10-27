@@ -10,6 +10,7 @@ from v7_harness.delegation import (
     HAIKU_PREFLIGHT_TOKEN_CAP,
     NORMAL_READ_MAP_LINE_THRESHOLD,
     compute_agy_ollama_boost_plan,
+    compute_always_on_quality_parallel_plan,
     compute_claude_532_dispatch_plan,
     disjoint_parallel_errors,
     partition_disjoint_parallel_lanes,
@@ -93,11 +94,11 @@ class TestU271OllamaHaikuDisjointParallel(unittest.TestCase):
     def test_agy_ollama_boost_plan_and_claude_532_dispatch(self) -> None:
         boost = compute_agy_ollama_boost_plan(
             utilization_5h_pct=100.0,
-            file_line_counts={"v7_harness/cli.py": 2700, "v7_harness/small.py": 120, "v7_harness/med.py": 210},
+            file_line_counts={"v7_harness/cli.py": 2700, "v7_harness/small.py": 90, "v7_harness/med.py": 210},
         )
         self.assertTrue(boost["boost_active"])
         self.assertEqual(boost["code_slice_line_limit"], 30)
-        self.assertEqual(boost["read_map_line_threshold"], 180)
+        self.assertEqual(boost["read_map_line_threshold"], 100)
         self.assertEqual(boost["mandatory_local_read_map_files"], ["v7_harness/cli.py", "v7_harness/med.py"])
         self.assertGreater(boost["estimated_saved_paid_tokens"], 0)
 
@@ -124,11 +125,39 @@ class TestU271OllamaHaikuDisjointParallel(unittest.TestCase):
         self.assertEqual(opt["schema"], "uaos-subworker-optimization-v1")
         self.assertTrue(opt["three_tool_ollama_boost"]["antigravity"]["active"])
         self.assertEqual(opt["three_tool_ollama_boost"]["antigravity"]["slice_line_limit"], 30)
-        self.assertEqual(opt["three_tool_ollama_boost"]["antigravity"]["mandatory_read_map_lines"], 180)
+        self.assertEqual(opt["three_tool_ollama_boost"]["antigravity"]["mandatory_read_map_lines"], 100)
         self.assertEqual(opt["claude_internal_subworker_balance"]["target_golden_ratio"]["ollama_pct"], 50.0)
         self.assertEqual(opt["claude_internal_subworker_balance"]["target_golden_ratio"]["haiku_pct"], 30.0)
         self.assertEqual(opt["claude_internal_subworker_balance"]["target_golden_ratio"]["opus_sonnet_pct"], 20.0)
         self.assertEqual(opt["claude_internal_subworker_balance"]["next_recommended_worker_tier"], "ollama")
+
+
+
+    def test_always_on_quality_parallel_plan(self) -> None:
+        normal_plan = compute_always_on_quality_parallel_plan(
+            tool="antigravity",
+            utilization_5h_pct=35.0,
+            file_line_counts={"v7_harness/a.py": 160, "v7_harness/b.py": 120},
+            consecutive_local_failures=0,
+        )
+        self.assertEqual(normal_plan["mode"], "ALWAYS_ON_NORMAL_PARALLEL")
+        self.assertFalse(normal_plan["boost_active"])
+        self.assertEqual(normal_plan["read_map_line_threshold"], 150)
+        self.assertEqual(normal_plan["speculative_code_slice_line_limit"], 20)
+        self.assertEqual(normal_plan["always_on_pre_map_files"], ["v7_harness/a.py"])
+        self.assertFalse(normal_plan["quality_compromise_allowed"])
+        self.assertFalse(normal_plan["auto_escalated_to_paid_core"])
+
+        escalated_plan = compute_always_on_quality_parallel_plan(
+            tool="claude",
+            utilization_5h_pct=85.0,
+            file_line_counts={"v7_harness/a.py": 110},
+            consecutive_local_failures=2,
+        )
+        self.assertTrue(escalated_plan["boost_active"])
+        self.assertEqual(escalated_plan["read_map_line_threshold"], 100)
+        self.assertTrue(escalated_plan["auto_escalated_to_paid_core"])
+        self.assertEqual(escalated_plan["speculative_code_slice_line_limit"], 0)
 
 
 if __name__ == "__main__":

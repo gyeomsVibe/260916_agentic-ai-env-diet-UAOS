@@ -131,10 +131,25 @@ def local_first_errors(contract: dict[str, Any], project: Path) -> list[str]:
     ]
 
 
-# U271/U272: Disjoint Parallel Architecture & Aggressive 3-Tool Ollama Pre-Offload Constants
+# U271/U272: Disjoint Parallel Architecture & Always-On 3-Tool Quality-Gated Ollama Pre-Pipeline Constants
+# Core Philosophy: Maximize 3-tool (Antigravity, Claude Code, Codex) output and save token budgets via parallel
+# Ollama pre-digestion & speculative drafting, while preserving Supreme Quality as the non-negotiable foundation.
 CRITICAL_OFFLOAD_CODE_LINE_LIMIT = 30  # Expanded from 20 lines when tool 5h utilization >= 70%
-NORMAL_READ_MAP_LINE_THRESHOLD = 250   # Use local_read_map for files > 250 lines in normal mode
-BOOST_READ_MAP_LINE_THRESHOLD = 180    # Lowered to 180 lines when 5h utilization >= 70% (Aggressive Boost)
+NORMAL_READ_MAP_LINE_THRESHOLD = 150   # Always-On: use local_read_map for files > 150 lines in normal mode (<70% 5h usage)
+BOOST_READ_MAP_LINE_THRESHOLD = 100    # Lowered to 100 lines when 5h utilization >= 70% (Aggressive Boost)
+ALWAYS_ON_PARALLEL_PRE_TASKS = (
+    "local_read_map_symbol_index",
+    "local_draft_commit_and_pr_body",
+    "local_draft_stage1_research_brief",
+    "local_draft_test_failure_log_digest",
+    "local_draft_doc_summary_skeleton",
+)
+SUPREME_QUALITY_GATES = (
+    "DETERMINISTIC_UNITTEST_GATE",
+    "ORIGINAL_SOURCE_HASH_VERIFICATION",
+    "INDEPENDENT_NON_AUTHOR_DIFF_AUDIT",
+    "TWO_STRIKE_AUTO_ESCALATION_TO_PAID_CORE",
+)
 HAIKU_PREFLIGHT_TOKEN_CAP = 12000      # Immutable preflight token ceiling for Claude Haiku 5.5 subagent
 MAX_CONCURRENT_OLLA = 1                # Serial GPU lock for 8GB VRAM safety
 MAX_CONCURRENT_HAIKU = 2               # Bounded parallel cloud subagent streams
@@ -313,4 +328,45 @@ def partition_disjoint_parallel_lanes(
         "paid_core_lane": paid_core_lane,
         "disjoint_verified": disjoint_ok,
         "target_ratio": dict(CLAUDE_GOLDEN_RATIO if is_claude else NON_CLAUDE_GOLDEN_RATIO),
+    }
+
+
+def compute_always_on_quality_parallel_plan(
+    tool: str,
+    utilization_5h_pct: float = 0.0,
+    file_line_counts: dict[str, int] | None = None,
+    consecutive_local_failures: int = 0,
+) -> dict[str, Any]:
+    """U272: Always-On 3-Tool Quality-Gated Ollama Parallel Pre-Pipeline.
+    Increases Ollama CLI utilization even in normal mode (<70% 5h usage) by running 0-token pre-digestion
+    (`local_read_map` >= 150 lines, `local_draft` boilerplates, and speculative 20-line code slices) in parallel,
+    while strictly enforcing Supreme Quality via 4 immutable gates and immediate escalation after 2 local failures.
+    """
+    caller = tool.strip().lower()
+    boost_active = float(utilization_5h_pct) >= 70.0
+    read_threshold = BOOST_READ_MAP_LINE_THRESHOLD if boost_active else NORMAL_READ_MAP_LINE_THRESHOLD
+    slice_limit = CRITICAL_OFFLOAD_CODE_LINE_LIMIT if boost_active else DICTATION_CODE_LINE_LIMIT
+    files = file_line_counts or {}
+    pre_map_files = sorted(_normalize(p) for p, lines in files.items() if int(lines) > read_threshold)
+    escalate_to_paid_core = int(consecutive_local_failures) >= 2
+
+    return {
+        "schema": "uaos-always-on-quality-parallel-v1",
+        "tool": caller,
+        "mode": "CRITICAL_BOOST_PARALLEL" if boost_active else "ALWAYS_ON_NORMAL_PARALLEL",
+        "boost_active": boost_active,
+        "utilization_5h_pct": round(float(utilization_5h_pct), 1),
+        "read_map_line_threshold": read_threshold,
+        "speculative_code_slice_line_limit": 0 if escalate_to_paid_core else slice_limit,
+        "always_on_pre_map_files": pre_map_files,
+        "always_on_parallel_pre_tasks": list(ALWAYS_ON_PARALLEL_PRE_TASKS),
+        "supreme_quality_gates": list(SUPREME_QUALITY_GATES),
+        "quality_compromise_allowed": False,
+        "auto_escalated_to_paid_core": escalate_to_paid_core,
+        "escalation_reason": (
+            "TWO_STRIKE_QUALITY_PROTECTION: >=2 local failures detected; routing directly to paid core engine"
+            if escalate_to_paid_core
+            else "NONE"
+        ),
+        "target_golden_ratio": dict(CLAUDE_GOLDEN_RATIO if caller == "claude" else NON_CLAUDE_GOLDEN_RATIO),
     }
