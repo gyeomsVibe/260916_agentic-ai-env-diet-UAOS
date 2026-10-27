@@ -896,9 +896,6 @@ def extract_wait_transparency(desk: Path) -> dict[str, Any]:
     }
 
 
-_GIT_DIFF_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-
-
 def _collect_active_watchers(desk: Path) -> list[str]:
     """Deterministically inspect .coord/watch, .coord/sentinel, and .coord/presence with 0 paid tokens."""
     watchers: list[str] = []
@@ -929,15 +926,27 @@ def _collect_active_watchers(desk: Path) -> list[str]:
 
 def _collect_git_diff_chip(desk: Path) -> list[dict[str, Any]]:
     """Collect working-tree / staged diff stats (file_count, +added, -removed) with 0 paid tokens."""
+    import subprocess
+
     desk_path = Path(desk)
+    override_file = desk_path / ".coord" / "usage" / "changed_files.json"
+    if override_file.is_file():
+        try:
+            raw_ov = json.loads(override_file.read_text(encoding="utf-8"))
+            if isinstance(raw_ov, list):
+                return [
+                    {
+                        "path": str(item.get("path") or ""),
+                        "added": int(item.get("added") or 0),
+                        "removed": int(item.get("removed") or 0),
+                    }
+                    for item in raw_ov[:25]
+                    if isinstance(item, dict) and item.get("path")
+                ]
+        except (OSError, ValueError, TypeError):
+            pass
     if not (desk_path / ".git").exists():
         return []
-    key = str(desk_path)
-    now_ts = time.time()
-    cached = _GIT_DIFF_CACHE.get(key)
-    if cached is not None and (now_ts - cached[0]) < 15.0:
-        return list(cached[1])
-    import subprocess
 
     changed: list[dict[str, Any]] = []
     try:
@@ -958,9 +967,8 @@ def _collect_git_diff_chip(desk: Path) -> list[dict[str, Any]]:
                     added = int(add_s) if add_s.isdigit() else 0
                     removed = int(rem_s) if rem_s.isdigit() else 0
                     changed.append({"path": fpath, "added": added, "removed": removed})
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError):
         changed = []
-    _GIT_DIFF_CACHE[key] = (now_ts, changed)
     return changed
 
 

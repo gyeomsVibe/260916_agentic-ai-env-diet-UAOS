@@ -497,6 +497,19 @@ class U256Counter(unittest.TestCase):
         sched_path.write_text(json.dumps(sched_before), encoding="utf-8")
         raw_before = sched_path.read_text(encoding="utf-8")
 
+        watch_dir = self.root / ".coord/watch"
+        watch_dir.mkdir(parents=True, exist_ok=True)
+        (watch_dir / "antigravity.json").write_text("{}", encoding="utf-8")
+        sent_dir = self.root / ".coord/sentinel"
+        sent_dir.mkdir(parents=True, exist_ok=True)
+        (sent_dir / "loop.pid").write_text("1234", encoding="utf-8")
+        usage_dir = self.root / ".coord/usage"
+        usage_dir.mkdir(parents=True, exist_ok=True)
+        (usage_dir / "changed_files.json").write_text(
+            json.dumps([{"path": "v7_harness/coord/capacity_planner.py", "added": 42, "removed": 3}]),
+            encoding="utf-8",
+        )
+
         snap = C.collect_capacity_snapshot(self.root, persist=True)
         self.assertEqual(sched_path.read_text(encoding="utf-8"), raw_before)
         fc = snap.get("five_chip_telemetry") or {}
@@ -507,11 +520,17 @@ class U256Counter(unittest.TestCase):
         self.assertEqual(chips["1_todos_schedule"]["done"], 1)
         self.assertEqual(chips["1_todos_schedule"]["remaining"], 1)
         self.assertEqual(len(chips["2_three_tool_seats"]["seats"]), 5)
+        self.assertIn("coord watch (antigravity)", chips["3_background_watchers"]["watchers"])
+        self.assertIn("sentinel.loop (0-token daemon)", chips["3_background_watchers"]["watchers"])
+        self.assertEqual(chips["4_changed_files_diff"]["file_count"], 1)
+        self.assertEqual(chips["4_changed_files_diff"]["lines_added"], 42)
+        self.assertEqual(chips["4_changed_files_diff"]["lines_removed"], 3)
         self.assertTrue(chips["5_quota_and_reset_timer"]["auto_resume_on_reset"])
 
         term = C.render_terminal_dashboard(snap)
         self.assertIn("[5-Chip 상태바]", term)
         self.assertIn("①일정:1/2(남은1)", term)
+        self.assertIn("④Diff:1파일(+42/-3)", term)
 
         html_out = self.root / ".work/u267_dash.html"
         C.render_html_dashboard(snap, html_out)
