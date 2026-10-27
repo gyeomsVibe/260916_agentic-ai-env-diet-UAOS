@@ -151,6 +151,315 @@ def _atomic_write_json(path: Path, data: Any) -> None:
                 pass
 
 
+from contextlib import contextmanager
+
+@contextmanager
+def _cas_file_lock(target: Path, timeout_s: float = 15.0):
+    """Interprocess lock guaranteeing atomic CAS check-backup-replace transaction."""
+    lock_file = target.with_name(f".{target.name}.cas_lock")
+    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o666)
+    deadline = time.monotonic() + timeout_s
+    locked = False
+    try:
+        while time.monotonic() < deadline:
+            if os.name == "nt":
+                import msvcrt
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    locked = True
+                    break
+                except OSError:
+                    time.sleep(0.005)
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                    break
+                except OSError:
+                    time.sleep(0.005)
+        if not locked:
+            raise TimeoutError("CAS_LOCK_TIMEOUT")
+        yield
+    finally:
+        if locked:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def atomic_write_if_hash_matches(
+    path: Path,
+    data: Any,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """U276 (Transplanted from Cockpit Tools `config.rs:save_global_config_if_hash_matches`):
+    Compare-and-swap atomic JSON writer with `.bak` backup before replacement.
+    Stages to a unique temp file first, then verifies fresh disk contents right before replacing.
+    """
+    import hashlib
+    import sys
+    import threading
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    stage_path = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.stage")
+    try:
+        _atomic_write_json(stage_path, data)
+        # 1. Initial read for backup preparation
+        exists_initial = target.is_file()
+        raw_initial = b""
+        if exists_initial:
+            try:
+                raw_initial = target.read_bytes()
+            except OSError as exc:
+                return {
+                    "ok": False,
+                    "error": f"CAS_READ_FAILED:{exc}",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+
+        # 2. Fresh read right before committing CAS swap
+        exists_now = target.is_file()
+        current_sha: str | None = None
+        raw_existing = b""
+        if exists_now:
+            try:
+                raw_existing = target.read_bytes()
+                current_sha = hashlib.sha256(raw_existing).hexdigest()
+            except OSError as exc:
+                return {
+                    "ok": False,
+                    "error": f"CAS_READ_FAILED:{exc}",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+
+        if expected_sha256 is not None:
+            if not exists_now:
+                return {
+                    "ok": False,
+                    "error": "CAS_TARGET_MISSING",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+            if current_sha != expected_sha256:
+                return {
+                    "ok": False,
+                    "error": "CAS_HASH_MISMATCH",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": current_sha,
+                }
+
+        # Interprocess atomic check-backup-replace transaction
+        with _cas_file_lock(target):
+            exists_final = target.is_file()
+            raw_final = b""
+            final_sha: str | None = None
+            if exists_final:
+                try:
+                    raw_final = target.read_bytes()
+                    final_sha = hashlib.sha256(raw_final).hexdigest()
+                except OSError as exc:
+                    return {
+                        "ok": False,
+                        "error": f"CAS_READ_FAILED:{exc}",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": None,
+                    }
+
+            if expected_sha256 is not None:
+                if not exists_final:
+                    return {
+                        "ok": False,
+                        "error": "CAS_TARGET_MISSING",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": None,
+                    }
+                if final_sha != expected_sha256:
+                    return {
+                        "ok": False,
+                        "error": "CAS_HASH_MISMATCH",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": final_sha,
+                    }
+
+            bak_path = target.with_name(target.name + ".bak")
+            if exists_final and raw_final:
+                try:
+                    json.loads(raw_final.decode("utf-8"))
+                    bak_path.write_bytes(raw_final)
+                except (OSError, ValueError, UnicodeDecodeError):
+                    pass
+
+            os.replace(str(stage_path), str(target))
+            new_sha = hashlib.sha256(target.read_bytes()).hexdigest()
+            return {
+                "ok": True,
+                "path": target.as_posix(),
+                "previous_sha256": final_sha,
+                "new_sha256": new_sha,
+                "backup_path": str(bak_path),
+            }
+    finally:
+        if stage_path.exists():
+            try:
+                stage_path.unlink()
+            except OSError:
+                pass
+
+
+def parse_json_with_auto_restore(path: Path, default: Any = None) -> Any:
+    """U276 (Transplanted from Cockpit Tools `modules/config.rs` `.bak` auto-restore):
+    Reads JSON from `path`; if corrupted/truncated, restores from `<path>.bak` without clobbering newer concurrent CAS writes.
+    """
+    import sys
+    import threading
+
+    target = Path(path)
+    bak_path = target.with_name(target.name + ".bak")
+    if target.is_file():
+        try:
+            raw_bytes = target.read_bytes()
+            return json.loads(raw_bytes.decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            corrupt_bytes: bytes | None = raw_bytes if "raw_bytes" in locals() else None
+    else:
+        corrupt_bytes = None
+
+    if not bak_path.is_file():
+        return default
+    try:
+        restored = json.loads(bak_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+    stage_restore = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.restore")
+    try:
+        _atomic_write_json(stage_restore, restored)
+        now_bytes = b""
+        if target.is_file():
+            try:
+                now_bytes = target.read_bytes()
+                if corrupt_bytes is None or now_bytes != corrupt_bytes:
+                    try:
+                        parsed_now = json.loads(now_bytes.decode("utf-8"))
+                        return parsed_now
+                    except (ValueError, UnicodeDecodeError):
+                        pass
+            except OSError:
+                pass
+
+        # Enter shared transaction lock before committing restore replacement
+        with _cas_file_lock(target):
+            if target.is_file():
+                try:
+                    locked_now_bytes = target.read_bytes()
+                    if corrupt_bytes is None or locked_now_bytes != corrupt_bytes or locked_now_bytes != now_bytes:
+                        try:
+                            parsed_locked = json.loads(locked_now_bytes.decode("utf-8"))
+                            return parsed_locked
+                        except (ValueError, UnicodeDecodeError):
+                            pass
+                except OSError:
+                    pass
+            os.replace(str(stage_restore), str(target))
+            return restored
+    finally:
+        if stage_restore.exists():
+            try:
+                stage_restore.unlink()
+            except OSError:
+                pass
+
+
+def scan_cockpit_sqlite_telemetry(home_dir: Path | None = None) -> dict[str, Any]:
+    """U276 (Transplanted from Cockpit Tools `codex_session_usage.sqlite` / `Token_stats.db`):
+    Read-only single-query snapshot of `session_usage_events` and `session_log_sync`.
+    """
+    import sqlite3
+
+    if home_dir is not None and (Path(home_dir).is_file() or Path(home_dir).suffix.lower() in (".sqlite", ".db")):
+        db_file = Path(home_dir)
+    else:
+        base_home = Path(home_dir) if home_dir is not None else Path.home()
+        cand1 = base_home / ".antigravity_cockpit" / "codex_session_usage.sqlite"
+        cand2 = base_home / ".antigravity_cockpit" / "Token_stats.db"
+        db_file = cand1 if cand1.is_file() or not cand2.is_file() else cand2
+
+    if not db_file.is_file():
+        return {
+            "available": False,
+            "db_path": str(db_file),
+            "synced_files": 0,
+            "synced_files_count": 0,
+            "total_events": 0,
+            "events_count": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hit_pct": 0.0,
+        }
+    try:
+        uri = db_file.resolve().as_uri() + "?mode=ro"
+        con = sqlite3.connect(uri, uri=True, timeout=3)
+        try:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), "
+                "COALESCE(SUM(cached_input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+                "(SELECT COUNT(*) FROM session_log_sync) "
+                "FROM session_usage_events"
+            )
+            row = cur.fetchone() or (0, 0, 0, 0, 0)
+            ev_count = int(row[0] or 0)
+            inp_tok = int(row[1] or 0)
+            cached_tok = int(row[2] or 0)
+            out_tok = int(row[3] or 0)
+            synced_files = int(row[4] or 0)
+            cache_hit_pct = round((cached_tok / float(inp_tok)) * 100.0, 1) if inp_tok > 0 else 0.0
+            return {
+                "available": True,
+                "db_path": str(db_file),
+                "synced_files": synced_files,
+                "synced_files_count": synced_files,
+                "total_events": ev_count,
+                "events_count": ev_count,
+                "input_tokens": inp_tok,
+                "cached_input_tokens": cached_tok,
+                "output_tokens": out_tok,
+                "cache_hit_pct": cache_hit_pct,
+            }
+        finally:
+            con.close()
+    except Exception:
+        return {
+            "available": False,
+            "db_path": str(db_file),
+            "synced_files": 0,
+            "synced_files_count": 0,
+            "total_events": 0,
+            "events_count": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hit_pct": 0.0,
+        }
+
+
 def load_policy(project_root: Path) -> dict[str, Any]:
     desk = shared_desk(Path(project_root))
     policy_path = desk / ".coord" / "usage" / "capacity_policy.json"
@@ -883,6 +1192,7 @@ def collect_capacity_snapshot(
     }
 
     snapshot["wait_transparency"] = extract_wait_transparency(desk)
+    snapshot["cockpit_telemetry"] = scan_cockpit_sqlite_telemetry(home_dir)
     snapshot["five_chip_telemetry"] = _collect_unified_five_chip_telemetry(
         desk=desk,
         engines_summary=engines_summary,
@@ -891,6 +1201,7 @@ def collect_capacity_snapshot(
     )
     head_summary = build_compact_capacity_head(snapshot)
     snapshot["compact_head"] = head_summary
+    snapshot["contextual_hud_widget"] = render_contextual_hud_widget(snapshot)
 
     if persist:
         local_snap = desk / ".coord" / "usage" / "capacity_snapshot.json"
@@ -1648,6 +1959,57 @@ def render_compact_status_line(snapshot: dict[str, Any]) -> str:
     )
 
 
+
+
+def render_contextual_hud_widget(snapshot: dict[str, Any]) -> str:
+    """Tier-2 Micro Contextual Heads-Up Display (HUD) Widget inspired by Cockpit Tools floating_card_window.rs.
+    Designed for inline prompt/workspace context (<195 chars) with Quality Gate first (author != judge).
+    Fails closed to UNKNOWN(품질증거미확인) when quality_gate_verified is False or unverified.
+    """
+    head = snapshot.get("compact_head") or build_compact_capacity_head(snapshot)
+    cards = head.get("cards_5h") or {}
+    cockpit = snapshot.get("cockpit_telemetry") or {}
+    fc = ((snapshot.get("five_chip_telemetry") or {}).get("chips")) or {}
+    c1 = fc.get("1_todos_schedule") or {}
+    c2 = fc.get("2_three_tool_seats") or {}
+    c3 = fc.get("3_background_watchers") or {}
+
+    def _c(v: Any) -> str:
+        return f"{min(9999, max(0, int(v)))}장" if isinstance(v, (int, float)) and not isinstance(v, bool) else "미계측"
+
+    raw_cond = str(head.get("conductor") or "").upper()
+    cond = (raw_cond if raw_cond else "NONE")[:12]
+    seats_cnt = len(c2.get("seats") or []) or 5
+    off_pct = round(float(head.get("offload_pct") or 0.0), 1)
+    cache_pct = round(float(cockpit.get("cache_hit_pct") or 0.0), 1)
+    cache_str = f"·캐시{cache_pct}%" if cockpit.get("available") else ""
+    w_cnt = int(c3.get("watcher_count") or len(c3.get("watchers") or []))
+    rem_cards = int(c1.get("remaining_non_auto", c1.get("remaining", 0)) or 0)
+
+    blocked_cnt = int(c1.get("blocked") or 0)
+    q_verified = snapshot.get("quality_gate_verified")
+
+    if blocked_cnt > 0:
+        q_state = f"점검필요(블로커{blocked_cnt}건)"
+    elif q_verified is False:
+        q_state = "UNKNOWN(품질증거미확인)"
+    elif q_verified is True:
+        q_state = "PASS(독립검증·인수100%)"
+    elif raw_cond in ("", "NONE", "UNKNOWN"):
+        q_state = "UNKNOWN(품질증거미확인)"
+    elif int(c1.get("total") or 0) == 0 and not bool(cockpit.get("available")):
+        q_state = "UNKNOWN(품질증거미확인)"
+    else:
+        q_state = "PASS(독립검증·인수100%)"
+
+    return (
+        f"[HUD 위젯] 🎯품질게이트:{q_state} "
+        f"| ⚡지휘:{cond}({seats_cnt}석·대기{rem_cards}건) "
+        f"| 🔋5h가용카드:ag={_c(cards.get('antigravity'))}·cl={_c(cards.get('claude'))}·cx={_c(cards.get('codex'))} "
+        f"| 🧮0원오프로드:{off_pct}%{cache_str} | 🔄워처:{w_cnt}개"
+    )
+
+
 def refresh_capacity_zero_token(
     project_root: Path,
     *,
@@ -1823,9 +2185,12 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       <div class="flex items-center gap-2">
         <span id="conductor-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--secondary)] text-[var(--secondary-foreground)]"></span>
         <span id="offload-badge" class="px-2.5 py-1 rounded-full text-xs font-medium border border-[var(--border)]"></span>
+        <button id="hud-toggle-btn" class="px-2.5 py-1 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-80">🎯 Tier-2 HUD 위젯 모드 전환</button>
       </div>
     </div>
 
+    <div id="contextual-hud-bar" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 px-3 py-2 text-xs font-mono flex flex-wrap items-center justify-between gap-2"></div>
+    <div id="macro-dashboard-container" class="space-y-3">
     <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-5 gap-2"></div>
     <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
     <div id="gauges-grid" class="grid grid-cols-1 md:grid-cols-5 gap-2.5"></div>
@@ -1850,6 +2215,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         </div>
         <div id="schedule-list" class="space-y-1.5 text-xs"></div>
       </div>
+    </div>
     </div>
   </div>
 
@@ -1899,6 +2265,12 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       const wb = document.getElementById("wait-banner");
       if (wb) {{
         wb.textContent = "🔍 실시간 대기·진행 상태: " + (wt.headline || "상태 정보 없음");
+      }}
+      const hudBar = document.getElementById("contextual-hud-bar");
+      if (hudBar) {{
+        const cTel = SNAP.cockpit_telemetry || {{}};
+        const cacheBadge = cTel.available ? ` | Cockpit 캐시적중: ${{cTel.cache_hit_pct}}% (${{cTel.total_events}}건)` : "";
+        hudBar.textContent = (SNAP.contextual_hud_widget || "[HUD 위젯] 가동 중") + cacheBadge;
       }}
       document.getElementById("conductor-badge").textContent =
         "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | Gemini 4 Argon (Google AI Ultra 5x) 5h 점유: " + (sched.argon_used_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_used_5h_share_pct ?? "UNKNOWN") + "%") + " (가용점유 " + (sched.argon_remaining_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_remaining_5h_share_pct ?? "UNKNOWN") + "%") + ")";
@@ -2009,6 +2381,14 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     }}
 
     document.getElementById("window-select").addEventListener("change", (e) => renderAll(e.target.value));
+    const hudBtn = document.getElementById("hud-toggle-btn");
+    const macroBox = document.getElementById("macro-dashboard-container");
+    if (hudBtn && macroBox) {{
+      hudBtn.addEventListener("click", () => {{
+        const hidden = macroBox.classList.toggle("hidden");
+        hudBtn.textContent = hidden ? "📊 Tier-1 전체 대시보드 펼치기" : "🎯 Tier-2 HUD 위젯 모드 전환";
+      }});
+    }}
     renderAll("window_5h");
   </script>
 </body>
@@ -2116,3 +2496,5 @@ def compute_subworker_optimization(engines: dict[str, dict[str, Any]]) -> dict[s
             },
         },
     }
+
+render_capacity_dashboard_html = render_html_dashboard
