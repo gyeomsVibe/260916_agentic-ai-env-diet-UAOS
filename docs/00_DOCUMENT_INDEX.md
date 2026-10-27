@@ -126,4 +126,5 @@
 | 103 | [103_MIA_독립개체_유기적자율체_신호수_자율신경계_아키텍처_설계보고서.html](103_MIA_독립개체_유기적자율체_신호수_자율신경계_아키텍처_설계보고서.html) | [U273] 유기적 자율체 신호수의 독립개체(자율신경계) 승격 아키텍처 및 3-Way 무승인 자율 병합 보고서 |
 | 104 | [`104_MIA_U274_독립개체_유기적자율체_신호수_심층설계_및_실가동_완결보고서.html`](104_MIA_U274_독립개체_유기적자율체_신호수_심층설계_및_실가동_완결보고서.html) | [U274] 유기적 자율체 신호수의 독립개체(IndependentFlagmanEntity v3 · seat-flagman-autonomous) 심층 설계·병합 및 실가동 완결 보고서 |
 | 105 | [`105_MIA_U275_CRITIC_REDTEAM_자율신호수_3단계_완결보고서.html`](105_MIA_U275_CRITIC_REDTEAM_자율신호수_3단계_완결보고서.html) | [U275] /CRITIC /REDTEAM → /STEPBYSTEP /OPTIMIZE 독립개체 자율 신호수 3단계 고도화 완결 보고서 |
+| 132 | [132_uaos_cockpit_hybrid_dashboard_and_hud_widget.html](132_uaos_cockpit_hybrid_dashboard_and_hud_widget.html) | UAOS-RSI 2계층 하이브리드 모니터링(Tier-1 대시보드 + Tier-2 HUD 맥락 위젯) 및 Cockpit Tools 이식 실가동 계기판 | Dashboard/HUD | antigravity | 2026-10-27 |
 - [`docs/106_MIA_클로드_401재로그인_무한스피너_원인규명_및_신호수_자율구출_보고서.html`](106_MIA_클로드_401재로그인_무한스피너_원인규명_및_신호수_자율구출_보고서.html) — U275 클로드 데스크톱 401 재로그인 무한 스피너 원인 규명 및 독립개체 신호수 자율 구출 보고서 (2026-10-27)

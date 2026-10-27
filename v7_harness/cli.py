@@ -580,6 +580,7 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
         collect_capacity_snapshot,
         refresh_capacity_zero_token,
         render_compact_status_line,
+        render_contextual_hud_widget,
         render_html_dashboard,
         render_terminal_dashboard,
     )
@@ -612,6 +613,8 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
         print(json.dumps(snap.get("compact_head"), ensure_ascii=False, separators=(",", ":")))
     elif args.format == "compact":
         print(render_compact_status_line(snap))
+    elif args.format == "hud":
+        print(render_contextual_hud_widget(snap))
     else:
         print(render_terminal_dashboard(snap))
     return 0
@@ -619,12 +622,10 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
 
 
 def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
-    from .disjoint_mediator import ensure_independent_flagman_daemon, run_independent_flagman_pulse
+    from .disjoint_mediator import run_independent_flagman_pulse
 
     project = Path(args.project)
     res = run_independent_flagman_pulse(project, auto_heal=not getattr(args, "no_heal", False))
-    if getattr(args, "ensure_daemon", False):
-        res["daemon"] = ensure_independent_flagman_daemon(project, spawn_if_stopped=True)
     print(json.dumps(res, ensure_ascii=False, indent=2))
     return 0
 
@@ -974,13 +975,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_coord_cap = p_coord_subs.add_parser(
         "capacity",
-        help="U256/U265: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, compact head, and dashboard",
+        help="U256/U265/U276: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, compact head, HUD widget, and dashboard",
     )
     p_coord_cap.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_cap.add_argument("--format", choices=["json", "table", "head", "compact"], default="table")
+    p_coord_cap.add_argument("--format", choices=["json", "table", "head", "compact", "hud"], default="table")
     p_coord_cap.add_argument("--debounce", type=float, default=0.0, help="Debounce interval in seconds for 0-paid-token refresh")
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
+
+    p_coord_rea = p_coord_subs.add_parser(
+        "rea-audit",
+        help="U275: Automatically execute REA static reverse-engineering + retained bundle + obligation ledger on a target",
+    )
+    p_coord_rea.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_rea.add_argument("--target", required=True, help="Target file (.exe/.dll/.sqlite) or directory (.work/library/<repo>)")
+    p_coord_rea.set_defaults(func=cmd_coord_rea_audit)
 
     p_coord_tp = p_coord_subs.add_parser(
         "transplant-status",
@@ -1000,7 +1009,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_coord_fp.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_fp.add_argument("--no-heal", action="store_true", help="Observe WFG without mutating state")
-    p_coord_fp.add_argument("--ensure-daemon", action="store_true", help="Spawn detached 0-token OS background daemon if not running")
     p_coord_fp.set_defaults(func=cmd_coord_flagman_pulse)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
@@ -2145,6 +2153,18 @@ def cmd_coord_stall(args: argparse.Namespace) -> int:
     result = scan(Path(args.project), args.tool)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result.get("blocked") or result.get("error") else 0
+
+
+def cmd_coord_rea_audit(args: argparse.Namespace) -> int:
+    """U275: Automatically run REA static reverse-engineering + retained analysis view + epistemic ledger."""
+    from .rea_bridge import execute_auto_reverse_engineering_pipeline
+
+    res = execute_auto_reverse_engineering_pipeline(
+        project_root=Path(args.project),
+        target_path=Path(args.target),
+    )
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    return 0 if res.get("ok") else 1
 
 
 def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
