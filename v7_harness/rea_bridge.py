@@ -10,7 +10,9 @@ UAOS-RSI Contract Manual.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 import shutil
 import sqlite3
 import tempfile
@@ -64,6 +66,117 @@ def is_symlink_or_junction(path: Path) -> bool:
     except OSError:
         return True
     return False
+
+
+FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+READ_CHUNK = 1 << 20  # 1 MiB per os.read call; bounds one syscall, not the file size (no size cap existed before R8).
+
+
+class ConfinementError(OSError):
+    """A refused confined read; `code` is the stable error string surfaced in failed_files / error."""
+
+    def __init__(self, code: str, path: Path | str = "") -> None:
+        super().__init__(f"{code}: {path}")
+        self.code = code
+
+
+def _require_regular(st: os.stat_result, path: Path) -> None:
+    if not stat.S_ISREG(st.st_mode) or (getattr(st, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT):
+        raise ConfinementError("NOT_REGULAR_FILE", path)
+
+
+def _opened_final_path(fd: int) -> str:
+    """Path of the object behind an open fd, from the OS (not from the name we opened).
+
+    Windows: GetFinalPathNameByHandleW on the CRT handle (Microsoft: returns the final, fully resolved path for a
+    file handle). Linux: /proc/self/fd. macOS: fcntl F_GETPATH. Anything else, or an API failure, raises
+    HANDLE_PATH_UNKNOWN so the caller reads nothing (fail closed).
+    """
+    import sys
+
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        handle = msvcrt.get_osfhandle(fd)
+        fn = ctypes.windll.kernel32.GetFinalPathNameByHandleW
+        fn.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+        fn.restype = wintypes.DWORD
+        size = 1024
+        while True:
+            buf = ctypes.create_unicode_buffer(size)
+            n = fn(handle, buf, size, 0)  # 0 = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
+            if n == 0:
+                raise ConfinementError("HANDLE_PATH_UNKNOWN", f"fd {fd}")
+            if n < size:
+                break
+            size = n + 1
+        final = buf.value
+        if final.startswith("\\\\?\\UNC\\"):
+            final = "\\\\" + final[8:]
+        elif final.startswith("\\\\?\\"):
+            final = final[4:]
+        return final
+    if sys.platform.startswith("linux"):
+        try:
+            return os.readlink(f"/proc/self/fd/{fd}")
+        except OSError as exc:
+            raise ConfinementError("HANDLE_PATH_UNKNOWN", f"fd {fd}") from exc
+    if sys.platform == "darwin":
+        try:
+            import fcntl
+
+            out = fcntl.fcntl(fd, 50, b"\0" * 1024)  # F_GETPATH
+            return out.split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
+        except OSError as exc:
+            raise ConfinementError("HANDLE_PATH_UNKNOWN", f"fd {fd}") from exc
+    raise ConfinementError("HANDLE_PATH_UNKNOWN", f"fd {fd}")
+
+
+def _within(child: str, root: Path) -> bool:
+    base = os.path.normcase(os.path.realpath(str(root)))
+    c = os.path.normcase(child)
+    return c == base or c.startswith(base.rstrip("\\/") + os.sep)
+
+
+def _read_confined_bytes(path: Path, root: Path | None) -> bytes:
+    """U275-R8: read `path` only through a descriptor whose identity was verified to be the in-root regular file.
+
+    Order: ancestor check -> lstat -> open -> fstat identity -> opened-handle final path in root ->
+    ancestor check + lstat identity -> read via fd.
+    Any mismatch raises ConfinementError before a single content byte is consumed; the fd is closed on all branches.
+    """
+    path = Path(path)
+    # Trusted context: the caller's analysis root; a standalone file call trusts only its own directory.
+    trusted_root = Path(root) if root is not None else path.absolute().parent
+    if has_symlink_or_junction_ancestor(path, root):
+        raise ConfinementError("SYMLINK_OR_JUNCTION_ESCAPE", path)
+    pre = os.lstat(path)
+    _require_regular(pre, path)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (pre.st_dev, pre.st_ino) or not stat.S_ISREG(opened.st_mode):
+            raise ConfinementError("HANDLE_IDENTITY_MISMATCH", path)
+        # rev2 (Claude review P2): name-based checks can be raced by swapping an ancestor to a junction and back.
+        # The OS-reported path of the opened object itself must lie inside the trusted root.
+        if not _within(_opened_final_path(fd), trusted_root):
+            raise ConfinementError("HANDLE_PATH_OUTSIDE_ROOT", path)
+        if has_symlink_or_junction_ancestor(path, root):
+            raise ConfinementError("SYMLINK_OR_JUNCTION_ESCAPE", path)
+        post = os.lstat(path)
+        if (post.st_dev, post.st_ino) != (pre.st_dev, pre.st_ino):
+            raise ConfinementError("HANDLE_IDENTITY_MISMATCH", path)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, READ_CHUNK)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
 
 
 BIN_URL_RE = re.compile(rb"https?://[A-Za-z0-9._/\-:?=&%]+")
@@ -131,7 +244,7 @@ def inspect_static_target(
             failed_files.append({"file": rel_str, "error": "SYMLINK_OR_JUNCTION_ESCAPE"})
             continue
         if ext in SQLITE_EXTS:
-            db_res = _inspect_sqlite_static(f)
+            db_res = _inspect_sqlite_static(f, root_resolved)
             db_res["file"] = rel_str
             if not db_res.get("ok"):
                 failed_files.append({"file": rel_str, "error": str(db_res.get("error") or "SQLITE_INVALID")})
@@ -147,7 +260,7 @@ def inspect_static_target(
             continue
         if ext in BINARY_EXTS:
             try:
-                bin_res = _inspect_binary_static(f)
+                bin_res = _inspect_binary_static(f, root_resolved)
                 bin_res["file"] = rel_str
                 if not bin_res.get("ok"):
                     failed_files.append({"file": rel_str, "error": str(bin_res.get("error") or "BINARY_READ_FAILED")})
@@ -166,8 +279,11 @@ def inspect_static_target(
         if ext not in (".py", ".ts", ".tsx", ".js", ".rs"):
             continue
         try:
-            raw = f.read_bytes()
+            raw = _read_confined_bytes(f, root_resolved)
             text = raw.decode("utf-8", errors="replace")
+        except ConfinementError as exc:
+            failed_files.append({"file": rel_str, "error": exc.code})
+            continue
         except OSError as exc:
             failed_files.append({"file": rel_str, "error": f"OS_READ_ERROR: {exc}"})
             continue
@@ -194,35 +310,21 @@ def inspect_static_target(
     }
 
 
-def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
+def _inspect_binary_static(bin_path: Path, root: Path | None = None) -> dict[str, Any]:
     """Extract deterministic static metadata, URLs, and module identifiers from a PE/ELF/WASM binary without executing it.
     Guarantees handle-bound confinement: before and after reading, verifies that bin_path and all ancestors
     are not symlinks/junctions and remain contained in root.
     """
-    if has_symlink_or_junction_ancestor(bin_path):
-        return {
-            "ok": False,
-            "mode": "STATIC_ONLY_BINARY",
-            "target": str(bin_path),
-            "error": "SYMLINK_OR_JUNCTION_ESCAPE",
-        }
     try:
-        raw = bin_path.read_bytes()
+        raw = _read_confined_bytes(bin_path, root)
+    except ConfinementError as exc:
+        return {"ok": False, "mode": "STATIC_ONLY_BINARY", "target": str(bin_path), "error": exc.code}
     except OSError as exc:
         return {
             "ok": False,
             "mode": "STATIC_ONLY_BINARY",
             "target": str(bin_path),
             "error": f"READ_ERROR: {exc}",
-        }
-
-    # Verify read boundary: if directory/junction replacement occurred during read, reject immediately without consuming outside bytes
-    if has_symlink_or_junction_ancestor(bin_path):
-        return {
-            "ok": False,
-            "mode": "STATIC_ONLY_BINARY",
-            "target": str(bin_path),
-            "error": "SYMLINK_OR_JUNCTION_ESCAPE",
         }
     digest = hashlib.sha256(raw).hexdigest()
     urls = sorted({m.decode("ascii", errors="ignore") for m in BIN_URL_RE.findall(raw)})[:100]
@@ -245,14 +347,12 @@ def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
     }
 
 
-def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
+def _inspect_sqlite_static(db_path: Path, root: Path | None = None) -> dict[str, Any]:
     """Inspect a SQLite DB using a disposable temporary snapshot so:
     1. Filenames with `#` or `?` never break URI parsing or create stray files.
     2. WAL-mode databases never have `-shm` sidecars created in the source directory.
     3. WAL file is copied to temp snapshot BEFORE hashing to eliminate hash/copy races.
     """
-    if has_symlink_or_junction_ancestor(db_path):
-        return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": "SYMLINK_OR_JUNCTION_ESCAPE"}
     wal_path = Path(str(db_path) + "-wal")
     shm_path = Path(str(db_path) + "-shm")
 
@@ -264,11 +364,12 @@ def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
             snap_shm = Path(str(snap_db) + "-shm")
 
             try:
-                shutil.copy2(db_path, snap_db)
+                main_bytes = _read_confined_bytes(db_path, root)
+            except ConfinementError as exc:
+                return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": exc.code}
             except OSError as exc:
                 return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": f"READ_ERROR: {exc}"}
-
-            main_bytes = snap_db.read_bytes()
+            snap_db.write_bytes(main_bytes)
             if main_bytes and len(main_bytes) >= 16 and not main_bytes.startswith(b"SQLite format 3\x00"):
                 return {
                     "ok": False,
@@ -277,27 +378,26 @@ def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
                     "error": "INVALID_SQLITE_HEADER",
                 }
 
-            if wal_path.is_file():
+            # Sidecars: a missing/unreadable WAL or SHM keeps the old best-effort behaviour, but a confinement
+            # refusal is an error, never silently skipped (bytes from outside root must not enter the snapshot).
+            wal_bytes = b""
+            for side, snap_side in ((wal_path, snap_wal), (shm_path, snap_shm)):
+                if not os.path.lexists(side):
+                    continue
                 try:
-                    shutil.copy2(wal_path, snap_wal)
+                    data = _read_confined_bytes(side, root)
+                except ConfinementError as exc:
+                    return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": exc.code}
                 except OSError:
-                    pass
-
-            if shm_path.is_file():
-                try:
-                    shutil.copy2(shm_path, snap_shm)
-                except OSError:
-                    pass
+                    continue
+                snap_side.write_bytes(data)
+                if side is wal_path:
+                    wal_bytes = data
 
             h = hashlib.sha256(main_bytes)
-            if snap_wal.is_file():
-                try:
-                    wal_bytes = snap_wal.read_bytes()
-                    if wal_bytes:
-                        h.update(b"|WAL|")
-                        h.update(wal_bytes)
-                except OSError:
-                    pass
+            if wal_bytes:
+                h.update(b"|WAL|")
+                h.update(wal_bytes)
             digest = h.hexdigest()
 
             uri = snap_db.resolve().as_uri() + "?mode=ro"
@@ -317,6 +417,13 @@ def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
             "target": str(db_path),
             "sha256": digest if "digest" in locals() else "",
             "error": f"SQLITE_ERROR: {exc}",
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_SQLITE",
+            "target": str(db_path),
+            "error": f"SNAPSHOT_IO_ERROR: {exc}",
         }
 
     return {
