@@ -454,6 +454,71 @@ class U256Counter(unittest.TestCase):
         self.assertIn("| 상태=WAITING_LONG", worst_line)
         self.assertTrue(worst_line.endswith("WAITING_LONG"))
 
+        # 6) Claude P2-1/P2-2: corrupt watermark offset ('abc') or non-dict events (['garbage']) fall back cleanly to rescan
+        wm.write_text(
+            json.dumps({"schema": "uaos-brain-watermark-v1", "files": {str(tf): {"offset": "abc", "mtime": 0.0, "prefix_sha": "deadbeefdeadbeef", "events": ["garbage"]}}}),
+            encoding="utf-8",
+        )
+        res_corrupt = C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=wm)
+        self.assertEqual([e["raw_total"] for e in res_corrupt], [101, 201])
+
+        # 7) Claude P2-3: rewrite beyond 256 bytes that keeps first 256 bytes and newline at old offset-1 triggers rescan via tail_sha
+        r0 = json.dumps({"step_index": 0, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:50:00Z", "input_tokens": 10, "output_tokens": 1, "pad": "P" * 260}) + "\n"
+        r1_old = json.dumps({"step_index": 1, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:51:00Z", "input_tokens": 11, "output_tokens": 1}) + "\n"
+        r1_new = json.dumps({"step_index": 1, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:51:00Z", "input_tokens": 98, "output_tokens": 1}) + "\n"
+        r2_new = json.dumps({"step_index": 2, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:52:00Z", "input_tokens": 4, "output_tokens": 1}) + "\n"
+        tf.write_text(r0 + r1_old, encoding="utf-8")
+        os.utime(tf, (1030.0, 1030.0))
+        self.assertEqual([e["raw_total"] for e in C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=wm)], [11, 12])
+        tf.write_text(r0 + r1_new + r2_new, encoding="utf-8")
+        os.utime(tf, (1035.0, 1035.0))
+        self.assertEqual([e["raw_total"] for e in C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=wm)], [11, 99, 5])
+
+        # 8) Claude P2-4/P2-5: future capacity_head ts is not debounced, and missing html_out is written even when debounced
+        head_p = self.root / ".coord/usage/capacity_head.json"
+        head_p.parent.mkdir(parents=True, exist_ok=True)
+        head_p.write_text(json.dumps({"ts": 4_000_000_000}), encoding="utf-8")
+        (self.root / ".coord/usage/capacity_snapshot.json").write_text(json.dumps({"engines": {}, "schedule_recommendation": {}}), encoding="utf-8")
+        fut_res = C.refresh_capacity_zero_token(self.root, home=home, now=2_000_000_000.0, min_interval_s=60.0)
+        self.assertFalse(fut_res["debounced"])
+        html_target = self.root / ".work/dash_out.html"
+        deb_html = C.refresh_capacity_zero_token(self.root, home=home, now=2_000_000_010.0, min_interval_s=60.0, html_out=html_target)
+        self.assertTrue(deb_html["debounced"])
+        self.assertTrue(html_target.is_file())
+
+    def test_u267_unified_five_chip_telemetry_in_snapshot_and_dashboards(self):
+        sched_path = self.root / ".coord/master_schedule.json"
+        sched_before = {
+            "phases": [
+                {"phase_id": "U267-A", "owner_tool": "codex", "state": "READY"},
+                {"phase_id": "U267-B", "owner_tool": "antigravity", "state": "MERGED"},
+            ]
+        }
+        sched_path.write_text(json.dumps(sched_before), encoding="utf-8")
+        raw_before = sched_path.read_text(encoding="utf-8")
+
+        snap = C.collect_capacity_snapshot(self.root, persist=True)
+        self.assertEqual(sched_path.read_text(encoding="utf-8"), raw_before)
+        fc = snap.get("five_chip_telemetry") or {}
+        self.assertEqual(fc.get("schema"), "uaos.five_chip_telemetry.v1")
+        self.assertTrue(fc.get("read_only"))
+        chips = fc.get("chips") or {}
+        self.assertEqual(chips["1_todos_schedule"]["total"], 2)
+        self.assertEqual(chips["1_todos_schedule"]["done"], 1)
+        self.assertEqual(chips["1_todos_schedule"]["remaining"], 1)
+        self.assertEqual(len(chips["2_three_tool_seats"]["seats"]), 5)
+        self.assertTrue(chips["5_quota_and_reset_timer"]["auto_resume_on_reset"])
+
+        term = C.render_terminal_dashboard(snap)
+        self.assertIn("[5-Chip 상태바]", term)
+        self.assertIn("①일정:1/2(남은1)", term)
+
+        html_out = self.root / ".work/u267_dash.html"
+        C.render_html_dashboard(snap, html_out)
+        html_text = html_out.read_text(encoding="utf-8")
+        self.assertIn('id="five-chip-bar"', html_text)
+        self.assertIn("① 할 일 · 마스터 일정 (Todos)", html_text)
+
 
 if __name__ == "__main__":
     unittest.main()

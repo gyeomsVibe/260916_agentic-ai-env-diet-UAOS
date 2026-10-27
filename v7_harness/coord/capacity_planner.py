@@ -337,35 +337,46 @@ def _scan_agy_brain_transcripts(
                 continue
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
             cached = wm_files.get(f_key)
+            cached_ok = False
+            if isinstance(cached, dict) and isinstance(cached.get("events"), list):
+                try:
+                    c_size = int(cached.get("file_size") if cached.get("file_size") is not None else -1)
+                    c_mtime = float(cached.get("mtime") or 0.0)
+                    c_offset = int(cached.get("offset") or 0)
+                    events_valid = all(isinstance(ev, dict) and isinstance(ev.get("ts"), (int, float)) for ev in cached["events"])
+                    cached_ok = events_valid and c_offset >= 0
+                except (TypeError, ValueError):
+                    cached_ok = False
+            else:
+                c_size, c_mtime, c_offset = -1, 0.0, 0
 
-            if (
-                isinstance(cached, dict)
-                and int(cached.get("file_size") or -1) == f_size
-                and abs(float(cached.get("mtime") or 0.0) - f_mtime) < 1e-3
-                and isinstance(cached.get("events"), list)
-            ):
+            if cached_ok and c_size == f_size and abs(c_mtime - f_mtime) < 1e-3:
                 file_events = [ev for ev in cached["events"] if float(ev.get("ts") or 0.0) >= cutoff_ts]
                 if len(file_events) != len(cached["events"]):
                     wm_files[f_key]["events"] = file_events
                     dirty = True
             else:
-                prev_offset = int(cached.get("offset") or 0) if isinstance(cached, dict) else 0
-                prev_prefix_sha = str(cached.get("prefix_sha") or "") if isinstance(cached, dict) else ""
+                prev_offset = c_offset if cached_ok else 0
+                prev_prefix_sha = str(cached.get("prefix_sha") or "") if (cached_ok and isinstance(cached, dict)) else ""
+                prev_tail_sha = str(cached.get("tail_sha") or "") if (cached_ok and isinstance(cached, dict)) else ""
                 can_seek = False
                 cur_prefix_sha = ""
+                cur_tail_sha = ""
                 try:
                     with tf.open("rb") as fh:
                         head_256 = fh.read(min(256, f_size))
                         cur_prefix_sha = hashlib.sha256(head_256).hexdigest()[:16] if head_256 else ""
                         if (
-                            isinstance(cached, dict)
+                            cached_ok
                             and 0 < prev_offset <= f_size
                             and prev_prefix_sha
                             and prev_prefix_sha == cur_prefix_sha
-                            and isinstance(cached.get("events"), list)
                         ):
-                            fh.seek(prev_offset - 1)
-                            if fh.read(1) == b"\n":
+                            tail_start = max(0, prev_offset - 256)
+                            fh.seek(tail_start)
+                            tail_window = fh.read(prev_offset - tail_start)
+                            tail_window_sha = hashlib.sha256(tail_window).hexdigest()[:16] if tail_window else ""
+                            if tail_window.endswith(b"\n") and (not prev_tail_sha or prev_tail_sha == tail_window_sha):
                                 can_seek = True
                                 raw_chunk = fh.read(f_size - prev_offset)
                             else:
@@ -381,18 +392,23 @@ def _scan_agy_brain_transcripts(
                         else:
                             complete_bytes = raw_chunk[: last_nl + 1]
                             new_offset = (prev_offset + last_nl + 1) if can_seek else (last_nl + 1)
+                        if new_offset > 0:
+                            t_start = max(0, new_offset - 256)
+                            fh.seek(t_start)
+                            cur_tail_sha = hashlib.sha256(fh.read(new_offset - t_start)).hexdigest()[:16]
                 except OSError:
                     continue
 
                 chunk_lines = complete_bytes.decode("utf-8", errors="replace").splitlines()
                 parsed_new = _parse_brain_planner_lines(chunk_lines, conv_id)
-                base_events = list(cached["events"]) if (can_seek and isinstance(cached, dict)) else []
-                file_events = [ev for ev in (base_events + parsed_new) if float(ev.get("ts") or 0.0) >= cutoff_ts]
+                base_events = list(cached["events"]) if (can_seek and cached_ok and isinstance(cached, dict)) else []
+                file_events = [ev for ev in (base_events + parsed_new) if isinstance(ev, dict) and float(ev.get("ts") or 0.0) >= cutoff_ts]
                 wm_files[f_key] = {
                     "offset": new_offset,
                     "file_size": f_size,
                     "mtime": f_mtime,
                     "prefix_sha": cur_prefix_sha,
+                    "tail_sha": cur_tail_sha,
                     "events": file_events,
                 }
                 dirty = True
@@ -639,6 +655,12 @@ def collect_capacity_snapshot(
     }
 
     snapshot["wait_transparency"] = extract_wait_transparency(desk)
+    snapshot["five_chip_telemetry"] = _collect_unified_five_chip_telemetry(
+        desk=desk,
+        engines_summary=engines_summary,
+        quotas=quotas,
+        wait_transparency=snapshot["wait_transparency"],
+    )
     head_summary = build_compact_capacity_head(snapshot)
     snapshot["compact_head"] = head_summary
 
@@ -647,7 +669,9 @@ def collect_capacity_snapshot(
         _atomic_write_json(local_snap, snapshot)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
         local_head.parent.mkdir(parents=True, exist_ok=True)
-        local_head.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        head_tmp = local_head.with_suffix(".json.tmp")
+        head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(head_tmp, local_head)
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -872,6 +896,119 @@ def extract_wait_transparency(desk: Path) -> dict[str, Any]:
     }
 
 
+_GIT_DIFF_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _collect_active_watchers(desk: Path) -> list[str]:
+    """Deterministically inspect .coord/watch, .coord/sentinel, and .coord/presence with 0 paid tokens."""
+    watchers: list[str] = []
+    coord_dir = Path(desk) / ".coord"
+    watch_dir = coord_dir / "watch"
+    if watch_dir.is_dir():
+        for wf in sorted(watch_dir.iterdir()):
+            if wf.suffix in (".json", ".pid", ".lock"):
+                watchers.append(f"coord watch ({wf.stem})")
+    sentinel_pid = coord_dir / "sentinel" / "loop.pid"
+    if sentinel_pid.is_file():
+        watchers.append("sentinel.loop (0-token daemon)")
+    pres_dir = coord_dir / "presence"
+    if pres_dir.is_dir():
+        for tool in PAID_TOOLS:
+            pf = pres_dir / f"{tool}.json"
+            if pf.is_file():
+                try:
+                    pdata = json.loads(pf.read_text(encoding="utf-8"))
+                    if isinstance(pdata, dict) and str(pdata.get("state") or "").upper() == "ACTIVE":
+                        label = f"coord watch --target {tool}"
+                        if label not in watchers:
+                            watchers.append(label)
+                except (OSError, ValueError):
+                    pass
+    return watchers
+
+
+def _collect_git_diff_chip(desk: Path) -> list[dict[str, Any]]:
+    """Collect working-tree / staged diff stats (file_count, +added, -removed) with 0 paid tokens."""
+    desk_path = Path(desk)
+    if not (desk_path / ".git").exists():
+        return []
+    key = str(desk_path)
+    now_ts = time.time()
+    cached = _GIT_DIFF_CACHE.get(key)
+    if cached is not None and (now_ts - cached[0]) < 15.0:
+        return list(cached[1])
+    import subprocess
+
+    changed: list[dict[str, Any]] = []
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(desk_path), "diff", "--numstat", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1.5,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            for ln in proc.stdout.splitlines()[:25]:
+                parts = ln.split("\t")
+                if len(parts) >= 3:
+                    add_s, rem_s, fpath = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                    added = int(add_s) if add_s.isdigit() else 0
+                    removed = int(rem_s) if rem_s.isdigit() else 0
+                    changed.append({"path": fpath, "added": added, "removed": removed})
+    except Exception:
+        changed = []
+    _GIT_DIFF_CACHE[key] = (now_ts, changed)
+    return changed
+
+
+def _collect_unified_five_chip_telemetry(
+    *,
+    desk: Path,
+    engines_summary: dict[str, dict[str, Any]],
+    quotas: dict[str, dict[str, Any]],
+    wait_transparency: dict[str, Any],
+) -> dict[str, Any]:
+    """Unify Show GN 5-Chip Telemetry (`benchmark_logic_transplant.py`) into `capacity_planner` read-only snapshot."""
+    from v7_harness.benchmark_logic_transplant import build_five_chip_telemetry_snapshot
+
+    sched_path = Path(desk) / ".coord" / "master_schedule.json"
+    phases: list[dict[str, Any]] = []
+    if sched_path.is_file():
+        try:
+            raw = json.loads(sched_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("phases"), list):
+                phases = [dict(p) for p in raw["phases"] if isinstance(p, dict)]
+        except (OSError, ValueError):
+            phases = []
+
+    presence_states = {
+        t: str((engines_summary.get(t) or {}).get("presence_state") or "ABSENT").upper()
+        for t in PAID_TOOLS
+    }
+    reset_times = {
+        t: str(q["resets_at"])
+        for t, q in (quotas or {}).items()
+        if isinstance(q, dict) and q.get("resets_at")
+    }
+    return build_five_chip_telemetry_snapshot(
+        schedule_phases=phases,
+        presence_states=presence_states,
+        changed_files=_collect_git_diff_chip(desk),
+        active_watchers=_collect_active_watchers(desk),
+        quota_reset_times=reset_times,
+        foreground_wait_s=0.0,
+        is_background_watcher=True,
+        acting_tool="antigravity",
+        mutate_schedule=False,
+        include_haiku=True,
+        engines_summary=engines_summary,
+        wait_transparency=wait_transparency,
+    )
+
+
 def build_compact_capacity_head(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Return an ultra-compact (<=320B / ~50 tok) routing header so scheduling never loads 9,750B snapshot JSON."""
     sched = snapshot.get("schedule_recommendation") or {}
@@ -955,11 +1092,14 @@ def refresh_capacity_zero_token(
                 default=0.0,
             ) if brain_root.is_dir() else 0.0
             if (
-                (moment - last_ts) < min_interval_s
+                0.0 <= (moment - last_ts) < min_interval_s
                 and runs_mtime <= last_ts
                 and sched_mtime <= last_ts
                 and brain_mtime <= last_ts
             ):
+                if html_out is not None and not Path(html_out).is_file():
+                    snap_cached = json.loads(snap_path.read_text(encoding="utf-8"))
+                    render_html_dashboard(snap_cached, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
         except (OSError, ValueError):
             pass
@@ -981,9 +1121,23 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
     engines = snapshot.get("engines") or {}
     sched = snapshot.get("schedule_recommendation") or {}
     off = snapshot.get("offload_efficiency_24h") or {}
+    fc = ((snapshot.get("five_chip_telemetry") or {}).get("chips")) or {}
+    c1 = fc.get("1_todos_schedule") or {}
+    c2 = fc.get("2_three_tool_seats") or {}
+    c3 = fc.get("3_background_watchers") or {}
+    c4 = fc.get("4_changed_files_diff") or {}
+    c5 = fc.get("5_quota_and_reset_timer") or {}
+    w_act = (c3.get("wait_decision") or {}).get("action", "CONTINUE_WAIT")
     lines = [
         "[계기판] [UAOS-RSI 3대 도구 + Ollama/Haiku 실시간 토큰·용량 계기판]",
         f"• 지휘권(Conductor): {sched.get('recommended_conductor', 'unknown').upper()} | 24h 로컬·경량 오프로드율: {off.get('offload_share_pct', 0.0)}% ({off.get('ollama_plus_haiku_calls_24h', 0)}/{off.get('total_calls_24h', 0)} calls)",
+        (
+            f"• [5-Chip 상태바] ①일정:{c1.get('done', 0)}/{c1.get('total', 0)}(남은{c1.get('remaining', 0)}) "
+            f"| ②좌석:{c2.get('mode', 'THREE_TOOL_NORMAL')}({len(c2.get('seats') or [])}석) "
+            f"| ③워처:{len(c3.get('watchers') or [])}개({w_act}) "
+            f"| ④Diff:{c4.get('file_count', 0)}파일(+{c4.get('lines_added', 0)}/-{c4.get('lines_removed', 0)}) "
+            f"| ⑤리셋자동재개:{'ON' if c5.get('auto_resume_on_reset', True) else 'OFF'}"
+        ),
         "┌──────────────┬─────────┬──────────────────┬──────────────┬──────────────┬──────────┐",
         "│ 도구(Engine) │ 상태    │ 5h 사용률 게이지 │ 5h 사용 토큰 │ 5h 가용 토큰 │ 가용카드 │",
         "├──────────────┼─────────┼──────────────────┼──────────────┼──────────────┼──────────┤",
@@ -1047,6 +1201,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       </div>
     </div>
 
+    <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-5 gap-2"></div>
     <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
     <div id="gauges-grid" class="grid grid-cols-1 md:grid-cols-5 gap-2.5"></div>
 
@@ -1092,6 +1247,30 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       const sched = SNAP.schedule_recommendation || {{}};
       const off = SNAP.offload_efficiency_24h || {{}};
       const wt = SNAP.wait_transparency || {{}};
+      const fc = ((SNAP.five_chip_telemetry || {{}}).chips) || {{}};
+      const chipBar = document.getElementById("five-chip-bar");
+      if (chipBar) {{
+        const c1 = fc["1_todos_schedule"] || {{}};
+        const c2 = fc["2_three_tool_seats"] || {{}};
+        const c3 = fc["3_background_watchers"] || {{}};
+        const c4 = fc["4_changed_files_diff"] || {{}};
+        const c5 = fc["5_quota_and_reset_timer"] || {{}};
+        const wDec = (c3.wait_decision || {{}}).action || "CONTINUE_WAIT";
+        const chipItems = [
+          {{ title: "① 할 일 · 마스터 일정 (Todos)", val: `${{c1.done ?? 0}} / ${{c1.total ?? 0}} 완료`, sub: `남은 ${{c1.remaining ?? 0}}건 (진행 ${{c1.active ?? 0}} · 검수 ${{c1.review ?? 0}})` }},
+          {{ title: "② 3대 도구+로컬 좌석 (OpenRig)", val: String(c2.mode || "THREE_TOOL_NORMAL"), sub: `지휘: ${{String(c2.conductor || "antigravity").toUpperCase()}} · 좌석 ${{(c2.seats || []).length}}석` }},
+          {{ title: "③ 백그라운드 워처 · 5초 선점", val: `워처 ${{(c3.watchers || []).length}}개 가동`, sub: `판정: ${{wDec}} (한도 ${{c3.foreground_wait_limit_s ?? 5.0}}s)` }},
+          {{ title: "④ 실시간 변경 파일 Diff", val: `${{c4.file_count ?? 0}}개 파일 변경`, sub: `+${{c4.lines_added ?? 0}} / -${{c4.lines_removed ?? 0}} lines` }},
+          {{ title: "⑤ 쿼터 · 리셋 타이머", val: `자동 재개 ${{c5.auto_resume_on_reset ? "ON" : "OFF"}}`, sub: `리셋 등록: ${{Object.keys(c5.reset_at || {{}}).length}}개 도구` }}
+        ];
+        chipBar.innerHTML = chipItems.map(item => `
+          <div class="border border-[var(--border)] rounded-lg p-2 bg-[var(--secondary)]/20 flex flex-col justify-between">
+            <span class="text-[11px] text-[var(--muted-foreground)] font-medium">${{item.title}}</span>
+            <span class="text-xs font-semibold text-[var(--foreground)] mt-0.5">${{item.val}}</span>
+            <span class="text-[11px] text-[var(--muted-foreground)] mt-0.5">${{item.sub}}</span>
+          </div>
+        `).join("");
+      }}
       const wb = document.getElementById("wait-banner");
       if (wb) {{
         wb.textContent = "🔍 실시간 대기·진행 상태: " + (wt.headline || "상태 정보 없음");
