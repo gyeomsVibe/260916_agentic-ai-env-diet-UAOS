@@ -127,7 +127,7 @@ _SEGMENT_RE = re.compile(r"(?:[^;&|\n\x22\x27]|\x22[^\x22]*\x22|\x27[^\x27]*\x27
 _TOKEN_RE = re.compile(r"\x22[^\x22]*\x22|\x27[^\x27]*\x27|\S+")
 
 
-_GH_GLOBAL_VALUE_FLAGS = ("-r", "--repo", "--hostname", "-h")
+_GH_GLOBAL_VALUE_FLAGS = ("-r", "--repo", "--hostname", "-h", "-q", "--jq", "-t", "--template")
 
 
 def _tokens_are_gh_merge(tokens: list[str]) -> bool:
@@ -154,7 +154,7 @@ def _tokens_are_gh_merge(tokens: list[str]) -> bool:
         if tl in _GH_GLOBAL_VALUE_FLAGS and len(pos) < 2:
             j += 2
             continue
-        if tl.startswith(("-r=", "--repo=", "--hostname=")) and len(pos) < 2:
+        if tl.startswith(("-r=", "--repo=", "--hostname=", "-q=", "--jq=", "-t=", "--template=")) and len(pos) < 2:
             j += 1
             continue
         if tl.startswith("-"):

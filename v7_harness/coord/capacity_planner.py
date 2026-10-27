@@ -358,33 +358,24 @@ def _scan_agy_brain_transcripts(
             else:
                 prev_offset = c_offset if cached_ok else 0
                 prev_prefix_sha = str(cached.get("prefix_sha") or "") if (cached_ok and isinstance(cached, dict)) else ""
-                prev_tail_sha = str(cached.get("tail_sha") or "") if (cached_ok and isinstance(cached, dict)) else ""
                 can_seek = False
                 cur_prefix_sha = ""
-                cur_tail_sha = ""
                 try:
                     with tf.open("rb") as fh:
-                        head_256 = fh.read(min(256, f_size))
-                        cur_prefix_sha = hashlib.sha256(head_256).hexdigest()[:16] if head_256 else ""
-                        if (
-                            cached_ok
-                            and 0 < prev_offset <= f_size
-                            and prev_prefix_sha
-                            and prev_prefix_sha == cur_prefix_sha
-                        ):
-                            tail_start = max(0, prev_offset - 256)
-                            fh.seek(tail_start)
-                            tail_window = fh.read(prev_offset - tail_start)
-                            tail_window_sha = hashlib.sha256(tail_window).hexdigest()[:16] if tail_window else ""
-                            if tail_window.endswith(b"\n") and (not prev_tail_sha or prev_tail_sha == tail_window_sha):
+                        if cached_ok and 0 < prev_offset <= f_size and prev_prefix_sha:
+                            prefix_bytes = fh.read(prev_offset)
+                            h = hashlib.sha256(prefix_bytes)
+                            if prefix_bytes.endswith(b"\n") and h.hexdigest()[:16] == prev_prefix_sha:
                                 can_seek = True
                                 raw_chunk = fh.read(f_size - prev_offset)
                             else:
                                 fh.seek(0)
                                 raw_chunk = fh.read(f_size)
+                                h = hashlib.sha256()
                         else:
                             fh.seek(0)
                             raw_chunk = fh.read(f_size)
+                            h = hashlib.sha256()
                         last_nl = raw_chunk.rfind(b"\n")
                         if last_nl == -1:
                             complete_bytes = b""
@@ -392,10 +383,9 @@ def _scan_agy_brain_transcripts(
                         else:
                             complete_bytes = raw_chunk[: last_nl + 1]
                             new_offset = (prev_offset + last_nl + 1) if can_seek else (last_nl + 1)
-                        if new_offset > 0:
-                            t_start = max(0, new_offset - 256)
-                            fh.seek(t_start)
-                            cur_tail_sha = hashlib.sha256(fh.read(new_offset - t_start)).hexdigest()[:16]
+                        if complete_bytes:
+                            h.update(complete_bytes)
+                        cur_prefix_sha = h.hexdigest()[:16] if new_offset > 0 else ""
                 except OSError:
                     continue
 
@@ -408,7 +398,6 @@ def _scan_agy_brain_transcripts(
                     "file_size": f_size,
                     "mtime": f_mtime,
                     "prefix_sha": cur_prefix_sha,
-                    "tail_sha": cur_tail_sha,
                     "events": file_events,
                 }
                 dirty = True
@@ -663,7 +652,7 @@ def collect_capacity_snapshot(
         _atomic_write_json(local_snap, snapshot)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
         local_head.parent.mkdir(parents=True, exist_ok=True)
-        head_tmp = local_head.with_suffix(".json.tmp")
+        head_tmp = local_head.with_name(f".capacity_head.{os.getpid()}.{time.time_ns()}.tmp")
         head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         os.replace(head_tmp, local_head)
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
