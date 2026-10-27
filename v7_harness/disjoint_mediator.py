@@ -318,6 +318,26 @@ def release_lane_lease(source_dir: Path, *, lane_id: str, now: float | None = No
     return {"ok": True, "lane_id": lane_id, "released": removed is not None}
 
 
+def _read_git_head_or_base_text(source_dir: Path, rel_path: str, base_texts: dict[str, str] | None = None) -> str | None:
+    if isinstance(base_texts, dict) and rel_path in base_texts:
+        return base_texts[rel_path]
+    import subprocess
+    try:
+        res = subprocess.run(
+            ["git", "show", f"HEAD:{rel_path}"],
+            cwd=str(source_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=5,
+        )
+        if res.returncode == 0:
+            return res.stdout
+    except Exception:
+        pass
+    return None
+
+
 def evaluate_scoped_divergence(
     *,
     base_manifest: DeterministicManifest | None,
@@ -325,6 +345,8 @@ def evaluate_scoped_divergence(
     excludes: Sequence[str] | None,
     pilot_allowed_scopes: Sequence[str] | None,
     bundle: PatchBundle | None = None,
+    staging_dir: Path | None = None,
+    base_texts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Competent Zero-Wait Flagman Scoped Divergence Resolution (`evaluate_scoped_divergence`):
     Whenever `pilot_allowed_scopes` is explicitly constrained (e.g., `allow: v7_harness/rsi.py`) and a companion
@@ -382,6 +404,31 @@ def evaluate_scoped_divergence(
         else:
             disjoint_companion.append(rel_path)
 
+    ast_merged_paths: list[str] = []
+    if conflicting and staging_dir is not None:
+        still_conflicting: list[str] = []
+        src_root = Path(source_dir).resolve()
+        stg_root = Path(staging_dir).resolve()
+        for rel_p in conflicting:
+            src_f = src_root / rel_p
+            stg_f = stg_root / rel_p
+            base_t = _read_git_head_or_base_text(src_root, _norm(rel_p), base_texts)
+            if base_t is not None and src_f.is_file() and stg_f.is_file():
+                try:
+                    theirs_t = src_f.read_text(encoding="utf-8")
+                    ours_t = stg_f.read_text(encoding="utf-8")
+                    m_res = flagman_autonomous_3way_hunk_merge(
+                        base_t, ours_t, theirs_t, file_path=_norm(rel_p)
+                    )
+                    if m_res.get("ok") and m_res.get("ast_quality_verified") and isinstance(m_res.get("merged_text"), str):
+                        stg_f.write_text(m_res["merged_text"], encoding="utf-8")
+                        ast_merged_paths.append(rel_p)
+                        continue
+                except OSError:
+                    pass
+            still_conflicting.append(rel_p)
+        conflicting = still_conflicting
+
     if conflicting:
         return {
             "signal": "RED_CONFLICTING_DIVERGENCE",
@@ -394,35 +441,46 @@ def evaluate_scoped_divergence(
 
     rebased_bundle: PatchBundle | None = bundle
     if bundle is not None:
-        for item in bundle.items:
-            if after.get(item.path) != item.base_sha256:
-                return {
-                    "signal": "RED_CONFLICTING_DIVERGENCE",
-                    "flagman_action": "SAME_FILE_COLLISION_DETECTED",
-                    "wait_ms": 0,
-                    "conflicting_paths": [item.path],
-                    "disjoint_companion_paths": disjoint_companion,
-                    "rebased_bundle": None,
-                }
-        new_bundle_id = compute_bundle_id(
-            current_manifest.manifest_hash,
-            bundle.target_manifest_hash,
-            bundle.items,
-            bundle.metadata,
-        )
-        rebased_bundle = PatchBundle(
-            bundle_id=new_bundle_id,
-            base_manifest_hash=current_manifest.manifest_hash,
-            target_manifest_hash=bundle.target_manifest_hash,
-            items=bundle.items,
-            metadata=bundle.metadata,
-        )
+        from v7_harness.isolation.manifest import create_patch_bundle
+        if ast_merged_paths and staging_dir is not None:
+            target_manifest = build_manifest(Path(staging_dir).resolve(), excludes=list(excludes or []))
+            rebased_bundle = create_patch_bundle(
+                base_manifest=current_manifest,
+                target_manifest=target_manifest,
+                base_dir=Path(source_dir).resolve(),
+                target_dir=Path(staging_dir).resolve(),
+            )
+        else:
+            for item in bundle.items:
+                if after.get(item.path) != item.base_sha256:
+                    return {
+                        "signal": "RED_CONFLICTING_DIVERGENCE",
+                        "flagman_action": "SAME_FILE_COLLISION_DETECTED",
+                        "wait_ms": 0,
+                        "conflicting_paths": [item.path],
+                        "disjoint_companion_paths": disjoint_companion,
+                        "rebased_bundle": None,
+                    }
+            new_bundle_id = compute_bundle_id(
+                current_manifest.manifest_hash,
+                bundle.target_manifest_hash,
+                bundle.items,
+                bundle.metadata,
+            )
+            rebased_bundle = PatchBundle(
+                bundle_id=new_bundle_id,
+                base_manifest_hash=current_manifest.manifest_hash,
+                target_manifest_hash=bundle.target_manifest_hash,
+                items=bundle.items,
+                metadata=bundle.metadata,
+            )
 
     return {
-        "signal": "YELLOW_SCOPED_REBASE",
-        "flagman_action": "ZERO_WAIT_SCOPED_BYPASS",
+        "signal": "GREEN_3WAY_AST_HUNK_MERGED" if ast_merged_paths else "YELLOW_SCOPED_REBASE",
+        "flagman_action": "AUTONOMOUS_3WAY_AST_HUNK_MERGE" if ast_merged_paths else "ZERO_WAIT_SCOPED_BYPASS",
         "wait_ms": 0,
         "conflicting_paths": [],
+        "ast_merged_paths": ast_merged_paths,
         "disjoint_companion_paths": disjoint_companion,
         "rebased_bundle": rebased_bundle,
         "current_manifest": current_manifest,
@@ -839,6 +897,49 @@ def _extract_python_top_level_symbol_digests(source_text: str) -> tuple[bool, di
     return True, digests
 
 
+def _check_ast_call_arity_conflicts(tree: Any) -> list[str]:
+    """CRITIC/REDTEAM Step 2 Quality Gate: Detect cross-function signature breakage when Worker A changes
+    a top-level function's required parameter count (e.g. `def alpha(x, y):`) while Worker B calls `alpha(1)`.
+    """
+    import ast
+
+    fn_specs: dict[str, tuple[int, int | None, set[str]]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            pos_args = list(node.args.posonlyargs) + list(node.args.args)
+            defaults = list(node.args.defaults)
+            min_pos = len(pos_args) - len(defaults)
+            max_pos = None if node.args.vararg is not None else len(pos_args)
+            req_kw = {
+                kw.arg for kw, d in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                if d is None and kw.arg is not None
+            }
+            fn_specs[node.name] = (min_pos, max_pos, req_kw)
+
+    mismatches: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            fname = node.func.id
+            if fname not in fn_specs:
+                continue
+            if any(isinstance(a, ast.Starred) for a in node.args):
+                continue
+            if any(k.arg is None for k in node.keywords):
+                continue
+            min_pos, max_pos, req_kw = fn_specs[fname]
+            pos_passed = len(node.args)
+            kw_passed = {k.arg for k in node.keywords if k.arg is not None}
+            # Allow keyword arguments to satisfy positional parameters
+            total_satisfied = pos_passed + len(kw_passed - req_kw)
+            if total_satisfied < min_pos:
+                mismatches.add(f"{fname}(arity<{min_pos})")
+            elif max_pos is not None and pos_passed > max_pos:
+                mismatches.add(f"{fname}(arity>{max_pos})")
+            elif not req_kw.issubset(kw_passed):
+                mismatches.add(f"{fname}(missing_kw)")
+    return sorted(mismatches)
+
+
 def flagman_autonomous_3way_hunk_merge(
     base_text: str,
     ours_text: str,
@@ -961,7 +1062,7 @@ def flagman_autonomous_3way_hunk_merge(
 
     if is_py:
         try:
-            ast.parse(merged_text)
+            merged_tree = ast.parse(merged_text)
         except SyntaxError:
             return {
                 "ok": False,
@@ -970,6 +1071,17 @@ def flagman_autonomous_3way_hunk_merge(
                 "wait_ms": 0,
                 "ast_quality_verified": False,
                 "conflicting_symbols": [],
+                "merged_text": None,
+            }
+        arity_conflicts = _check_ast_call_arity_conflicts(merged_tree)
+        if arity_conflicts:
+            return {
+                "ok": False,
+                "signal": "RED_AST_CALL_ARITY_MISMATCH",
+                "flagman_action": "BLOCKED_CROSS_FUNCTION_SIGNATURE_BREAKAGE",
+                "wait_ms": 0,
+                "ast_quality_verified": False,
+                "conflicting_symbols": arity_conflicts,
                 "merged_text": None,
             }
 
@@ -1060,3 +1172,98 @@ def run_independent_flagman_pulse(
     sfile.parent.mkdir(parents=True, exist_ok=True)
     sfile.write_text(json.dumps(entity_state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return entity_state
+def _is_flagman_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000 | 0x00100000, False, int(pid))
+        if not handle:
+            return False
+        exit_code = ctypes.c_ulong()
+        ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return bool(ok and exit_code.value == 259)
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+def ensure_independent_flagman_daemon(
+    project_root: Path,
+    *,
+    interval_s: float = 30.0,
+    spawn_if_stopped: bool = True,
+) -> dict[str, Any]:
+    """CRITIC/REDTEAM Step 3: Ensure the Independent Flagman Entity runs as a self-sustaining
+    OS-level background process (`.coord/presence/flagman_daemon.json`) at 0 paid tokens,
+    completely independent of whether Codex, Claude Code, or Antigravity is currently invoking a hook.
+    """
+    import subprocess
+
+    root = Path(project_root).resolve()
+    daemon_meta_file = root / ".coord" / "presence" / "flagman_daemon.json"
+    daemon_meta_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if daemon_meta_file.is_file():
+        try:
+            dmeta = json.loads(daemon_meta_file.read_text(encoding="utf-8"))
+            pid = int(dmeta.get("pid") or 0)
+            if _is_flagman_pid_alive(pid):
+                return {
+                    "ok": True,
+                    "daemon_status": "ALREADY_RUNNING",
+                    "pid": pid,
+                    "interval_s": dmeta.get("interval_s", interval_s),
+                    "paid_tokens": 0,
+                }
+        except (OSError, ValueError):
+            pass
+
+    if not spawn_if_stopped:
+        return {
+            "ok": True,
+            "daemon_status": "STOPPED_OBSERVED",
+            "pid": None,
+            "interval_s": interval_s,
+            "paid_tokens": 0,
+        }
+
+    loop_code = (
+        "import time, sys; from pathlib import Path; "
+        f"sys.path.insert(0, {repr(str(root))}); "
+        "from v7_harness.disjoint_mediator import run_independent_flagman_pulse; "
+        f"root = Path({repr(str(root))}); "
+        "\nwhile True:\n"
+        "    try:\n"
+        "        run_independent_flagman_pulse(root, auto_heal=True)\n"
+        "    except Exception:\n"
+        "        pass\n"
+        f"    time.sleep({float(interval_s)})\n"
+    )
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", loop_code],
+        cwd=str(root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=creationflags,
+         close_fds=True,
+    )
+    meta = {
+        "schema": FLAGMAN_ENTITY_SCHEMA,
+        "daemon_status": "SPAWNED_DETACHED",
+        "pid": proc.pid,
+        "interval_s": float(interval_s),
+        "started_at": time.time(),
+        "paid_tokens": 0,
+        "local_gpu_tokens": 0,
+    }
+    daemon_meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"ok": True, **meta}
