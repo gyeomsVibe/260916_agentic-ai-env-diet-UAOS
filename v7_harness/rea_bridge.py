@@ -10,9 +10,11 @@ UAOS-RSI Contract Manual.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import sqlite3
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -64,6 +66,47 @@ def is_symlink_or_junction(path: Path) -> bool:
     except OSError:
         return True
     return False
+
+
+class ConfinementError(OSError):
+    """Raised when a target-tree read cannot be bound to the verified in-root regular file."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def _read_confined_bytes(path: Path, root: Path | None = None, limit: int | None = None) -> bytes:
+    """Read bytes only through a descriptor whose identity matches the in-root regular file."""
+    if has_symlink_or_junction_ancestor(path, root):
+        raise ConfinementError("SYMLINK_OR_JUNCTION_ESCAPE")
+    pre = os.lstat(path)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if not stat.S_ISREG(pre.st_mode) or ((getattr(pre, "st_file_attributes", 0) or 0) & reparse):
+        raise ConfinementError("NOT_REGULAR_FILE")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (pre.st_dev, pre.st_ino):
+            raise ConfinementError("HANDLE_IDENTITY_MISMATCH")
+        if has_symlink_or_junction_ancestor(path, root):
+            raise ConfinementError("SYMLINK_OR_JUNCTION_ESCAPE")
+        post = os.lstat(path)
+        if (post.st_dev, post.st_ino) != (pre.st_dev, pre.st_ino):
+            raise ConfinementError("HANDLE_IDENTITY_MISMATCH")
+        chunks = []
+        total = 0
+        while True:
+            block = os.read(fd, 1 << 20)
+            if not block:
+                break
+            chunks.append(block)
+            total += len(block)
+            if limit is not None and total > limit:
+                raise ConfinementError("READ_LIMIT_EXCEEDED")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
 
 
 BIN_URL_RE = re.compile(rb"https?://[A-Za-z0-9._/\-:?=&%]+")
@@ -166,8 +209,11 @@ def inspect_static_target(
         if ext not in (".py", ".ts", ".tsx", ".js", ".rs"):
             continue
         try:
-            raw = f.read_bytes()
+            raw = _read_confined_bytes(f, root_resolved)
             text = raw.decode("utf-8", errors="replace")
+        except ConfinementError as exc:
+            failed_files.append({"file": rel_str, "error": exc.code})
+            continue
         except OSError as exc:
             failed_files.append({"file": rel_str, "error": f"OS_READ_ERROR: {exc}"})
             continue
@@ -196,8 +242,8 @@ def inspect_static_target(
 
 def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
     """Extract deterministic static metadata, URLs, and module identifiers from a PE/ELF/WASM binary without executing it.
-    Guarantees handle-bound confinement: before and after reading, verifies that bin_path and all ancestors
-    are not symlinks/junctions and remain contained in root.
+    The bytes come from an identity-verified descriptor (_read_confined_bytes), which rejects reparse points,
+    non-regular files, and handle/path identity mismatches. Ancestor checks run before and after the read.
     """
     if has_symlink_or_junction_ancestor(bin_path):
         return {
@@ -207,7 +253,14 @@ def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
             "error": "SYMLINK_OR_JUNCTION_ESCAPE",
         }
     try:
-        raw = bin_path.read_bytes()
+        raw = _read_confined_bytes(bin_path)
+    except ConfinementError as exc:
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": exc.code,
+        }
     except OSError as exc:
         return {
             "ok": False,
@@ -264,7 +317,9 @@ def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
             snap_shm = Path(str(snap_db) + "-shm")
 
             try:
-                shutil.copy2(db_path, snap_db)
+                snap_db.write_bytes(_read_confined_bytes(db_path))
+            except ConfinementError as exc:
+                return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": exc.code}
             except OSError as exc:
                 return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": f"READ_ERROR: {exc}"}
 
@@ -279,13 +334,13 @@ def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
 
             if wal_path.is_file():
                 try:
-                    shutil.copy2(wal_path, snap_wal)
+                    snap_wal.write_bytes(_read_confined_bytes(wal_path))
                 except OSError:
                     pass
 
             if shm_path.is_file():
                 try:
-                    shutil.copy2(shm_path, snap_shm)
+                    snap_shm.write_bytes(_read_confined_bytes(shm_path))
                 except OSError:
                     pass
 

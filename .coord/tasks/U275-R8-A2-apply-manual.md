@@ -1,0 +1,694 @@
+```contract
+work_id: U275-R8-A2
+worker: apply
+goal: Bind rea_bridge target-tree reads to identity-verified descriptors (PR244-R7 REVISE)
+inputs:
+- v7_harness/rea_bridge.py sha256=d5c764952cbe87f45607f063a3f6d137591ba930a7d36fdb7e90dfa56a7b4118
+allow:
+- v7_harness/rea_bridge.py
+- tests/test_u275_r8_read_confinement.py
+acceptance: python D:/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.claude/worktrees/unapproved-nonstop-orchestration-903a95/.work/u275_r8/judge_helper_test.py && python D:/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.claude/worktrees/unapproved-nonstop-orchestration-903a95/.work/u275_r8/judge_gate.py && python -m unittest tests.test_u275_r8_read_confinement tests.test_u247_rea_static_bridge tests.test_u248_process_finalization tests.test_u275_auto_rea_reverse_engineering
+forbidden: design changes; edits outside allow; editing or deleting tests; network; commit/push
+stop: two failures with the same cause; input hash mismatch; no output
+judge: claude
+timeout_s: 600
+remote_budget_tokens: 0
+apply_after: U275-R8-L1
+```
+
+## Instructions for the worker
+
+Apply the two FILE blocks exactly (byte-for-byte). Haiku 5.5 wrote them (U275-R8-H1) after Ollama slice U275-R8-L1 failed SPLICE_CURRENT with no change (reconciled ABANDONED). Contract: .coord/tasks/U275-R8-read-confinement-manual.md (Codex PR244-R7 REVISE).
+
+===FILE: v7_harness/rea_bridge.py===
+"""U247 / U275: On-Demand Static REA Bridge, PE/Binary String Extractor & Contract Spec / Obligation Ledger Generator.
+
+Provides a strictly read-only (`STATIC_ONLY`) analysis adapter inspired by
+`morluto/rea` that extracts symbols, PE/ELF/WASM binary URLs/strings, SQLite schema
+metadata, and module boundaries without executing untrusted target binaries or
+scripts, and converts findings into a finite Reconstruction Obligation Ledger and
+UAOS-RSI Contract Manual.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import shutil
+import sqlite3
+import stat
+import tempfile
+from pathlib import Path
+from typing import Any
+
+PY_EXPORT_RE = re.compile(r"^(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.MULTILINE)
+TS_EXPORT_RE = re.compile(
+    r"^export\s+(?:async\s+)?(?:function|class|const|interface|type|enum)\s+([A-Za-z0-9_]+)",
+    re.MULTILINE,
+)
+RS_EXPORT_RE = re.compile(r"^pub(?:\([^)]+\))?\s+(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z0-9_]+)", re.MULTILINE)
+
+def has_symlink_or_junction_ancestor(path: Path, root: Path | None = None) -> bool:
+    """True if path or ANY ancestor up to filesystem root (or root) is a symlink,
+    Windows junction, or reparse point, or if path resolves outside root.
+    """
+    try:
+        if root is not None:
+            try:
+                if not path.resolve().is_relative_to(root.resolve()):
+                    return True
+            except OSError:
+                return True
+        check_p = path.absolute()
+        while check_p and check_p != check_p.parent:
+            if is_symlink_or_junction(check_p):
+                return True
+            if root is not None and check_p.resolve() == root.resolve():
+                break
+            check_p = check_p.parent
+    except OSError:
+        return True
+    return False
+
+
+def is_symlink_or_junction(path: Path) -> bool:
+    """True if path is a POSIX symlink, Windows junction, or reparse point."""
+    import os
+    try:
+        if path.is_symlink():
+            return True
+        if hasattr(path, "is_junction") and path.is_junction():
+            return True
+        if hasattr(os.path, "isjunction") and os.path.isjunction(path):
+            return True
+        st = path.lstat()
+        attrs = getattr(st, "st_file_attributes", 0)
+        if attrs and (attrs & 0x0400):
+            return True
+    except OSError:
+        return True
+    return False
+
+
+class ConfinementError(OSError):
+    """Raised when a target-tree read cannot be bound to the verified in-root regular file."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def _read_confined_bytes(path: Path, root: Path | None = None, limit: int | None = None) -> bytes:
+    """Read bytes only through a descriptor whose identity matches the in-root regular file."""
+    if has_symlink_or_junction_ancestor(path, root):
+        raise ConfinementError("SYMLINK_OR_JUNCTION_ESCAPE")
+    pre = os.lstat(path)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if not stat.S_ISREG(pre.st_mode) or ((getattr(pre, "st_file_attributes", 0) or 0) & reparse):
+        raise ConfinementError("NOT_REGULAR_FILE")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (pre.st_dev, pre.st_ino):
+            raise ConfinementError("HANDLE_IDENTITY_MISMATCH")
+        if has_symlink_or_junction_ancestor(path, root):
+            raise ConfinementError("SYMLINK_OR_JUNCTION_ESCAPE")
+        post = os.lstat(path)
+        if (post.st_dev, post.st_ino) != (pre.st_dev, pre.st_ino):
+            raise ConfinementError("HANDLE_IDENTITY_MISMATCH")
+        chunks = []
+        total = 0
+        while True:
+            block = os.read(fd, 1 << 20)
+            if not block:
+                break
+            chunks.append(block)
+            total += len(block)
+            if limit is not None and total > limit:
+                raise ConfinementError("READ_LIMIT_EXCEEDED")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+BIN_URL_RE = re.compile(rb"https?://[A-Za-z0-9._/\-:?=&%]+")
+BIN_IDENT_RE = re.compile(rb"(?:src-tauri/[A-Za-z0-9._/\-]+|[a-z_]+::[a-z0-9_:]{4,64})")
+
+BINARY_EXTS = frozenset({".exe", ".dll", ".so", ".dylib", ".apk", ".dex", ".asar", ".wasm"})
+SQLITE_EXTS = frozenset({".db", ".sqlite", ".sqlite3", ".vscdb"})
+
+
+def inspect_static_target(
+    target_path: Path | str,
+    *,
+    allow_execution: bool = False,
+    allow_mutation: bool = False,
+) -> dict[str, Any]:
+    """Inspect a local file or directory strictly in STATIC_ONLY read-only mode."""
+    if allow_execution or allow_mutation:
+        return {
+            "ok": False,
+            "error": "MUTATION_OR_EXECUTION_FORBIDDEN",
+            "reason": "UAOS-RSI REA bridge enforces STATIC_ONLY read-only inspection",
+        }
+    target = Path(target_path)
+    if not target.exists():
+        return {"ok": False, "error": "TARGET_NOT_FOUND", "target": str(target)}
+
+    if target.is_file() and target.suffix.lower() in SQLITE_EXTS:
+        return _inspect_sqlite_static(target)
+
+    if target.is_file() and target.suffix.lower() in BINARY_EXTS:
+        return _inspect_binary_static(target)
+
+    root_resolved = target.resolve()
+    files: list[Path] = []
+    failed_files: list[dict[str, str]] = []
+    if target.is_file():
+        files = [target]
+    else:
+        for p in sorted(target.rglob("*")):
+            if ".git" in p.parts:
+                continue
+            is_esc = False
+            if is_symlink_or_junction(p):
+                is_esc = True
+            else:
+                try:
+                    if not p.resolve().is_relative_to(root_resolved):
+                        is_esc = True
+                except OSError:
+                    is_esc = True
+            if is_esc:
+                failed_files.append({"file": p.relative_to(target).as_posix() if p != target else p.name, "error": "SYMLINK_OR_JUNCTION_ESCAPE"})
+                continue
+            if p.is_file():
+                files.append(p)
+
+    symbols: list[dict[str, Any]] = []
+    sqlite_dbs: list[dict[str, Any]] = []
+    binaries: list[dict[str, Any]] = []
+
+    for f in files:
+        ext = f.suffix.lower()
+        rel_str = str(f.relative_to(target.parent if target.is_file() else target)).replace("\\", "/")
+        if has_symlink_or_junction_ancestor(f, root_resolved):
+            failed_files.append({"file": rel_str, "error": "SYMLINK_OR_JUNCTION_ESCAPE"})
+            continue
+        if ext in SQLITE_EXTS:
+            db_res = _inspect_sqlite_static(f)
+            db_res["file"] = rel_str
+            if not db_res.get("ok"):
+                failed_files.append({"file": rel_str, "error": str(db_res.get("error") or "SQLITE_INVALID")})
+                continue
+            sqlite_dbs.append(db_res)
+            for tbl in db_res.get("tables", []):
+                symbols.append({
+                    "name": f"sqlite_table:{tbl['name']}",
+                    "file": rel_str,
+                    "sha256": db_res["sha256"],
+                    "tier": "OBSERVED",
+                })
+            continue
+        if ext in BINARY_EXTS:
+            try:
+                bin_res = _inspect_binary_static(f)
+                bin_res["file"] = rel_str
+                if not bin_res.get("ok"):
+                    failed_files.append({"file": rel_str, "error": str(bin_res.get("error") or "BINARY_READ_FAILED")})
+                    continue
+                binaries.append(bin_res)
+                for s_item in bin_res.get("symbols", [])[:50]:
+                    symbols.append({
+                        "name": s_item["name"],
+                        "file": rel_str,
+                        "sha256": bin_res["sha256"],
+                        "tier": "OBSERVED",
+                    })
+            except Exception as exc:
+                failed_files.append({"file": rel_str, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if ext not in (".py", ".ts", ".tsx", ".js", ".rs"):
+            continue
+        try:
+            raw = _read_confined_bytes(f, root_resolved)
+            text = raw.decode("utf-8", errors="replace")
+        except ConfinementError as exc:
+            failed_files.append({"file": rel_str, "error": exc.code})
+            continue
+        except OSError as exc:
+            failed_files.append({"file": rel_str, "error": f"OS_READ_ERROR: {exc}"})
+            continue
+        digest = hashlib.sha256(raw).hexdigest()
+        regex = PY_EXPORT_RE if ext == ".py" else (RS_EXPORT_RE if ext == ".rs" else TS_EXPORT_RE)
+        for m in regex.findall(text):
+            symbols.append({
+                "name": m,
+                "file": rel_str,
+                "sha256": digest,
+                "tier": "OBSERVED",
+            })
+    return {
+        "ok": True,
+        "mode": "STATIC_ONLY",
+        "target": str(target),
+        "file_count": len(files),
+        "symbol_count": len(symbols),
+        "symbols": symbols,
+        "sqlite_databases": sqlite_dbs,
+        "binaries": binaries,
+        "failed_files": failed_files,
+        "source_complete": len(failed_files) == 0,
+    }
+
+
+def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
+    """Extract deterministic static metadata, URLs, and module identifiers from a PE/ELF/WASM binary without executing it.
+    The bytes come from an identity-verified descriptor (_read_confined_bytes), which rejects reparse points,
+    non-regular files, and handle/path identity mismatches. Ancestor checks run before and after the read.
+    """
+    if has_symlink_or_junction_ancestor(bin_path):
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": "SYMLINK_OR_JUNCTION_ESCAPE",
+        }
+    try:
+        raw = _read_confined_bytes(bin_path)
+    except ConfinementError as exc:
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": exc.code,
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": f"READ_ERROR: {exc}",
+        }
+
+    # Verify read boundary: if directory/junction replacement occurred during read, reject immediately without consuming outside bytes
+    if has_symlink_or_junction_ancestor(bin_path):
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": "SYMLINK_OR_JUNCTION_ESCAPE",
+        }
+    digest = hashlib.sha256(raw).hexdigest()
+    urls = sorted({m.decode("ascii", errors="ignore") for m in BIN_URL_RE.findall(raw)})[:100]
+    idents = sorted({m.decode("ascii", errors="ignore") for m in BIN_IDENT_RE.findall(raw)})[:100]
+    symbols: list[dict[str, Any]] = []
+    for u in urls:
+        symbols.append({"name": f"url:{u}", "file": bin_path.name, "sha256": digest, "tier": "OBSERVED"})
+    for ident in idents:
+        symbols.append({"name": f"ident:{ident}", "file": bin_path.name, "sha256": digest, "tier": "OBSERVED"})
+    return {
+        "ok": True,
+        "mode": "STATIC_ONLY_BINARY",
+        "target": str(bin_path),
+        "size_bytes": len(raw),
+        "sha256": digest,
+        "urls": urls,
+        "identifiers": idents,
+        "symbol_count": len(symbols),
+        "symbols": symbols,
+    }
+
+
+def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
+    """Inspect a SQLite DB using a disposable temporary snapshot so:
+    1. Filenames with `#` or `?` never break URI parsing or create stray files.
+    2. WAL-mode databases never have `-shm` sidecars created in the source directory.
+    3. WAL file is copied to temp snapshot BEFORE hashing to eliminate hash/copy races.
+    """
+    if has_symlink_or_junction_ancestor(db_path):
+        return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": "SYMLINK_OR_JUNCTION_ESCAPE"}
+    wal_path = Path(str(db_path) + "-wal")
+    shm_path = Path(str(db_path) + "-shm")
+
+    tables: list[dict[str, Any]] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="uaos_rea_sqlite_") as tmp_dir:
+            snap_db = Path(tmp_dir) / "snapshot.sqlite"
+            snap_wal = Path(str(snap_db) + "-wal")
+            snap_shm = Path(str(snap_db) + "-shm")
+
+            try:
+                snap_db.write_bytes(_read_confined_bytes(db_path))
+            except ConfinementError as exc:
+                return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": exc.code}
+            except OSError as exc:
+                return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": f"READ_ERROR: {exc}"}
+
+            main_bytes = snap_db.read_bytes()
+            if main_bytes and len(main_bytes) >= 16 and not main_bytes.startswith(b"SQLite format 3\x00"):
+                return {
+                    "ok": False,
+                    "mode": "STATIC_ONLY_SQLITE",
+                    "target": str(db_path),
+                    "error": "INVALID_SQLITE_HEADER",
+                }
+
+            if wal_path.is_file():
+                try:
+                    snap_wal.write_bytes(_read_confined_bytes(wal_path))
+                except OSError:
+                    pass
+
+            if shm_path.is_file():
+                try:
+                    snap_shm.write_bytes(_read_confined_bytes(shm_path))
+                except OSError:
+                    pass
+
+            h = hashlib.sha256(main_bytes)
+            if snap_wal.is_file():
+                try:
+                    wal_bytes = snap_wal.read_bytes()
+                    if wal_bytes:
+                        h.update(b"|WAL|")
+                        h.update(wal_bytes)
+                except OSError:
+                    pass
+            digest = h.hexdigest()
+
+            uri = snap_db.resolve().as_uri() + "?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=3)
+            try:
+                cur = conn.execute(
+                    "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name"
+                )
+                for name, kind, sql in cur.fetchall():
+                    tables.append({"name": name, "type": kind, "sql": sql or ""})
+            finally:
+                conn.close()
+    except sqlite3.Error as exc:
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_SQLITE",
+            "target": str(db_path),
+            "sha256": digest if "digest" in locals() else "",
+            "error": f"SQLITE_ERROR: {exc}",
+        }
+
+    return {
+        "ok": True,
+        "mode": "STATIC_ONLY_SQLITE",
+        "target": str(db_path),
+        "sha256": digest,
+        "tables": tables,
+    }
+
+
+def build_reconstruction_obligation_ledger(
+    *,
+    target_id: str,
+    claims: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Create a finite typed obligation ledger for clean-room reconstruction (REA verify_reconstruction)."""
+    obligations = []
+    for idx, c in enumerate(claims):
+        obligations.append({
+            "obligation_id": f"{target_id}-OBL-{idx + 1:03d}",
+            "symbol": c.get("symbol", f"item_{idx + 1}"),
+            "expected_behavior": c.get("expected_behavior", ""),
+            "oracle_cases": int(c.get("oracle_cases", 1)),
+            "status": "PENDING",
+        })
+    return {
+        "target_id": target_id,
+        "total_obligations": len(obligations),
+        "obligations": obligations,
+        "global_equivalence_claimed": False,
+    }
+
+
+def generate_contract_manual_from_rea(
+    *,
+    work_id: str,
+    obligation_ledger: dict[str, Any],
+    allowed_files: list[str],
+    accept_cmd: str,
+    primary_sources: list[str],
+) -> str:
+    """Render a UAOS-RSI contract manual binding REA obligations and primary sources."""
+    obl_lines = "\n".join(
+        f"- `{o['obligation_id']}` (`{o['symbol']}`): {o['expected_behavior']} (oracle cases: {o['oracle_cases']})"
+        for o in obligation_ledger.get("obligations", [])
+    )
+    src_lines = "\n".join(f"- {u}" for u in primary_sources)
+    files_lines = "\n".join(f"  - {f}" for f in allowed_files)
+    return (
+        f"# Contract Manual: {work_id}\n\n"
+        f"```contract\n"
+        f"id: {work_id}\n"
+        f"worker: local\n"
+        f"judge: codex\n"
+        f"allow:\n"
+        f"{files_lines}\n"
+        f"accept: {accept_cmd}\n"
+        f"```\n\n"
+        f"## Primary Sources (Stage 0 Mandatory)\n"
+        f"{src_lines}\n\n"
+        f"## REA Reconstruction Obligations (Finite Typed Scope)\n"
+        f"{obl_lines}\n"
+    )
+
+
+def execute_auto_reverse_engineering_pipeline(
+    project_root: Path | str,
+    target_path: Path | str,
+    *,
+    primary_sources: list[str] | None = None,
+    page_limit: int = 20,
+) -> dict[str, Any]:
+    """U275: Automatically run the full REA reverse-engineering pipeline on a binary, SQLite DB, or external repo."""
+    from v7_harness.analysis_view import inspect_analysis_view, retain_analysis_bundle
+    from v7_harness.evidence_ledger import EvidenceLedger
+    from v7_harness.library_store import CANONICAL_LIBRARY_ROOT, inspect_library_repo, register_library_entry
+
+    desk = Path(project_root)
+    target = Path(target_path)
+    if not target.is_absolute():
+        candidate = desk / target
+        if candidate.exists():
+            target = candidate
+
+    static_res = inspect_static_target(target)
+    if not static_res.get("ok"):
+        return {
+            "ok": False,
+            "error": static_res.get("error", "INSPECTION_FAILED"),
+            "target": str(target),
+            "static_inspection": static_res,
+        }
+
+    items: list[dict[str, Any]] = []
+    if static_res.get("mode") == "STATIC_ONLY_SQLITE":
+        for tbl in static_res.get("tables", []):
+            items.append({"name": tbl["name"], "type": tbl["type"], "sql": tbl["sql"], "sha256": static_res["sha256"]})
+    elif static_res.get("mode") == "STATIC_ONLY_BINARY":
+        items = list(static_res.get("symbols", []))
+    else:
+        items = list(static_res.get("symbols", []))
+
+    failed_list = list(static_res.get("failed_files") or [])
+    is_complete = bool(static_res.get("source_complete", True)) and len(failed_list) == 0
+    limitations = [f"{item['file']}: {item['error']}" for item in failed_list]
+
+    store_dir = desk / ".work" / "rea_bundles"
+    bundle_meta = retain_analysis_bundle(
+        store_dir,
+        kind=str(static_res.get("mode", "STATIC_ONLY")).lower(),
+        target_path=str(target),
+        items=items,
+        source_complete=is_complete,
+        limitations=limitations,
+    )
+    first_page = inspect_analysis_view(
+        store_dir,
+        parent_evidence_id=bundle_meta["parent_evidence_id"],
+        offset=0,
+        limit=page_limit,
+        fields=["name", "file", "type"],
+    )
+
+    ev_ledger = EvidenceLedger(desk / ".work" / "rea_ledger")
+    sources = list(primary_sources or ["https://github.com/morluto/rea"])
+    ev_rec = ev_ledger.record_evidence(
+        kind=str(static_res.get("mode", "STATIC_ONLY")).lower(),
+        claim=(
+            f"Auto-REA {static_res.get('mode')} inspection of {target.name}: "
+            f"{len(items)} items extracted (bundle={bundle_meta['parent_evidence_id']})"
+        ),
+        tier="OBSERVED" if is_complete else "DERIVED",
+        source_url=sources[0],
+        digest=str(static_res.get("sha256") or bundle_meta["parent_evidence_id"]),
+        limitations="; ".join(limitations),
+    )
+
+    top_claims = [
+        {
+            "symbol": str(it.get("name", f"item_{i}")),
+            "expected_behavior": f"Clean-room behavioral parity for {it.get('name', 'symbol')} ({it.get('file', target.name)})",
+            "oracle_cases": 2,
+        }
+        for i, it in enumerate(items[:10])
+    ]
+    if not top_claims:
+        top_claims = [{"symbol": target.name, "expected_behavior": "Static artifact structure verified", "oracle_cases": 1}]
+    obligation_ledger = build_reconstruction_obligation_ledger(
+        target_id=target.stem.upper() or "REA_TARGET",
+        claims=top_claims,
+    )
+
+    library_registration: dict[str, Any] | None = None
+    try:
+        resolved_target = target.resolve()
+        lib_root = CANONICAL_LIBRARY_ROOT.resolve()
+        if resolved_target == lib_root or lib_root in resolved_target.parents:
+            repo_dir = resolved_target if resolved_target.parent == lib_root else next(
+                p for p in resolved_target.parents if p.parent == lib_root
+            )
+            info = inspect_library_repo(repo_dir)
+            if info.get("ok"):
+                readme_path = register_library_entry(
+                    library_root=lib_root,
+                    folder_name=repo_dir.name,
+                    source_url=info.get("origin_url") or f"https://github.com/unknown/{repo_dir.name}",
+                    license_id="Open Source",
+                    commit_sha=info.get("commit_sha", "UNKNOWN"),
+                    file_count=int(info.get("file_count", 0)),
+                    description="Auto-registered by U275 REA reverse-engineering pipeline",
+                )
+                library_registration = {"registered": True, "repo": repo_dir.name, "readme": str(readme_path)}
+    except Exception:
+        library_registration = None
+
+    return {
+        "ok": True,
+        "auto_triggered": True,
+        "target": str(target),
+        "mode": static_res.get("mode"),
+        "file_count": static_res.get("file_count", 1),
+        "total_extracted_items": len(items),
+        "source_complete": is_complete,
+        "failed_files": failed_list,
+        "bundle_summary": bundle_meta,
+        "first_page_preview": first_page,
+        "epistemic_evidence": ev_rec,
+        "obligation_ledger": obligation_ledger,
+        "library_registration": library_registration,
+    }
+===END===
+===FILE: tests/test_u275_r8_read_confinement.py===
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from v7_harness import rea_bridge
+from v7_harness.rea_bridge import (
+    ConfinementError,
+    _inspect_binary_static,
+    _inspect_sqlite_static,
+    _read_confined_bytes,
+)
+
+
+class ReadConfinementTests(unittest.TestCase):
+    def test_happy_path_returns_exact_bytes(self):
+        payload = b"alpha\x00beta\xff gamma"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "sample.bin"
+            target.write_bytes(payload)
+            self.assertEqual(_read_confined_bytes(target, root), payload)
+
+    def test_fstat_identity_mismatch_raises_and_closes_fd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "sample.bin"
+            target.write_bytes(b"data")
+            real_fstat = rea_bridge.os.fstat
+
+            def fake_fstat(fd):
+                real = real_fstat(fd)
+                return type("FakeStat", (), {
+                    "st_mode": real.st_mode,
+                    "st_dev": real.st_dev,
+                    "st_ino": real.st_ino + 1,
+                })()
+
+            with patch("v7_harness.rea_bridge.os.fstat", side_effect=fake_fstat), \
+                    patch("v7_harness.rea_bridge.os.close", wraps=rea_bridge.os.close) as close_mock:
+                with self.assertRaises(ConfinementError) as ctx:
+                    _read_confined_bytes(target, root)
+            self.assertEqual(ctx.exception.code, "HANDLE_IDENTITY_MISMATCH")
+            self.assertTrue(close_mock.called)
+
+    def test_directory_is_not_regular_and_open_never_called(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            subdir = Path(tmp) / "folder"
+            subdir.mkdir()
+            with patch("v7_harness.rea_bridge.os.open") as open_mock:
+                with self.assertRaises(ConfinementError) as ctx:
+                    _read_confined_bytes(subdir)
+            self.assertEqual(ctx.exception.code, "NOT_REGULAR_FILE")
+            open_mock.assert_not_called()
+
+    def test_binary_inspect_real_file_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "tool.wasm"
+            target.write_bytes(b"\x00https://example.com/api\x00src-tauri/main.rs\x00")
+            res = _inspect_binary_static(target)
+            self.assertTrue(res["ok"])
+            self.assertIn("https://example.com/api", res["urls"])
+
+    def test_sqlite_inspect_real_db_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "sample.db"
+            conn = sqlite3.connect(db)
+            conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.commit()
+            conn.close()
+            res = _inspect_sqlite_static(db)
+            self.assertTrue(res["ok"], res)
+            self.assertEqual([t["name"] for t in res["tables"]], ["items"])
+
+    def test_binary_inspect_identity_mismatch_returns_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "tool.dll"
+            target.write_bytes(b"MZ-binary-bytes")
+            real_fstat = rea_bridge.os.fstat
+
+            def fake_fstat(fd):
+                real = real_fstat(fd)
+                return type("FakeStat", (), {
+                    "st_mode": real.st_mode,
+                    "st_dev": real.st_dev,
+                    "st_ino": real.st_ino + 1,
+                })()
+
+            with patch("v7_harness.rea_bridge.os.fstat", side_effect=fake_fstat):
+                res = _inspect_binary_static(target)
+            self.assertFalse(res["ok"])
+            self.assertEqual(res["error"], "HANDLE_IDENTITY_MISMATCH")
+
+
+if __name__ == "__main__":
+    unittest.main()
+===END===
+
+
+## Output
+
+- Reply with ===FILE / ===EDIT blocks only. No explanations. Do not claim success; the acceptance command decides.
