@@ -337,35 +337,46 @@ def _scan_agy_brain_transcripts(
                 continue
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
             cached = wm_files.get(f_key)
+            cached_ok = False
+            if isinstance(cached, dict) and isinstance(cached.get("events"), list):
+                try:
+                    c_size = int(cached.get("file_size") if cached.get("file_size") is not None else -1)
+                    c_mtime = float(cached.get("mtime") or 0.0)
+                    c_offset = int(cached.get("offset") or 0)
+                    events_valid = all(isinstance(ev, dict) and isinstance(ev.get("ts"), (int, float)) for ev in cached["events"])
+                    cached_ok = events_valid and c_offset >= 0
+                except (TypeError, ValueError):
+                    cached_ok = False
+            else:
+                c_size, c_mtime, c_offset = -1, 0.0, 0
 
-            if (
-                isinstance(cached, dict)
-                and int(cached.get("file_size") or -1) == f_size
-                and abs(float(cached.get("mtime") or 0.0) - f_mtime) < 1e-3
-                and isinstance(cached.get("events"), list)
-            ):
+            if cached_ok and c_size == f_size and abs(c_mtime - f_mtime) < 1e-3:
                 file_events = [ev for ev in cached["events"] if float(ev.get("ts") or 0.0) >= cutoff_ts]
                 if len(file_events) != len(cached["events"]):
                     wm_files[f_key]["events"] = file_events
                     dirty = True
             else:
-                prev_offset = int(cached.get("offset") or 0) if isinstance(cached, dict) else 0
-                prev_prefix_sha = str(cached.get("prefix_sha") or "") if isinstance(cached, dict) else ""
+                prev_offset = c_offset if cached_ok else 0
+                prev_prefix_sha = str(cached.get("prefix_sha") or "") if (cached_ok and isinstance(cached, dict)) else ""
+                prev_tail_sha = str(cached.get("tail_sha") or "") if (cached_ok and isinstance(cached, dict)) else ""
                 can_seek = False
                 cur_prefix_sha = ""
+                cur_tail_sha = ""
                 try:
                     with tf.open("rb") as fh:
                         head_256 = fh.read(min(256, f_size))
                         cur_prefix_sha = hashlib.sha256(head_256).hexdigest()[:16] if head_256 else ""
                         if (
-                            isinstance(cached, dict)
+                            cached_ok
                             and 0 < prev_offset <= f_size
                             and prev_prefix_sha
                             and prev_prefix_sha == cur_prefix_sha
-                            and isinstance(cached.get("events"), list)
                         ):
-                            fh.seek(prev_offset - 1)
-                            if fh.read(1) == b"\n":
+                            tail_start = max(0, prev_offset - 256)
+                            fh.seek(tail_start)
+                            tail_window = fh.read(prev_offset - tail_start)
+                            tail_window_sha = hashlib.sha256(tail_window).hexdigest()[:16] if tail_window else ""
+                            if tail_window.endswith(b"\n") and (not prev_tail_sha or prev_tail_sha == tail_window_sha):
                                 can_seek = True
                                 raw_chunk = fh.read(f_size - prev_offset)
                             else:
@@ -381,18 +392,23 @@ def _scan_agy_brain_transcripts(
                         else:
                             complete_bytes = raw_chunk[: last_nl + 1]
                             new_offset = (prev_offset + last_nl + 1) if can_seek else (last_nl + 1)
+                        if new_offset > 0:
+                            t_start = max(0, new_offset - 256)
+                            fh.seek(t_start)
+                            cur_tail_sha = hashlib.sha256(fh.read(new_offset - t_start)).hexdigest()[:16]
                 except OSError:
                     continue
 
                 chunk_lines = complete_bytes.decode("utf-8", errors="replace").splitlines()
                 parsed_new = _parse_brain_planner_lines(chunk_lines, conv_id)
-                base_events = list(cached["events"]) if (can_seek and isinstance(cached, dict)) else []
-                file_events = [ev for ev in (base_events + parsed_new) if float(ev.get("ts") or 0.0) >= cutoff_ts]
+                base_events = list(cached["events"]) if (can_seek and cached_ok and isinstance(cached, dict)) else []
+                file_events = [ev for ev in (base_events + parsed_new) if isinstance(ev, dict) and float(ev.get("ts") or 0.0) >= cutoff_ts]
                 wm_files[f_key] = {
                     "offset": new_offset,
                     "file_size": f_size,
                     "mtime": f_mtime,
                     "prefix_sha": cur_prefix_sha,
+                    "tail_sha": cur_tail_sha,
                     "events": file_events,
                 }
                 dirty = True
@@ -647,7 +663,9 @@ def collect_capacity_snapshot(
         _atomic_write_json(local_snap, snapshot)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
         local_head.parent.mkdir(parents=True, exist_ok=True)
-        local_head.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        head_tmp = local_head.with_suffix(".json.tmp")
+        head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(head_tmp, local_head)
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -955,11 +973,14 @@ def refresh_capacity_zero_token(
                 default=0.0,
             ) if brain_root.is_dir() else 0.0
             if (
-                (moment - last_ts) < min_interval_s
+                0.0 <= (moment - last_ts) < min_interval_s
                 and runs_mtime <= last_ts
                 and sched_mtime <= last_ts
                 and brain_mtime <= last_ts
             ):
+                if html_out is not None and not Path(html_out).is_file():
+                    snap_cached = json.loads(snap_path.read_text(encoding="utf-8"))
+                    render_html_dashboard(snap_cached, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
         except (OSError, ValueError):
             pass

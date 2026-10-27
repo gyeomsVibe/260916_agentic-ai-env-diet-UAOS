@@ -127,6 +127,9 @@ _SEGMENT_RE = re.compile(r"(?:[^;&|\n\x22\x27]|\x22[^\x22]*\x22|\x27[^\x27]*\x27
 _TOKEN_RE = re.compile(r"\x22[^\x22]*\x22|\x27[^\x27]*\x27|\S+")
 
 
+_GH_GLOBAL_VALUE_FLAGS = ("-r", "--repo", "--hostname", "-h")
+
+
 def _tokens_are_gh_merge(tokens: list[str]) -> bool:
     idx = 0
     while idx < len(tokens):
@@ -144,10 +147,24 @@ def _tokens_are_gh_merge(tokens: list[str]) -> bool:
     if exe not in ("gh", "gh.exe"):
         return False
     rest = [t.strip().strip("'\"") for t in tokens[idx + 1 :]]
-    low = [t.lower() for t in rest]
-    if "pr" in low and "merge" in low[low.index("pr") + 1 :]:
+    pos: list[str] = []
+    j = 0
+    while j < len(rest):
+        tl = rest[j].lower()
+        if tl in _GH_GLOBAL_VALUE_FLAGS and len(pos) < 2:
+            j += 2
+            continue
+        if tl.startswith(("-r=", "--repo=", "--hostname=")) and len(pos) < 2:
+            j += 1
+            continue
+        if tl.startswith("-"):
+            j += 1
+            continue
+        pos.append(rest[j])
+        j += 1
+    if len(pos) >= 2 and pos[0].lower() == "pr" and pos[1].lower() == "merge":
         return True
-    if "api" in low and any(_PULLS_MERGE_API_RE.search(t) for t in rest):
+    if pos and pos[0].lower() == "api" and any(_PULLS_MERGE_API_RE.search(t) for t in rest):
         return True
     return False
 
