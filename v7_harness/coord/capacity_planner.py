@@ -76,7 +76,7 @@ DEFAULT_POLICY: dict[str, Any] = {
     "tool_roles": {
         "codex": "Conductor & Final Independent Judge",
         "claude": "Co-Conductor & Deep Implementer/Reviewer",
-        "antigravity": "Argon Primary Heavy-Lifter, Co-Conductor & Autonomous Merger",
+        "antigravity": "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon",
         "haiku": "Low-Cost Multi-Agent Sub-Orchestrator (claude-haiku-5-5)",
         "ollama": "0-Paid-Token Local Calculator (qwen2.5-coder:7b)",
     },
@@ -253,57 +253,163 @@ def _scan_sqlite_ledger(home: Path, cutoff_7d: float) -> tuple[list[dict[str, An
 
 
 
-def _scan_agy_brain_transcripts(home_dir: Path, cutoff_ts: float) -> list[dict[str, Any]]:
-    """Ingest native Antigravity (Argon) PLANNER_RESPONSE token usage from ~/.gemini/antigravity/brain/*/transcript.jsonl."""
+def _parse_brain_planner_lines(lines: list[str], conv_id: str) -> list[dict[str, Any]]:
+    parsed: list[dict[str, Any]] = []
+    for ln in lines:
+        if "PLANNER_RESPONSE" not in ln:
+            continue
+        try:
+            row = json.loads(ln)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("type") != "PLANNER_RESPONSE":
+            continue
+        ca = row.get("created_at")
+        if not isinstance(ca, str) or not ca:
+            continue
+        try:
+            ts = datetime.fromisoformat(ca.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        inp = int(row.get("input_tokens") or 0)
+        cr = int(row.get("cache_read_tokens") or 0)
+        cw = int(row.get("cache_creation_input_tokens") or 0)
+        out_t = int(row.get("output_tokens") or 0)
+        tot = inp + cr + cw + out_t
+        if tot <= 0:
+            continue
+        parsed.append({
+            "engine": "antigravity",
+            "ts": ts,
+            "work_id": f"agy-brain-{conv_id[:8]}-{row.get('step_index', 0)}",
+            "conv_id": conv_id,
+            "uncached_input": inp,
+            "cache_read": cr,
+            "cache_write": cw,
+            "output": out_t,
+            "raw_total": tot,
+        })
+    return parsed
+
+
+def _scan_agy_brain_transcripts(
+    home_dir: Path,
+    cutoff_ts: float,
+    watermark_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Incrementally ingest Antigravity (Gemini 4 Argon) PLANNER_RESPONSE token counts using newline-safe byte watermarks."""
+    import hashlib
+
+    from v7_harness.coord.stream import _exclusive
+
     brain_root = home_dir / ".gemini" / "antigravity" / "brain"
     if not brain_root.is_dir():
         return []
-    out: list[dict[str, Any]] = []
-    for tf in brain_root.glob("*/.system_generated/logs/transcript.jsonl"):
-        try:
-            if cutoff_ts <= time.time() and tf.stat().st_mtime < cutoff_ts:
+    wm_file = watermark_path or (home_dir / ".uaos" / "usage" / "brain_transcript_watermark.json")
+    wm_file.parent.mkdir(parents=True, exist_ok=True)
+    with _exclusive(wm_file.with_suffix(".lock")):
+        wm_files: dict[str, dict[str, Any]] = {}
+        if wm_file.is_file():
+            try:
+                raw_wm = json.loads(wm_file.read_text(encoding="utf-8"))
+                if isinstance(raw_wm, dict) and isinstance(raw_wm.get("files"), dict):
+                    wm_files = raw_wm["files"]
+            except (OSError, ValueError):
+                wm_files = {}
+
+        dirty = False
+        out: list[dict[str, Any]] = []
+        seen_f_keys: set[str] = set()
+
+        for tf in brain_root.glob("*/.system_generated/logs/transcript.jsonl"):
+            try:
+                st = tf.stat()
+                f_size = int(st.st_size)
+                f_mtime = float(st.st_mtime)
+            except OSError:
+                continue
+            f_key = str(tf)
+            seen_f_keys.add(f_key)
+            if cutoff_ts <= time.time() and f_mtime < cutoff_ts:
+                if f_key in wm_files:
+                    wm_files.pop(f_key, None)
+                    dirty = True
                 continue
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
-            lines = tf.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for ln in lines:
-            if "PLANNER_RESPONSE" not in ln:
-                continue
+            cached = wm_files.get(f_key)
+
+            if (
+                isinstance(cached, dict)
+                and int(cached.get("file_size") or -1) == f_size
+                and abs(float(cached.get("mtime") or 0.0) - f_mtime) < 1e-3
+                and isinstance(cached.get("events"), list)
+            ):
+                file_events = [ev for ev in cached["events"] if float(ev.get("ts") or 0.0) >= cutoff_ts]
+                if len(file_events) != len(cached["events"]):
+                    wm_files[f_key]["events"] = file_events
+                    dirty = True
+            else:
+                prev_offset = int(cached.get("offset") or 0) if isinstance(cached, dict) else 0
+                prev_prefix_sha = str(cached.get("prefix_sha") or "") if isinstance(cached, dict) else ""
+                can_seek = False
+                cur_prefix_sha = ""
+                try:
+                    with tf.open("rb") as fh:
+                        head_256 = fh.read(min(256, f_size))
+                        cur_prefix_sha = hashlib.sha256(head_256).hexdigest()[:16] if head_256 else ""
+                        if (
+                            isinstance(cached, dict)
+                            and 0 < prev_offset <= f_size
+                            and prev_prefix_sha
+                            and prev_prefix_sha == cur_prefix_sha
+                            and isinstance(cached.get("events"), list)
+                        ):
+                            fh.seek(prev_offset - 1)
+                            if fh.read(1) == b"\n":
+                                can_seek = True
+                                raw_chunk = fh.read(f_size - prev_offset)
+                            else:
+                                fh.seek(0)
+                                raw_chunk = fh.read(f_size)
+                        else:
+                            fh.seek(0)
+                            raw_chunk = fh.read(f_size)
+                        last_nl = raw_chunk.rfind(b"\n")
+                        if last_nl == -1:
+                            complete_bytes = b""
+                            new_offset = prev_offset if can_seek else 0
+                        else:
+                            complete_bytes = raw_chunk[: last_nl + 1]
+                            new_offset = (prev_offset + last_nl + 1) if can_seek else (last_nl + 1)
+                except OSError:
+                    continue
+
+                chunk_lines = complete_bytes.decode("utf-8", errors="replace").splitlines()
+                parsed_new = _parse_brain_planner_lines(chunk_lines, conv_id)
+                base_events = list(cached["events"]) if (can_seek and isinstance(cached, dict)) else []
+                file_events = [ev for ev in (base_events + parsed_new) if float(ev.get("ts") or 0.0) >= cutoff_ts]
+                wm_files[f_key] = {
+                    "offset": new_offset,
+                    "file_size": f_size,
+                    "mtime": f_mtime,
+                    "prefix_sha": cur_prefix_sha,
+                    "events": file_events,
+                }
+                dirty = True
+
+            out.extend(file_events)
+
+        stale_keys = [k for k in wm_files if k not in seen_f_keys]
+        for k in stale_keys:
+            wm_files.pop(k, None)
+            dirty = True
+
+        if dirty:
             try:
-                row = json.loads(ln)
-            except ValueError:
-                continue
-            if not isinstance(row, dict) or row.get("type") != "PLANNER_RESPONSE":
-                continue
-            ca = row.get("created_at")
-            if not isinstance(ca, str) or not ca:
-                continue
-            try:
-                ts = datetime.fromisoformat(ca.replace("Z", "+00:00")).timestamp()
-            except ValueError:
-                continue
-            if ts < cutoff_ts:
-                continue
-            inp = int(row.get("input_tokens") or 0)
-            cr = int(row.get("cache_read_tokens") or 0)
-            cw = int(row.get("cache_creation_input_tokens") or 0)
-            out_t = int(row.get("output_tokens") or 0)
-            tot = inp + cr + cw + out_t
-            if tot <= 0:
-                continue
-            out.append({
-                "engine": "antigravity",
-                "ts": ts,
-                "work_id": f"agy-brain-{conv_id[:8]}-{row.get('step_index', 0)}",
-                "conv_id": conv_id,
-                "uncached_input": inp,
-                "cache_read": cr,
-                "cache_write": cw,
-                "output": out_t,
-                "raw_total": tot,
-            })
-    return out
+                _atomic_write_json(wm_file, {"schema": "uaos-brain-watermark-v1", "files": wm_files})
+            except OSError:
+                pass
+        return out
 
 
 def collect_capacity_snapshot(
@@ -532,9 +638,16 @@ def collect_capacity_snapshot(
         "schedule_recommendation": schedule_plan,
     }
 
+    snapshot["wait_transparency"] = extract_wait_transparency(desk)
+    head_summary = build_compact_capacity_head(snapshot)
+    snapshot["compact_head"] = head_summary
+
     if persist:
         local_snap = desk / ".coord" / "usage" / "capacity_snapshot.json"
         _atomic_write_json(local_snap, snapshot)
+        local_head = desk / ".coord" / "usage" / "capacity_head.json"
+        local_head.parent.mkdir(parents=True, exist_ok=True)
+        local_head.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -684,7 +797,7 @@ def build_capacity_aware_schedule(
     else:
         agy_rem_share_pct = "UNKNOWN"
     argon_mode = (
-        "ARGON_ULTRA_PRIMARY_HEAVY_LIFTER"
+        "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON"
         if ranked_paid and ranked_paid[0] == "antigravity"
         else "BALANCED_3TOOL_COLLAB"
     )
@@ -698,6 +811,163 @@ def build_capacity_aware_schedule(
         "post_schedule_remaining_tokens": virtual_rem,
         "phase_assignments": assignments,
     }
+
+
+
+def extract_wait_transparency(desk: Path) -> dict[str, Any]:
+    """Build deterministic wait/progress transparency state from .coord/master_schedule.json with 0 paid tokens."""
+    sched_path = Path(desk) / ".coord" / "master_schedule.json"
+    if not sched_path.is_file():
+        return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 파일 없음", "items": []}
+    try:
+        raw = json.loads(sched_path.read_text(encoding="utf-8"))
+        phases = raw.get("phases") if isinstance(raw, dict) else None
+        if not isinstance(phases, list) or len(phases) == 0:
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 형식 오류 또는 빈 일정", "items": []}
+    except (OSError, ValueError):
+        return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 읽기 실패", "items": []}
+
+    terminal = {"DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED", "MERGED"}
+    active_states = {"READY", "ACTIVE", "REVIEW", "WAITING", "BLOCKED", "IN_PROGRESS", "PENDING", "QUEUED"}
+    valid_states = terminal | active_states
+    items: list[dict[str, str]] = []
+    done_count = 0
+    for p in phases:
+        if not isinstance(p, dict):
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 행 형식 오류", "items": []}
+        pid_raw = p.get("phase_id")
+        st_raw = p.get("state")
+        if not isinstance(pid_raw, str) or not pid_raw.strip() or not isinstance(st_raw, str) or not st_raw.strip():
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": "스케줄 필수 필드 누락", "items": []}
+        pid = pid_raw.strip()
+        st = st_raw.strip().upper()
+        if st not in valid_states:
+            return {"status": "UNKNOWN", "active_or_waiting_count": 0, "headline": f"미지원 상태값({st})", "items": []}
+        if st in terminal:
+            done_count += 1
+            continue
+        owner = str(p.get("owner_tool") or p.get("owner") or "unknown")
+        reviewer = str(p.get("reviewer") or p.get("judge") or "")
+        wait_on = str(p.get("waiting_on") or p.get("blocker_reason") or "")
+        items.append({
+            "phase_id": pid,
+            "state": st,
+            "owner": owner,
+            "reviewer": reviewer,
+            "waiting_on": wait_on or (f"{reviewer}-verdict" if st == "REVIEW" and reviewer else "execution"),
+        })
+    if not items and done_count > 0:
+        return {
+            "status": "ALL_DONE",
+            "active_or_waiting_count": 0,
+            "headline": "✅ 전 프로세스 완료 (대기 중인 작업 0건)",
+            "items": [],
+        }
+    top = items[0]
+    return {
+        "status": "WAITING" if any(i["state"] in ("REVIEW", "BLOCKED", "WAITING") for i in items) else "RUNNING",
+        "active_or_waiting_count": len(items),
+        "headline": f"진행·대기 {len(items)}건 — [{top['phase_id']}] 상태:{top['state']} 담당:{top['owner']} 대기사유:{top['waiting_on']}",
+        "items": items[:5],
+    }
+
+
+def build_compact_capacity_head(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return an ultra-compact (<=320B / ~50 tok) routing header so scheduling never loads 9,750B snapshot JSON."""
+    sched = snapshot.get("schedule_recommendation") or {}
+    engines = snapshot.get("engines") or {}
+    off = snapshot.get("offload_efficiency_24h") or {}
+    wait_info = snapshot.get("wait_transparency") or {}
+
+    def _clamp_rem(val: Any) -> int | str:
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return min(999_999_999, max(0, int(val)))
+        return "UNKNOWN"
+
+    def _clamp_cards(val: Any) -> int | str:
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return min(9999, max(0, int(val)))
+        return "UNKNOWN"
+
+    return {
+        "schema": "uaos-capacity-head-v1",
+        "ts": int(float(snapshot.get("timestamp") or 0)),
+        "conductor": str(sched.get("recommended_conductor", "antigravity"))[:12],
+        "mode": str(sched.get("argon_tier_mode", "BALANCED_3TOOL_COLLAB"))[:36],
+        "rem_5h": {t: _clamp_rem((engines.get(t) or {}).get("usable_remaining_5h_tokens")) for t in PAID_TOOLS},
+        "cards_5h": {t: _clamp_cards((engines.get(t) or {}).get("usable_cards_capacity")) for t in PAID_TOOLS},
+        "offload_pct": round(float(off.get("offload_share_pct") or 0.0), 1),
+        "wait_status": str(wait_info.get("status", "UNKNOWN"))[:12],
+    }
+
+
+def render_compact_status_line(snapshot: dict[str, Any]) -> str:
+    """Single-line (<=200 chars / ~40 tok) status for routine turns; naturally bounded <=185 chars without truncation."""
+    head = snapshot.get("compact_head") or build_compact_capacity_head(snapshot)
+    rem = head.get("rem_5h") or {}
+    cards = head.get("cards_5h") or {}
+
+    def _f_rem(v: Any) -> str:
+        return str(min(999_999_999, max(0, int(v)))) if isinstance(v, (int, float)) and not isinstance(v, bool) else "UNK"
+
+    def _f_crd(v: Any) -> str:
+        return str(min(9999, max(0, int(v)))) if isinstance(v, (int, float)) and not isinstance(v, bool) else "UNK"
+
+    cond = str(head.get("conductor") or "antigravity").upper()[:12]
+    mode = str(head.get("mode") or "BALANCED_3TOOL_COLLAB")[:36]
+    off_pct = round(float(head.get("offload_pct") or 0.0), 1)
+    w_stat = str(head.get("wait_status") or "UNKNOWN")[:12]
+    return (
+        f"[용량헤더] 지휘={cond}({mode}) "
+        f"| 5h가용(카드): agy={_f_rem(rem.get('antigravity'))}({_f_crd(cards.get('antigravity'))}) "
+        f"claude={_f_rem(rem.get('claude'))}({_f_crd(cards.get('claude'))}) "
+        f"codex={_f_rem(rem.get('codex'))}({_f_crd(cards.get('codex'))}) "
+        f"| 오프로드={off_pct}% | 상태={w_stat}"
+    )
+
+
+def refresh_capacity_zero_token(
+    project_root: Path,
+    *,
+    home: Path | None = None,
+    now: float | None = None,
+    min_interval_s: float = 60.0,
+    html_out: Path | None = None,
+) -> dict[str, Any]:
+    """Zero-paid-token background/hook updater with debounce across runs, schedule, and brain transcript mtimes."""
+    moment = float(now if now is not None else time.time())
+    desk = shared_desk(Path(project_root))
+    home_dir = Path(home) if home is not None else Path.home()
+    snap_path = desk / ".coord" / "usage" / "capacity_snapshot.json"
+    head_path = desk / ".coord" / "usage" / "capacity_head.json"
+    runs_path = ledger_file(desk)
+    sched_path = desk / ".coord" / "master_schedule.json"
+    brain_root = home_dir / ".gemini" / "antigravity" / "brain"
+
+    if snap_path.is_file() and head_path.is_file() and min_interval_s > 0:
+        try:
+            head_data = json.loads(head_path.read_text(encoding="utf-8"))
+            last_ts = float(head_data.get("ts") or 0.0)
+            runs_mtime = runs_path.stat().st_mtime if runs_path.is_file() else 0.0
+            sched_mtime = sched_path.stat().st_mtime if sched_path.is_file() else 0.0
+            brain_mtime = max(
+                (p.stat().st_mtime for p in brain_root.glob("*/.system_generated/logs/transcript.jsonl")),
+                default=0.0,
+            ) if brain_root.is_dir() else 0.0
+            if (
+                (moment - last_ts) < min_interval_s
+                and runs_mtime <= last_ts
+                and sched_mtime <= last_ts
+                and brain_mtime <= last_ts
+            ):
+                return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
+        except (OSError, ValueError):
+            pass
+
+    snap = collect_capacity_snapshot(desk, home=home_dir, now=moment, persist=True)
+    if html_out is not None:
+        render_html_dashboard(snap, Path(html_out))
+    return {"ok": True, "debounced": False, "paid_tokens_used": 0, "head": snap["compact_head"]}
 
 
 def _bar(pct: float, width: int = 12) -> str:
@@ -777,6 +1047,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       </div>
     </div>
 
+    <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
     <div id="gauges-grid" class="grid grid-cols-1 md:grid-cols-5 gap-2.5"></div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
@@ -808,7 +1079,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     const LABELS = {{
       codex: "Codex (조율·판정)",
       claude: "Claude Code (부지휘)",
-      antigravity: "Antigravity Argon (주력 실행·중재)",
+      antigravity: "Antigravity (Google AI Ultra 5x · Gemini 4 Argon)",
       haiku: "Haiku 5.5 (경량 분담)",
       ollama: "Ollama CLI (0원 계산기)"
     }};
@@ -820,8 +1091,13 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     function renderAll(winKey) {{
       const sched = SNAP.schedule_recommendation || {{}};
       const off = SNAP.offload_efficiency_24h || {{}};
+      const wt = SNAP.wait_transparency || {{}};
+      const wb = document.getElementById("wait-banner");
+      if (wb) {{
+        wb.textContent = "🔍 실시간 대기·진행 상태: " + (wt.headline || "상태 정보 없음");
+      }}
       document.getElementById("conductor-badge").textContent =
-        "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | 아르곤 5h 작업점유: " + (sched.argon_used_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_used_5h_share_pct ?? "UNKNOWN") + "%") + " (가용점유 " + (sched.argon_remaining_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_remaining_5h_share_pct ?? "UNKNOWN") + "%") + ")";
+        "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | Gemini 4 Argon (Google AI Ultra 5x) 5h 점유: " + (sched.argon_used_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_used_5h_share_pct ?? "UNKNOWN") + "%") + " (가용점유 " + (sched.argon_remaining_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_remaining_5h_share_pct ?? "UNKNOWN") + "%") + ")";
       document.getElementById("offload-badge").textContent =
         "Ollama+Haiku 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
 

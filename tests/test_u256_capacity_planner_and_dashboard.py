@@ -142,7 +142,7 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertEqual(agy["used_5h_effective_tokens"], 1050000)
         self.assertEqual(agy["usable_remaining_5h_tokens"], 28950000)
         rec = snap["schedule_recommendation"]
-        self.assertEqual(rec["argon_tier_mode"], "ARGON_ULTRA_PRIMARY_HEAVY_LIFTER")
+        self.assertEqual(rec["argon_tier_mode"], "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON")
         self.assertEqual(rec["argon_used_5h_share_pct"], 100.0)
         self.assertEqual(rec["phase_assignments"][0]["assigned_owner"], "antigravity")
         self.assertEqual(rec["phase_assignments"][0]["assigned_reviewer"], "claude")
@@ -208,6 +208,108 @@ class TestU256CapacityPlannerAndDashboard(unittest.TestCase):
         self.assertEqual(agy_5h["uncached_input_tokens"], 10000)
         self.assertEqual(agy_5h["output_tokens"], 2000)
 
+    def test_6_incremental_brain_watermark_compact_head_and_debounced_zero_token_refresh(self) -> None:
+        now = 1800000000.0
+        mark_presence(self.root, "codex", "LIMITED", now=now)
+        mark_presence(self.root, "claude", "ACTIVE", now=now)
+        mark_presence(self.root, "antigravity", "ACTIVE", now=now)
+
+        # Verify official Google AI Ultra 5x · Gemini 4 Argon naming
+        self.assertEqual(
+            CP.DEFAULT_POLICY["tool_roles"]["antigravity"],
+            "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon",
+        )
+        self.assertNotIn("12만원", CP.DEFAULT_POLICY["tool_roles"]["antigravity"])
+        self.assertNotIn("120k", CP.DEFAULT_POLICY["tool_roles"]["antigravity"])
+
+        (self.root / ".coord/usage").mkdir(parents=True, exist_ok=True)
+        (self.root / ".coord/usage/capacity_policy.json").write_text(json.dumps({
+            "tool_caps_5h": {"codex": 7000000, "claude": 8000000, "antigravity": 30000000, "haiku": 3000000, "ollama": None},
+            "tool_caps_source": {"origin": "test_argon_ultra_envelope", "policy_docs": ["docs/27_token-budget-routing-policy.md"]},
+        }), encoding="utf-8")
+
+        brain_log = self.home / ".gemini/antigravity/brain/conv-wm-1/.system_generated/logs/transcript.jsonl"
+        brain_log.parent.mkdir(parents=True, exist_ok=True)
+        line1 = json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "created_at": "2027-01-15T07:50:00Z",
+            "input_tokens": 10000,
+            "output_tokens": 1000,
+        }) + "\n"
+        brain_log.write_text(line1, encoding="utf-8")
+        import os
+        os.utime(brain_log, (now - 10.0, now - 10.0))
+        os.utime(self.root / ".coord/usage/capacity_policy.json", (now - 10.0, now - 10.0))
+
+        res1 = CP.refresh_capacity_zero_token(self.root, home=self.home, now=now, min_interval_s=60.0)
+        self.assertTrue(res1["ok"])
+        self.assertFalse(res1["debounced"])
+        self.assertEqual(res1["paid_tokens_used"], 0)
+
+        head_file = self.root / ".coord/usage/capacity_head.json"
+        self.assertTrue(head_file.is_file())
+        self.assertLessEqual(len(head_file.read_bytes()), 320)
+
+        # Second call within 60s with no schedule/ledger/transcript change is debounced (0 disk scan)
+        res2 = CP.refresh_capacity_zero_token(self.root, home=self.home, now=now + 10.0, min_interval_s=60.0)
+        self.assertTrue(res2["debounced"])
+        self.assertEqual(res2["paid_tokens_used"], 0)
+
+        # Partial trailing line without newline is NOT consumed until completed, preventing permanent under-counting
+        line2_full = json.dumps({
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "created_at": "2027-01-15T07:51:00Z",
+            "input_tokens": 20000,
+            "output_tokens": 2000,
+        }) + "\n"
+        half = len(line2_full) // 2
+        with brain_log.open("a", encoding="utf-8") as fh:
+            fh.write(line2_full[:half])
+        os.utime(brain_log, (now + 15.0, now + 15.0))
+        snap_partial = CP.collect_capacity_snapshot(self.root, home=self.home, now=now + 20.0, persist=True)
+        self.assertEqual(snap_partial["engines"]["antigravity"]["window_5h"]["calls"], 1)
+
+        # Complete the partial line with trailing newline -> incremental seek now parses line2_full completely
+        with brain_log.open("a", encoding="utf-8") as fh:
+            fh.write(line2_full[half:])
+        os.utime(brain_log, (now + 25.0, now + 25.0))
+        # Also verify refresh_capacity_zero_token detects brain transcript mtime > last_ts even within 60s window
+        res3 = CP.refresh_capacity_zero_token(self.root, home=self.home, now=now + 30.0, min_interval_s=60.0)
+        self.assertFalse(res3["debounced"])
+
+        snap3 = CP.collect_capacity_snapshot(self.root, home=self.home, now=now + 70.0, persist=True)
+        agy_5h = snap3["engines"]["antigravity"]["window_5h"]
+        self.assertEqual(agy_5h["calls"], 2)
+        self.assertEqual(agy_5h["uncached_input_tokens"], 30000)
+        self.assertEqual(agy_5h["output_tokens"], 3000)
+
+        # File rewrite / rotation with different prefix_sha triggers full re-parse instead of stale tail append
+        rewritten = json.dumps({
+            "step_index": 99,
+            "type": "PLANNER_RESPONSE",
+            "created_at": "2027-01-15T07:52:00Z",
+            "input_tokens": 5000,
+            "output_tokens": 500,
+            "pad": "X" * 400,
+        }) + "\n"
+        brain_log.write_text(rewritten, encoding="utf-8")
+        os.utime(brain_log, (now + 80.0, now + 80.0))
+        snap4 = CP.collect_capacity_snapshot(self.root, home=self.home, now=now + 85.0, persist=True)
+        self.assertEqual(snap4["engines"]["antigravity"]["window_5h"]["calls"], 1)
+        self.assertEqual(snap4["engines"]["antigravity"]["window_5h"]["uncached_input_tokens"], 5000)
+
+        compact_line = CP.render_compact_status_line(snap3)
+        self.assertLessEqual(len(compact_line), 200)
+        self.assertIn("GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON", compact_line)
+
+        # CLI --format head and --format compact
+        rc_head = cli_main(["coord", "capacity", "--project", str(self.root), "--format", "head", "--debounce", "60"])
+        self.assertEqual(rc_head, 0)
+        rc_comp = cli_main(["coord", "capacity", "--project", str(self.root), "--format", "compact"])
+        self.assertEqual(rc_comp, 0)
+
 
 C = CP
 
@@ -272,6 +374,85 @@ class U256Counter(unittest.TestCase):
         for tool in C.PAID_TOOLS:
             rem = (snap.get("engines", snap).get(tool) or {}).get("usable_remaining_5h_tokens")
             self.assertIn(rem, (None, "UNKNOWN"), f"{tool} remaining {rem} with no ledger")
+
+    def test_u265_codex_counterexamples_partial_eof_replacement_wait_and_concurrent_watermark(self):
+        import os
+        import threading
+
+        home = self.root / "home"
+        tf = home / ".gemini/antigravity/brain/conv-cx/.system_generated/logs/transcript.jsonl"
+        tf.parent.mkdir(parents=True, exist_ok=True)
+        wm = home / ".uaos/usage/brain_transcript_watermark.json"
+
+        # 1) Partial EOF completed later: warm vs cold must match (101 + 201)
+        ev1 = json.dumps({"step_index": 1, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:50:00Z", "input_tokens": 100, "output_tokens": 1}) + "\n"
+        ev2 = json.dumps({"step_index": 2, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:51:00Z", "input_tokens": 200, "output_tokens": 1}) + "\n"
+        tf.write_text(ev1 + ev2[: len(ev2) // 2], encoding="utf-8")
+        os.utime(tf, (1000.0, 1000.0))
+        first = C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=wm)
+        self.assertEqual([e["raw_total"] for e in first], [101])
+        tf.write_text(ev1 + ev2, encoding="utf-8")
+        os.utime(tf, (1005.0, 1005.0))
+        warm = C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=wm)
+        cold = C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=home / "cold_wm.json")
+        self.assertEqual([e["raw_total"] for e in warm], [101, 201])
+        self.assertEqual([e["raw_total"] for e in warm], [e["raw_total"] for e in cold])
+
+        # 2) Larger same-path replacement: warm vs cold must match (1000 + 889), not keep stale step 1
+        ev9 = json.dumps({"step_index": 9, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:52:00Z", "input_tokens": 999, "output_tokens": 1, "pad": "A" * 300}) + "\n"
+        ev8 = json.dumps({"step_index": 8, "type": "PLANNER_RESPONSE", "created_at": "2027-01-15T07:53:00Z", "input_tokens": 888, "output_tokens": 1, "pad": "B" * 300}) + "\n"
+        tf.write_text(ev9 + ev8, encoding="utf-8")
+        os.utime(tf, (1010.0, 1010.0))
+        warm_rep = C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=wm)
+        cold_rep = C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=home / "cold_rep.json")
+        self.assertEqual([e["raw_total"] for e in warm_rep], [1000, 889])
+        self.assertEqual([e["raw_total"] for e in warm_rep], [e["raw_total"] for e in cold_rep])
+
+        # 3) Wait transparency fail-closed on empty/malformed/missing-id schedule
+        sched_file = self.root / ".coord/master_schedule.json"
+        for bad_phases in (
+            [],
+            [{"phase_id": "U259", "state": "DONE"}, "ACTIVE"],
+            [{"state": "DONE"}],
+            [{"phase_id": "", "state": "DONE"}],
+            [{"phase_id": "U259", "state": "BOGUS"}],
+        ):
+            sched_file.write_text(json.dumps({"phases": bad_phases}), encoding="utf-8")
+            wt_res = C.extract_wait_transparency(self.root)
+            self.assertEqual("UNKNOWN", wt_res["status"], bad_phases)
+
+        # 4) Concurrent scans serialized by lock so watermark does not regress
+        tf.write_text(ev1 + ev2, encoding="utf-8")
+        os.utime(tf, (1020.0, 1020.0))
+        wm_conc = home / "conc_wm.json"
+        results = []
+        threads = [
+            threading.Thread(target=lambda: results.append(len(C._scan_agy_brain_transcripts(home, cutoff_ts=0.0, watermark_path=wm_conc))))
+            for _ in range(4)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(results, [2, 2, 2, 2])
+        persisted = json.loads(wm_conc.read_text(encoding="utf-8"))
+        self.assertEqual(len(persisted["files"][str(tf)]["events"]), 2)
+        self.assertEqual(len(persisted["files"][str(tf)]["prefix_sha"]), 16)
+
+        # 5) Worst-case compact status line is naturally <= 200 chars and ends with '상태=' without truncation
+        worst_line = C.render_compact_status_line({
+            "compact_head": {
+                "conductor": "ANTIGRAVITY_LONG_NAME",
+                "mode": "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON_EXTRA",
+                "rem_5h": {"antigravity": 999999999999, "claude": 999999999999, "codex": 999999999999},
+                "cards_5h": {"antigravity": 999999, "claude": 999999, "codex": 999999},
+                "offload_pct": 100.0,
+                "wait_status": "WAITING_LONG_STATUS",
+            }
+        })
+        self.assertLessEqual(len(worst_line), 200)
+        self.assertIn("| 상태=WAITING_LONG", worst_line)
+        self.assertTrue(worst_line.endswith("WAITING_LONG"))
 
 
 if __name__ == "__main__":
