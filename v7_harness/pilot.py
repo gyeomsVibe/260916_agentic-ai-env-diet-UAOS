@@ -730,8 +730,33 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         except Exception:
             watch_error = ("EXTERNAL_WRITE", "UNKNOWN")
 
-        # 9b. U96-S: name every source file changed during the run, even when another error ended it first.
+        # 9b. U96-S + U273 Traffic-Light Mediator: check source files changed during the run.
+        # When config.allowed_scopes is explicitly constrained AND a companion lane (e.g., Haiku on tests/* or docs/*)
+        # holds an active registered lease in .coord/mediator/lanes.json (or disjoint_parallel_mediation is active),
+        # only changes overlapping this pilot's allowed_scopes trigger SOURCE_DIVERGED; disjoint companion changes
+        # receive a YELLOW_SCOPED_REBASE signal so Ollama and Haiku never abort each other on disjoint files.
         source_changed = source_escape_paths(workspace.base_manifest, Path(config.source_dir), source_excludes)
+        _mediator_signal = "GREEN_NO_DIVERGENCE"
+        _disjoint_companion_paths: list[str] = []
+        if source_changed:
+            from v7_harness.disjoint_mediator import _load_state as _load_mediator_state, evaluate_scoped_divergence
+
+            med_state = _load_mediator_state(Path(config.source_dir))
+            has_companion_lease = bool(med_state.get("active_lanes"))
+            if has_companion_lease and config.allowed_scopes:
+                med_eval = evaluate_scoped_divergence(
+                    base_manifest=workspace.base_manifest,
+                    source_dir=Path(config.source_dir),
+                    excludes=source_excludes,
+                    pilot_allowed_scopes=config.allowed_scopes,
+                    bundle=None,
+                )
+                _mediator_signal = med_eval["signal"]
+                if _mediator_signal == "YELLOW_SCOPED_REBASE":
+                    _disjoint_companion_paths = list(med_eval.get("disjoint_companion_paths") or [])
+                    source_changed = []
+                else:
+                    source_changed = list(med_eval.get("conflicting_paths") or source_changed)
         if source_changed and watch_error is None:
             watch_error = ("SOURCE_DIVERGED", "UNKNOWN")
         external_paths.extend(f"source:{path}" for path in source_changed)
@@ -793,10 +818,39 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                 promotion = "DRY_RUN_PASSED" if dry.success else dry.status
                 dry_run_passed = dry.success
             except SourceDivergenceError:
-                state = "FAILED"
-                error_class = "SOURCE_DIVERGED"
-                promotion = "REJECTED"
-                verdict_hint = "BLOCKED"
+                # U273 Traffic-Light Mediator: if a registered disjoint companion lane mutated non-overlapping files,
+                # rebase the PatchBundle onto the current source manifest hash so dry_run_promotion succeeds cleanly.
+                from v7_harness.disjoint_mediator import _load_state as _load_mediator_state, evaluate_scoped_divergence
+
+                med_state = _load_mediator_state(Path(config.source_dir))
+                rebased_ok = False
+                if med_state.get("active_lanes") and config.allowed_scopes and bundle is not None:
+                    med_eval = evaluate_scoped_divergence(
+                        base_manifest=workspace.base_manifest,
+                        source_dir=Path(config.source_dir),
+                        excludes=source_excludes,
+                        pilot_allowed_scopes=config.allowed_scopes,
+                        bundle=bundle,
+                    )
+                    if med_eval["signal"] == "YELLOW_SCOPED_REBASE" and med_eval.get("rebased_bundle") is not None:
+                        bundle = med_eval["rebased_bundle"]
+                        bundle_id = bundle.bundle_id
+                        try:
+                            (runs_dir / "bundle.json").write_text(json.dumps(bundle.to_dict(), sort_keys=True), encoding="utf-8")
+                        except OSError:
+                            pass
+                        dry = dry_run_promotion(
+                            source_dir=config.source_dir, patch_bundle=bundle, allowed_scopes=config.allowed_scopes,
+                            excludes=source_excludes,
+                        )
+                        promotion = "DRY_RUN_PASSED" if dry.success else dry.status
+                        dry_run_passed = dry.success
+                        rebased_ok = True
+                if not rebased_ok:
+                    state = "FAILED"
+                    error_class = "SOURCE_DIVERGED"
+                    promotion = "REJECTED"
+                    verdict_hint = "BLOCKED"
             except ScopeExpansionError as exc:
                 # The worker changed a file the manual does not allow: its output is wrong, the environment is fine.
                 # REWORK (not BLOCKED) so the sentinel does not page the commander for a worker mistake.
