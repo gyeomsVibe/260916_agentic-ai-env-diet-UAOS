@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import user_window as uw
 
-ADAPTER_VERSION = "U244_SHORT1"  # U244: resets every desk's native budget once to transition to [YYMMDD-N]
+ADAPTER_VERSION = "U266_UNIFIED1"  # U266: resets every desk's native budget once for 3-tool unified title overhaul
 TOOLS = {"codex", "claude", "antigravity"}
 MAX_NATIVE_EMITS = 3  # one native attempt and two bounded repairs per desired title
 MAX_TOPIC_CHARS = 16  # deliberately short sidebar label, agreed schedule content only
@@ -151,16 +151,19 @@ def reconcile_title(project: Path, tool: str, thread: str, event: dict) -> dict:
 
 
 def _own_suffix(prefix: str, current: str | None, shared: str | None) -> str | None:
-    """U237: a title the window gave itself (prefix, one space, a valid topic other than the shared fallback)."""
+    """U237/U266: a title the window gave itself (short or legacy prefix, one space, a valid non-boilerplate topic)."""
     from .title_consensus import valid_topic
-    if not isinstance(current, str) or not current.startswith(prefix + " "):
+    if not isinstance(current, str):
         return None
-    topic = current[len(prefix) + 1:]
-    return topic if valid_topic(topic) and topic != shared else None
+    m = uw.TITLE_RE.match(current)
+    if not m or f"[{m.group(1)}-{m.group(2)}]" != prefix or not current[m.end():].startswith(" "):
+        return None
+    topic = current[m.end() + 1:]
+    return topic if valid_topic(topic) and not uw.is_boilerplate_topic(topic) and topic != shared else None
 
 
 def _desired_parts(project: Path, entry: dict, current: str | None) -> tuple[str | None, str | None]:
-    """U237/U243/U244: (desired title, topic to adopt). Normalizes prefix to [YYMMDD-N] across all 3 tools."""
+    """U237/U243/U244/U266: (desired title, topic to adopt). Normalizes prefix to [YYMMDD-N] across all 3 tools."""
     from .title_consensus import valid_topic
     raw = entry.get("title")
     match = uw.TITLE_RE.fullmatch(raw) if isinstance(raw, str) else None
@@ -170,13 +173,15 @@ def _desired_parts(project: Path, entry: dict, current: str | None) -> tuple[str
     shared = _schedule_topic(project)
     if shared and "shared_topic" in entry and shared != entry.get("shared_topic"):
         return f"{prefix} {shared}", shared
-    own = entry.get("topic") if valid_topic(entry.get("topic")) else None
-    adopted = None if (own or current == entry.get("desired_title")) else _own_suffix(prefix, current, shared)
-    topic = own or adopted or shared
+    raw_own = entry.get("topic")
+    own = raw_own if (valid_topic(raw_own) and not uw.is_boilerplate_topic(raw_own)) else None
+    self_named = None if current == entry.get("desired_title") else _own_suffix(prefix, current, shared)
+    adopted = self_named if (self_named and self_named != own) else None
+    topic = adopted or own or shared
     if topic:
         return f"{prefix} {topic}", adopted
     for prior in (entry.get("desired_title"), current):
         if isinstance(prior, str) and prior.startswith(prefix + " ") and prior.strip() == prior:
-            if not any(unicodedata.category(c).startswith("C") for c in prior):
+            if not any(unicodedata.category(c).startswith("C") for c in prior) and not uw.is_boilerplate_topic(prior[len(prefix) + 1:]):
                 return prior, None  # missing/stale consensus never strips an already accepted suffix
     return prefix, None
