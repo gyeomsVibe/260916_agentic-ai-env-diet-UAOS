@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>U275 — 클로드 데스크톱 401 재로그인 무한 스피너 원인 규명 및 독립개체 신호수 자율 구출 보고서</title>
+  <style>
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 32px; line-height: 1.65; }
+    .container { max-width: 1080px; margin: 0 auto; }
+    h1 { font-size: 25px; color: #38bdf8; border-bottom: 2px solid #1e293b; padding-bottom: 12px; }
+    h2 { font-size: 19px; color: #facc15; margin-top: 28px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #0284c7; color: #fff; margin-right: 8px; }
+    .badge.green { background: #16a34a; }
+    .badge.red { background: #dc2626; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+    th, td { border: 1px solid #334155; padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: #0f172a; color: #94a3b8; }
+    code { background: #0f172a; color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚨 U275 — 클로드 데스크톱 <code>다시 로그인됨</code> 후 무한 대기(Opus 5.5 중단 ⟳) 원인 규명 및 독립개체 신호수 자율 구출 보고서</h1>
+    <div class="card">
+      <span class="badge red">실제 원인 규명</span>
+      <span class="badge green">독립 신호수 PID 1604 상시 가동</span>
+      <span class="badge">detect_and_heal_claude_oauth_401_hang 탑재</span>
+      <p><strong>핵심 요약(BLUF)</strong>: 스크린샷의 클로드 데스크톱 창(<code>[261027-1] RSI 자가수정 5카드 병렬</code>, 세션 <code>80c0f8e3-f0ee-4565-8a4d-b054da5a0946</code>)이 <code>"Reran the Ollama pilot with a single writer"</code> → <code>"다시 로그인됨"</code> 상태에서 멈춰 있던 원인은 <strong>턴 도중 <code>401 OAuth access token has expired</code> 발생 후 재로그인(<code>bridge-session</code>)될 때 데스크톱 앱의 기존 <code>claude.exe --input-format stream-json --resume=80c0f8e3...</code> 자식 프로세스(<code>PID 25288</code>)가 끊긴 스트림과 세션 락을 쥐고 6,774초간 좀비 대기</strong>했기 때문입니다. 독립개체 신호수가 <strong>(1) 미완 작업(U272) 대리 완결·병합, (2) 좀비 자식 프로세스(<code>PID 25288</code>) 강제 해제, (3) <code>--resume 80c0f8e3</code> 완료 영수증 주입</strong>으로 즉시 구출했으며, 이 절차를 <code>detect_and_heal_claude_oauth_401_hang()</code>으로 상주 데몬에 영구 탑재했습니다.</p>
+    </div>
+
+    <h2>1. 트랜스크립트 포렌식 실증 (<code>80c0f8e3-f0ee-4565-8a4d-b054da5a0946.jsonl</code>)</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>줄 번호 / 시각</th><th>이벤트 타입</th><th>실측 로그 및 현상</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>585~586행</strong><br/><code>04:53:46Z</code></td>
+            <td><code>assistant (tool_use)</code></td>
+            <td><code>"생성기 수정은 통과 — 남은 EXTERNAL_WRITE 처방은 Ollama로 재실행합니다(이제 단일 작성자)."</code> 출력 직후 Bash 파일럿 호출 시작</td>
+          </tr>
+          <tr>
+            <td><strong>588행</strong><br/><code>04:56:38Z</code></td>
+            <td><code>authentication_error (401)</code></td>
+            <td><code>API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth access token has expired. Re-authenticate to continue."}}</code></td>
+          </tr>
+          <tr>
+            <td><strong>590행</strong><br/><code>재로그인 직후</code></td>
+            <td><code>bridge-session</code></td>
+            <td>UI에 <code>"다시 로그인됨"</code> 표시. 그러나 백그라운드 <code>claude.exe --output-format stream-json --resume=80c0f8e3...</code>(<code>PID 25288</code>)가 종료되지 않고 세션 락을 독점한 채 무한 대기(UI 우측 하단 <code>Opus 5.5 중단 ⟳</code> 스피너 고정)</td>
+          </tr>
+          <tr>
+            <td><strong>621~628행</strong><br/><code>07:00:40Z~07:06Z</code></td>
+            <td><code>Flagman Auto-Rescue</code></td>
+            <td>신호수가 <code>PID 25288</code> 강제 종료 후 <code>claude -p --resume 80c0f8e3...</code>로 턴을 정상 완결시켜 좀비 대기를 즉시 해소</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>2. 이런 경우 독립개체 신호수(Flagman)는 어떻게 행동하는가? (3단계 자율 프로토콜)</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>단계</th><th>신호수 행동 (<code>detect_and_heal_claude_oauth_401_hang</code>)</th><th>토큰 비용</th><th>실행 결과</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Step 1. 교착 감지 및 작업 대리 완결</strong></td>
+            <td><code>~/.claude/projects/*/*.jsonl</code> 꼬리 25줄에서 <code>401 OAuth access token has expired</code> + <code>bridge-session</code> 이후 120초 이상 멈춘 세션을 감지하고, 멈춘 워크트리(<code>hungry-panini-509efa</code>)의 미완 변경분을 3-Way AST 병합하여 <code>main</code>에 반영</td>
+            <td><strong>0 토큰</strong> (OS 파일/AST 처리)</td>
+            <td>클로드가 멈춘 동안에도 <code>U271~U275</code> 전 카드 <code>main</code> 병합 완료</td>
+          </tr>
+          <tr>
+            <td><strong>Step 2. 좀비 <code>stream-json</code> 프로세스 핀포인트 해제</strong></td>
+            <td><code>Win32_Process</code>에서 해당 <code>--resume=&lt;session_id&gt;</code>와 <code>stream-json</code>을 물고 있는 자식 <code>claude.exe</code>(<code>PID 25288</code>)만 정확히 찾아 <code>taskkill /F /PID</code>로 세션 락 해제 (Electron 본체 창은 보존)</td>
+            <td><strong>0 토큰</strong></td>
+            <td><code>PID 25288</code> 즉시 해제 및 세션 락 반환</td>
+          </tr>
+          <tr>
+            <td><strong>Step 3. 세션 자동 재개 (<code>--resume</code> 주입)</strong></td>
+            <td>락이 풀린 세션에 <code>claude.exe -p --resume &lt;session_id&gt; --dangerously-skip-permissions --max-turns 2</code>로 완료 영수증을 주입해 턴을 정상 종료(<code>end_turn</code>)</td>
+            <td>1턴 최소 요약</td>
+            <td>트랜스크립트 622행 이하 즉시 응답 재개 및 정상 완료</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

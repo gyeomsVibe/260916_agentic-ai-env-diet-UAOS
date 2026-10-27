@@ -348,5 +348,34 @@ class TestU273ZeroWaitFlagman(unittest.TestCase):
             self.assertEqual(d_obs["paid_tokens"], 0)
 
 
+
+    def test_detect_and_heal_claude_oauth_401_hang(self) -> None:
+        """Verify Flagman detects 401 OAuth expired + bridge-session zombie hang in Claude jsonl."""
+        from v7_harness.disjoint_mediator import detect_and_heal_claude_oauth_401_hang
+        import json, os, time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proj_dir = root / ".claude" / "projects" / "test-proj"
+            proj_dir.mkdir(parents=True, exist_ok=True)
+            sess_file = proj_dir / "80c0f8e3-f0ee-4565-8a4d-b054da5a0946.jsonl"
+            lines = [
+                json.dumps({"type": "assistant", "error": "authentication_error", "message": {"content": [{"type": "text", "text": "401 OAuth access token has expired. Re-authenticate to continue."}]}}),
+                json.dumps({"type": "bridge-session", "sessionUrl": "https://claude.ai/code/session_01"}),
+            ]
+            sess_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            old_time = time.time() - 300.0
+            os.utime(sess_file, (old_time, old_time))
+
+            res = detect_and_heal_claude_oauth_401_hang(
+                root,
+                claude_projects_root=root / ".claude" / "projects",
+                auto_heal=False,
+            )
+            self.assertEqual(res["healed_count"], 1)
+            self.assertEqual(res["healed_sessions"][0]["session_id"], "80c0f8e3-f0ee-4565-8a4d-b054da5a0946")
+            self.assertEqual(res["healed_sessions"][0]["reason"], "CLAUDE_OAUTH_401_RELOGIN_STREAM_HANG")
+
+
 if __name__ == "__main__":
     unittest.main()
