@@ -104,6 +104,167 @@ def _card_record(desk: Path, card: str) -> Path:
     return Path(desk) / ".coord" / "cards" / f"{_check(card)}.json"
 
 
+# U267: every user-facing status/result/wait line must carry a human-readable core title, never bare IDs/PRs/SHAs alone.
+BARE_ID_LABEL_RE = re.compile(
+    r"^[\s\(\)\[\]&,·/|+-]*(?:"
+    r"U\d{1,5}[A-Z]?(?:-[A-Za-z0-9]+)?|"
+    r"PR\s*#?\d+|"
+    r"#\d+|"
+    r"[0-9a-f]{7,40}"
+    r")(?:[\s\(\)\[\]&,·/|+-]+(?:"
+    r"U\d{1,5}[A-Z]?(?:-[A-Za-z0-9]+)?|"
+    r"PR\s*#?\d+|"
+    r"#\d+|"
+    r"[0-9a-f]{7,40}"
+    r"))*[\s\(\)\[\]&,·/|+-]*$",
+    re.IGNORECASE,
+)
+CORE_TITLE_PREFIX_RE = re.compile(
+    r"^(?:\[?\s*U\d{1,5}[A-Z]?(?:-[A-Za-z0-9]+)?\s*\]?\s*[:\-—–]?\s*|"
+    r"(?:feat|fix|refactor|docs|test|chore|perf|ci|build)\s*(?:\([^)]*\))?\s*:\s*)+",
+    re.IGNORECASE,
+)
+STATUS_LINE_RE = re.compile(r"^\s*-\s+([^:\n]+?)\s*:\s*(DONE|REVIEW|ACTIVE|READY|WAITING|BLOCKED|MERGED|PASS|FAIL)\b", re.IGNORECASE)
+CORE_TITLE_MAX = 48
+
+
+def clean_core_title(raw: str | None) -> str:
+    """U267: strip leading card-ID or conventional-commit prefixes and normalize whitespace into a concise core title."""
+    if not isinstance(raw, str):
+        return ""
+    text = " ".join(raw.strip().split())
+    text = CORE_TITLE_PREFIX_RE.sub("", text).strip(" -—–:·")
+    if len(text) > CORE_TITLE_MAX:
+        text = text[:CORE_TITLE_MAX - 1].rstrip() + "…"
+    return text
+
+
+def is_bare_id_label(label: str | None) -> bool:
+    """U267: True when a status label contains only card IDs, PR numbers, commit SHAs, or punctuation (`U260 (PR #227)`)."""
+    if not isinstance(label, str) or not label.strip():
+        return True
+    cleaned = " ".join(label.strip().split())
+    if BARE_ID_LABEL_RE.fullmatch(cleaned):
+        return True
+    stripped = re.sub(
+        r"\b(?:U\d{1,5}[A-Z]?(?:-[A-Za-z0-9]+)?|PR\s*#?\d+|[0-9a-f]{7,40})\b|#\d+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    meaningful = re.sub(r"[\s\(\)\[\]&,·/|+:;\-—–_]+", "", stripped)
+    return len(meaningful) < 2
+
+
+def card_title(project_or_desk: Path | str, card: str) -> str:
+    """U267: resolve a card's human-readable core title from `.coord/cards/`, `.work/cards/`, `master_schedule.json`, or `PLAN.md`."""
+    card = _check(card)
+    base = Path(project_or_desk)
+    candidates = [base]
+    dot = base / ".git"
+    if dot.is_file():
+        try:
+            meta = Path(dot.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())
+            main_root = meta.parent.parent.parent
+            if main_root not in candidates:
+                candidates.append(main_root)
+        except (OSError, IndexError):
+            pass
+    for root in candidates:
+        rec = root / ".coord" / "cards" / f"{card}.json"
+        if rec.is_file():
+            try:
+                title = clean_core_title(json.loads(rec.read_text(encoding="utf-8")).get("title"))
+                if title and not is_bare_id_label(title):
+                    return title
+            except (OSError, ValueError, AttributeError):
+                pass
+        manual = root / ".work" / "cards" / f"{card}_manual.md"
+        if manual.is_file():
+            try:
+                first = manual.read_text(encoding="utf-8").splitlines()[0]
+                m = re.match(rf"^#\s*{re.escape(card)}\s+contract\s+manual\s*-\s*(.+)$", first.strip(), re.IGNORECASE)
+                if m:
+                    title = clean_core_title(m.group(1))
+                    if title and not is_bare_id_label(title):
+                        return title
+            except (OSError, IndexError):
+                pass
+        sched = root / ".coord" / "master_schedule.json"
+        if sched.is_file():
+            try:
+                phases = json.loads(sched.read_text(encoding="utf-8")).get("phases") or []
+                for ph in phases:
+                    if isinstance(ph, dict) and str(ph.get("phase_id") or "") == card:
+                        for key in ("title", "name", "summary", "topic"):
+                            title = clean_core_title(ph.get(key))
+                            if title and not is_bare_id_label(title):
+                                return title
+            except (OSError, ValueError, AttributeError):
+                pass
+        plan = root / ".coord" / "PLAN.md"
+        if plan.is_file():
+            try:
+                for line in plan.read_text(encoding="utf-8").splitlines():
+                    if card in line and "|" in line:
+                        cells = [c.strip() for c in line.strip("|").split("|")]
+                        for cell in cells:
+                            if cell != card and not CARD_RE.fullmatch(cell) and cell not in ("READY", "ACTIVE", "REVIEW", "DONE", "BLOCKED", "WAITING"):
+                                title = clean_core_title(cell)
+                                if title and not is_bare_id_label(title) and len(title) >= 4:
+                                    return title
+            except OSError:
+                pass
+    return ""
+
+
+def format_status_line(
+    card_or_id: str,
+    title: str,
+    state: str,
+    next_step: str,
+    *,
+    pr: str | int | None = None,
+    detail: str | None = None,
+) -> str:
+    """U267: format `- <핵심 제목> (<카드ID, PR #번호>): <상태> (<세부 근거>) → <다음 행동>`; refuses bare IDs."""
+    core = clean_core_title(title)
+    if not core or is_bare_id_label(core):
+        raise ValueError(f"BARE_ID_REPORT_FORBIDDEN: status line for {card_or_id!r} requires a human-readable core title, got {title!r}")
+    id_part = str(card_or_id or "").strip()
+    pr_part = ""
+    if pr is not None and str(pr).strip():
+        pr_str = str(pr).strip()
+        if pr_str.isdigit():
+            pr_part = f"PR #{pr_str}"
+        elif "/pull/" in pr_str:
+            pr_part = f"PR #{pr_str.rsplit('/pull/', 1)[1].split('/')[0]}"
+        elif pr_str.upper().startswith("PR"):
+            pr_part = pr_str
+        else:
+            pr_part = f"PR #{pr_str.lstrip('#')}"
+    meta = ", ".join(p for p in (id_part, pr_part) if p)
+    head = f"{core} ({meta})" if meta else core
+    state_str = str(state or "").strip()
+    if detail and str(detail).strip():
+        state_str = f"{state_str} ({str(detail).strip()})"
+    nxt = str(next_step or "").strip() or "종료"
+    return f"- {head}: {state_str} → {nxt}"
+
+
+def validate_user_status_lines(text: str) -> list[str]:
+    """U267: return problem codes for any `- <name>: <state> → <next>` line whose `<name>` is only card/PR/SHA IDs."""
+    problems: list[str] = []
+    for raw_line in (text or "").splitlines():
+        m = STATUS_LINE_RE.match(raw_line)
+        if not m:
+            continue
+        label = m.group(1).strip()
+        if is_bare_id_label(label):
+            problems.append(f"BARE_ID_REPORT_FORBIDDEN: {label!r} lacks a human-readable core title")
+    return problems
+
+
 def new_manual(desk, card, title, now: float | None = None) -> dict[str, Any]:
     manual = Path(desk) / ".work" / "cards" / f"{_check(card)}_manual.md"
     if not manual.is_file():
@@ -155,13 +316,27 @@ def result_line(card, pr, mergeable, tests, blocker) -> str:
     return f"RESULT {card} | PR {pr.strip()} | MERGEABLE {mergeable} | tests {tests} | blocker {blocker.strip()}"
 
 
-def write_result(checkout, card, pr, mergeable, tests, blocker) -> dict[str, Any]:
+def write_result(checkout, card, pr, mergeable, tests, blocker, title: str | None = None) -> dict[str, Any]:
     """U135: the result goes in the card's own checkout; a card worktree may not write the base checkout."""
     line = result_line(card, pr, mergeable, tests, blocker)
     path = Path(checkout) / ".coord" / "results" / f"{card}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# {card} result ({datetime.date.today().isoformat()})\n\n{line}\n", encoding="utf-8")
-    return {"ok": True, "path": str(path), "line": line}
+    resolved_title = clean_core_title(title) if title else card_title(checkout, card)
+    heading = f"# {card} — {resolved_title} result ({datetime.date.today().isoformat()})" if resolved_title else f"# {card} result ({datetime.date.today().isoformat()})"
+    path.write_text(f"{heading}\n\n{line}\n", encoding="utf-8")
+    user_line = (
+        format_status_line(
+            card,
+            resolved_title,
+            "REVIEW" if mergeable == "yes" else "BLOCKED",
+            "동료 도구 판정·병합" if mergeable == "yes" else f"차단 해소({blocker.strip()})",
+            pr=pr,
+            detail=f"tests {tests}, mergeable={mergeable}",
+        )
+        if resolved_title
+        else ""
+    )
+    return {"ok": True, "path": str(path), "line": line, "title": resolved_title, "user_line": user_line}
 
 
 def _checkouts(project) -> list[Path]:
@@ -190,7 +365,30 @@ def collect_results(project) -> list[dict[str, Any]]:
                 continue
             stamp = path.stat().st_mtime
             if path.stem not in newest or stamp > newest[path.stem][0]:
-                newest[path.stem] = (stamp, {"card": path.stem, "line": line, "path": str(path)})
+                lines_all = path.read_text(encoding="utf-8").splitlines()
+                first_heading = lines_all[0] if lines_all else ""
+                m_head = re.match(rf"^#\s*{re.escape(path.stem)}\s+—\s+(.+?)\s+result\s+\(", first_heading)
+                resolved_title = clean_core_title(m_head.group(1)) if m_head else card_title(project, path.stem)
+                parts = [p.strip() for p in line.split("|")]
+                pr_val = parts[1][3:].strip() if len(parts) > 1 and parts[1].startswith("PR ") else ""
+                merge_val = parts[2][10:].strip() if len(parts) > 2 and parts[2].startswith("MERGEABLE ") else "yes"
+                tests_val = parts[3][6:].strip() if len(parts) > 3 and parts[3].startswith("tests ") else ""
+                user_line = (
+                    format_status_line(
+                        path.stem,
+                        resolved_title,
+                        "REVIEW" if merge_val == "yes" else "BLOCKED",
+                        "동료 도구 판정·병합" if merge_val == "yes" else "차단 해소",
+                        pr=pr_val,
+                        detail=f"tests {tests_val}, mergeable={merge_val}" if tests_val else f"mergeable={merge_val}",
+                    )
+                    if resolved_title
+                    else ""
+                )
+                newest[path.stem] = (
+                    stamp,
+                    {"card": path.stem, "title": resolved_title, "line": line, "user_line": user_line, "path": str(path)},
+                )
     return [row for _, row in sorted(newest.values(), key=lambda item: item[1]["card"])]
 
 
@@ -420,17 +618,21 @@ def _done_arg_problems(pr_url, head, runtime=None) -> list[str]:
     return problems
 
 
-def done_report(project, card, what, pr_url, head, runtime=None, user_action=None) -> str:
+def done_report(project, card, what, pr_url, head, runtime=None, user_action=None, title: str | None = None) -> str:
     """U221: the 3-line completion report; check_done must pass before it is shown as done."""
     _check(card)
     name, what = _one_line("project", project), _one_line("what", what)
+    core_title = clean_core_title(_one_line("title", title)) if title else ""
+    if title is not None and (not core_title or is_bare_id_label(core_title)):
+        raise ValueError(f"BARE_ID_REPORT_FORBIDDEN: title for {card} must be a human-readable core title, got {title!r}")
     runtime = _one_line("runtime", runtime) if runtime is not None else None
     action = _one_line("user_action", user_action) if user_action else None
     if _done_arg_problems(pr_url, head, runtime):
         raise ValueError("; ".join(_done_arg_problems(pr_url, head, runtime)))
     installed = f"런타임 {runtime}에 설치됐습니다" if runtime else "런타임 설치가 필요 없는 변경입니다"
     last = f"- **남은 일**: {action}" if action else "- 다음: 사용자가 할 일은 없습니다. 새 세션부터 바로 적용됩니다."
-    return "\n".join((f"**결과**: {name}의 {card} 작업이 완료됐습니다 — {what}",
+    card_label = f"{core_title}({card})" if core_title else f"{card} 작업"
+    return "\n".join((f"**결과**: {name}의 {card_label}이 완료됐습니다 — {what}",
                       f"- 근거: 변경이 {pr_url} 로 병합됐고(커밋 {head[:7]}), {installed}.", last))
 
 

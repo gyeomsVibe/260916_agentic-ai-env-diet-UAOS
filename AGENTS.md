@@ -76,3 +76,4 @@
 - 사용 기록은 개선 제안의 입력일 뿐 승인·판정 권한이 아니다. 10개 유효 표본마다 품질·재작업·토큰·시간을 비교하고, P1·품질 저하·3배 비용 회귀면 개선안을 채택하지 않는다. 자동 수집은 U27 검증 전까지 미구현이다.
 - U121: user gets only the Safety human list; do the rest unasked; copy to .work/backup_<date>/, then revert canon-conflicting edits.
 - **UAOS-RSI 근본 존재이유 및 Codex 아스트라 집중(U257, 2026-10-27)**: **"최대 성과를 목표로 3대 AI 도구(Antigravity, Claude Code, Codex)의 부족한 토큰예산을 절약하는 3대 AI도구 '병렬'-협업-운영시스템, 하지만 결과물의 최상의 품질기준이 근본 존재이유이다."** Codex $20 Plus 아스트라는 `CODEX_EXCLUSIVE_KEYPOINTS`에 집중하고 일반 승인은 최상 품질 관문(`author != judge`) 아래 Claude↔Antigravity가 교차 수행한다.
+- **사용자 보고 핵심 제목 의무화(U267, 2026-10-27 사용자 영구 지정)**: `U260 (PR #227): DONE`처럼 카드 ID·PR 번호·커밋 해시만 적는 보고(`BARE_ID_REPORT_FORBIDDEN`)를 금지한다. 모든 상태·결과·대기 줄은 반드시 무엇을 하는 작업인지 한눈에 알 수 있는 한글 **핵심 제목**을 앞에 붙여 `- <핵심 제목> (<카드ID, PR #번호>): <상태> → <다음 행동>`으로 보고한다.
