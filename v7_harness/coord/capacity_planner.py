@@ -907,9 +907,7 @@ def _collect_active_watchers(desk: Path) -> list[str]:
 
 
 def _collect_git_diff_chip(desk: Path) -> list[dict[str, Any]]:
-    """Collect working-tree / staged diff stats (file_count, +added, -removed) with 0 paid tokens."""
-    import subprocess
-
+    """Collect working-tree / staged diff stats (file_count, +added, -removed) from .coord pure file state with 0 paid tokens."""
     desk_path = Path(desk)
     override_file = desk_path / ".coord" / "usage" / "changed_files.json"
     if override_file.is_file():
@@ -927,31 +925,7 @@ def _collect_git_diff_chip(desk: Path) -> list[dict[str, Any]]:
                 ]
         except (OSError, ValueError, TypeError):
             pass
-    if not (desk_path / ".git").exists():
-        return []
-
-    changed: list[dict[str, Any]] = []
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(desk_path), "diff", "--numstat", "HEAD"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=1.5,
-            check=False,
-        )
-        if proc.returncode == 0 and proc.stdout:
-            for ln in proc.stdout.splitlines()[:25]:
-                parts = ln.split("	")
-                if len(parts) >= 3:
-                    add_s, rem_s, fpath = parts[0].strip(), parts[1].strip(), parts[2].strip()
-                    added = int(add_s) if add_s.isdigit() else 0
-                    removed = int(rem_s) if rem_s.isdigit() else 0
-                    changed.append({"path": fpath, "added": added, "removed": removed})
-    except (OSError, subprocess.SubprocessError, ValueError):
-        changed = []
-    return changed
+    return []
 
 
 def _collect_unified_five_chip_telemetry(
