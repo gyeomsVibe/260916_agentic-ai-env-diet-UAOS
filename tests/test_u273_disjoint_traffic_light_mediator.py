@@ -108,6 +108,83 @@ class TestU273ZeroWaitFlagman(unittest.TestCase):
             self.assertEqual(synced, ["tests/test_u272.py"])
             self.assertEqual((stg / "tests" / "test_u272.py").read_text(encoding="utf-8"), "assert x == 2\n")
 
+    def test_3tool_crlf_lf_dual_hash_and_wait_cycle_breaker(self) -> None:
+        import json
+        from v7_harness.disjoint_mediator import (
+            compute_canonical_dual_hashes,
+            detect_and_break_3tool_wait_cycles,
+            dispatch_nonstop_3tool_tiki_taka,
+            verify_peer_hash_match,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            test_file = root / "tests" / "test_u262_sentinel_skips_repo_copies.py"
+            test_file.parent.mkdir(parents=True, exist_ok=True)
+            # Write CRLF bytes on disk
+            test_file.write_bytes(b"line1\r\nline2\r\n")
+
+            dual = compute_canonical_dual_hashes(test_file)
+            self.assertNotEqual(dual["raw_sha256"], dual["lf_sha256"])
+            self.assertTrue(verify_peer_hash_match(test_file, dual["raw_prefix16"])["matched"])
+            self.assertTrue(verify_peer_hash_match(test_file, dual["lf_sha256"])["matched"])
+
+            # Seed a Codex peer_u262_receipt_check.json stuck in UNKNOWN_NOT_ADMITTED due to CRLF vs LF
+            desk = root / ".work" / "desk_261027_2"
+            desk.mkdir(parents=True, exist_ok=True)
+            receipt_file = desk / "peer_u262_receipt_check.json"
+            receipt_file.write_text(
+                json.dumps({
+                    "peer": "claude",
+                    "peer_declared_test_hash_prefix": dual["raw_prefix16"],
+                    "root_original_source_test_sha256": dual["lf_sha256"],
+                    "peer_hash_reconciliation": "UNKNOWN_NOT_ADMITTED",
+                    "runtime_hold": True,
+                }),
+                encoding="utf-8",
+            )
+
+            # Seed a stale SOURCE_DIVERGED pilot summary
+            run_dir = root / ".coord" / "runs" / "U272-L1"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "summary.json").write_text(
+                json.dumps({
+                    "task_id": "U272-L1",
+                    "state": "FAILED",
+                    "error_class": "SOURCE_DIVERGED",
+                    "effect_state": "UNKNOWN",
+                }),
+                encoding="utf-8",
+            )
+
+            # Seed duplicate RSI-U251-AUTO-* cards in master_schedule.json
+            (root / ".coord" / "master_schedule.json").write_text(
+                json.dumps({
+                    "phases": [
+                        {"phase_id": "RSI-U251-AUTO-LEDGER_NO_FILE_BLOCK", "state": "READY", "owner": "claude"}
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            healed = detect_and_break_3tool_wait_cycles(root, auto_heal=True)
+            self.assertEqual(healed["flagman_action"], "WAIT_CYCLES_BROKEN_AND_HEALED")
+            self.assertEqual(healed["wait_ms"], 0)
+            self.assertEqual(len(healed["reconciled_receipts"]), 1)
+            self.assertEqual(len(healed["reconciled_pilot_runs"]), 1)
+            self.assertEqual(healed["retired_auto_cards"], ["RSI-U251-AUTO-LEDGER_NO_FILE_BLOCK"])
+
+            updated_receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+            self.assertFalse(updated_receipt["runtime_hold"])
+            self.assertEqual(updated_receipt["peer_hash_reconciliation"], "VERIFIED_CRLF_LF_IDENTICAL")
+
+            tiki = dispatch_nonstop_3tool_tiki_taka(
+                presence_states={"codex": "ACTIVE", "claude": "ACTIVE", "antigravity": "ACTIVE"},
+                ready_cards=[{"phase_id": "U273", "owner": "antigravity"}],
+            )
+            self.assertEqual(tiki["wait_ms"], 0)
+            self.assertFalse(tiki["mutual_wait_blocked"])
+
 
 if __name__ == "__main__":
     unittest.main()

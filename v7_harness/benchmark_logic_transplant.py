@@ -279,6 +279,12 @@ def build_five_chip_telemetry_snapshot(
     done_phases = sum(
         1 for p in working_phases if _phase_state(p) in TERMINAL_STATES
     )
+    # U272: auto self-healing cards are the scheduler's own output; counting them as pending work re-raised
+    # NO_LIVE_WATCHER_WHILE_WAITING from the cards it had just written.
+    remaining_non_auto = sum(
+        1 for p in working_phases
+        if _phase_state(p) not in TERMINAL_STATES and not str(p.get("phase_id") or "").startswith("RSI-U251-AUTO-")
+    )
     active_count = sum(1 for p in working_phases if _phase_state(p) in ("ACTIVE", "IN_PROGRESS"))
     review_count = sum(1 for p in working_phases if _phase_state(p) == "REVIEW")
     ready_count = sum(1 for p in working_phases if _phase_state(p) in ("READY", "PLANNED", "PENDING", "QUEUED"))
@@ -343,6 +349,7 @@ def build_five_chip_telemetry_snapshot(
             "total": total_phases,
             "done": done_phases,
             "remaining": total_phases - done_phases,
+            "remaining_non_auto": remaining_non_auto,
             "active": active_count,
             "review": review_count,
             "ready": ready_count,
@@ -570,7 +577,7 @@ def diagnose_u251_operational_anomalies(
 
     anomalies: list[dict[str, Any]] = []
 
-    remaining = int(c1.get("remaining") or 0)
+    remaining = int(c1.get("remaining_non_auto", c1.get("remaining")) or 0)
     watcher_count = int(c3.get("watcher_count") or 0)
     if remaining > 0 and watcher_count == 0:
         anomalies.append({
@@ -579,6 +586,8 @@ def diagnose_u251_operational_anomalies(
             "benchmark_engine": "Show_GN_AgentCodeGUI",
             "title": "[U251-RSI 자가수정] 백그라운드 감시자(Watcher) 누락 자동 재가동 및 훅 복구",
             "observed": f"remaining_phases={remaining}, watcher_count={watcher_count}",
+            # U272 feedback loop: the phase count includes the scheduler's own auto cards, so it cannot identify an episode.
+            "evidence_key": f"phases_pending={remaining > 0}, watcher_count={watcher_count}",
             "remediation_action": (
                 "Re-arm zero-paid-token background watcher (coord watch / sentinel loop) and verify "
                 "Stop/PostToolUse hook wake persistence so waiting phases never stall silently."
@@ -667,6 +676,10 @@ def diagnose_u251_operational_anomalies(
     return anomalies
 
 
+# U272: same evidence within one main-session cache lifetime (1 h, global rule) is one episode, not a second observation.
+AUTO_CARD_EPISODE_S = 3600.0
+
+
 def record_u251_operational_telemetry_and_schedule_rsi(
     project_root: Path,
     *,
@@ -726,6 +739,7 @@ def record_u251_operational_telemetry_and_schedule_rsi(
                     "remediation_action": str(p.get("action") or "Apply deterministic RSI remedy"),
                     "target_files": [".coord/rsi/policy.json", "docs/46_standard-process-and-worker-harness.md"],
                     "accept_cmd": "python -m unittest tests.test_u269_u251_rsi_operational_evolution",
+                    "remedy_on_file": str(p.get("target") or "") != "review",
                 })
     except Exception:
         rsi_proposals = []
@@ -781,6 +795,9 @@ def record_u251_operational_telemetry_and_schedule_rsi(
 
             terminal_states = {"DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED", "MERGED"}
             for item in all_findings:
+                # A cause with a deterministic remedy in rsi.REMEDIES is already routed by `rsi report`; a card with green acceptance has nothing to verify (U272 receipt).
+                if item.get("remedy_on_file"):
+                    continue
                 code = str(item["anomaly_code"])
                 card_id = f"RSI-U251-AUTO-{code}"
                 existing = next(
@@ -796,8 +813,26 @@ def record_u251_operational_telemetry_and_schedule_rsi(
                     spec = existing.get("self_healing_spec")
                     if not isinstance(spec, dict):
                         spec = {}
+                    prev_evidence = spec.get("last_evidence")
+                    prev_ts = spec.get("last_observed_ts")
+                    if (
+                        prev_evidence == item.get("evidence_key", item.get("observed"))
+                        and isinstance(prev_ts, (int, float))
+                        and not isinstance(prev_ts, bool)
+                        and ts - prev_ts < AUTO_CARD_EPISODE_S
+                    ):
+                        scheduled_cards.append({
+                            "phase_id": card_id,
+                            "action": "SAME_EPISODE",
+                            "owner": existing.get("owner"),
+                            "reviewer": existing.get("reviewer"),
+                            "observation_count": int(spec.get("observation_count") or 1),
+                        })
+                        continue
                     obs_count = int(spec.get("observation_count") or 1) + 1
                     spec.update({
+                        "last_evidence": item.get("evidence_key", item.get("observed")),
+                        "last_observed_ts": ts,
                         "anomaly_code": code,
                         "severity": item["severity"],
                         "benchmark_engine": item["benchmark_engine"],
@@ -838,6 +873,8 @@ def record_u251_operational_telemetry_and_schedule_rsi(
                             "observation_count": 1,
                             "first_observed_at": iso_ts,
                             "last_observed_at": iso_ts,
+                            "last_evidence": item.get("evidence_key", item.get("observed")),
+                            "last_observed_ts": ts,
                             "auto_evolve": True,
                         },
                     }
