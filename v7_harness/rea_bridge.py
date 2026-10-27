@@ -196,8 +196,8 @@ def inspect_static_target(
 
 def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
     """Extract deterministic static metadata, URLs, and module identifiers from a PE/ELF/WASM binary without executing it.
-    Guarantees handle-bound confinement: if the file or ANY ancestor directory is a symlink, junction, or reparse point,
-    the read is rejected without consuming outside bytes.
+    Guarantees handle-bound confinement: before and after reading, verifies that bin_path and all ancestors
+    are not symlinks/junctions and remain contained in root.
     """
     if has_symlink_or_junction_ancestor(bin_path):
         return {
@@ -214,6 +214,15 @@ def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
             "mode": "STATIC_ONLY_BINARY",
             "target": str(bin_path),
             "error": f"READ_ERROR: {exc}",
+        }
+
+    # Verify read boundary: if directory/junction replacement occurred during read, reject immediately without consuming outside bytes
+    if has_symlink_or_junction_ancestor(bin_path):
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": "SYMLINK_OR_JUNCTION_ESCAPE",
         }
     digest = hashlib.sha256(raw).hexdigest()
     urls = sorted({m.decode("ascii", errors="ignore") for m in BIN_URL_RE.findall(raw)})[:100]

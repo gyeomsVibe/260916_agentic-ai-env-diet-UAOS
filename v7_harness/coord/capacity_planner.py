@@ -350,6 +350,7 @@ def parse_json_with_auto_restore(path: Path, default: Any = None) -> Any:
     stage_restore = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.restore")
     try:
         _atomic_write_json(stage_restore, restored)
+        now_bytes = b""
         if target.is_file():
             try:
                 now_bytes = target.read_bytes()
@@ -361,8 +362,22 @@ def parse_json_with_auto_restore(path: Path, default: Any = None) -> Any:
                         pass
             except OSError:
                 pass
-        os.replace(str(stage_restore), str(target))
-        return restored
+
+        # Enter shared transaction lock before committing restore replacement
+        with _cas_file_lock(target):
+            if target.is_file():
+                try:
+                    locked_now_bytes = target.read_bytes()
+                    if corrupt_bytes is None or locked_now_bytes != corrupt_bytes or locked_now_bytes != now_bytes:
+                        try:
+                            parsed_locked = json.loads(locked_now_bytes.decode("utf-8"))
+                            return parsed_locked
+                        except (ValueError, UnicodeDecodeError):
+                            pass
+                except OSError:
+                    pass
+            os.replace(str(stage_restore), str(target))
+            return restored
     finally:
         if stage_restore.exists():
             try:
