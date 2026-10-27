@@ -181,15 +181,23 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     if budget is not None and budget <= 0:
         raise JudgeRefused("JUDGE_WITHOUT_BUDGET: pass --budget > 0 (a judgement is a paid call)")
     work_dir, source, manual_path = Path(work_dir).resolve(), Path(source).resolve(), Path(manual_path).resolve()
+    manual_text = manual_path.read_text(encoding="utf-8")
+    contract = parse_contract(manual_text) or {}
     if judge == "codex":
         why = "codex judges its own contract (U47-J6)"
     else:
+        from .coord.agy_moderator import is_codex_exclusive_keypoint
         from .coord.hook_context import shared_desk
-        away, why = codex_away(desk if desk is not None else read_all(Path(shared_desk(Path(project or source).resolve()))))
-        if not away:
-            raise JudgeRefused(why)
-    manual_text = manual_path.read_text(encoding="utf-8")
-    contract = parse_contract(manual_text) or {}
+        routine_ok = (
+            str(contract.get("routine_approval") or "").strip().lower() in ("true", "1", "yes")
+            and not is_codex_exclusive_keypoint({**contract, "files": contract.get("allow") or []})
+        )
+        if routine_ok:
+            why = "u257_routine_cross_approval"
+        else:
+            away, why = codex_away(desk if desk is not None else read_all(Path(shared_desk(Path(project or source).resolve()))))
+            if not away:
+                raise JudgeRefused(why)
     if contract.get("work_id") != task_id:
         raise JudgeRefused(f"TASK_MISMATCH: manual work_id {contract.get('work_id')!r} is not {task_id!r}")
     if contract.get("judge") != JUDGE_TOOL[judge]:

@@ -83,12 +83,15 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
             record["lease_source"] = lease_source
     held = ""
     cleared = ""
+    fenced = ""
     kept: dict[str, Any] = {}
     # U47-RW1c: Codex's race (2026-09-27) let a heartbeat pass the lease check, a lease land, and the heartbeat then
     # replace it. The check and the replace now happen under one lock shared by threads and processes.
     with _tool_lock(target):
         held_record: dict[str, Any] = {}
-        if not lease and _live_lease(target, moment, state):
+        if lease and lease_source == "manual" and state in ("LIMITED", "ABSENT"):
+            fenced = _fenced_live_session(target, tool, session, moment)
+        if not fenced and not lease and _live_lease(target, moment, state):
             held_record = _lease_record(target)
             held = str(held_record.get("state") or "")
         if held and turn_start and state == "ACTIVE" and held in ("LIMITED", "ABSENT"):
@@ -96,12 +99,15 @@ def mark(project: Path, tool: str, state: str, *, ttl_s: int = DEFAULT_TTL_S, no
                 cleared = held
             else:
                 kept = held_record
-        if not held or cleared:
+        if not fenced and (not held or cleared):
             if session and not lease:
                 record = _merge_session(target, record, session, state, moment, ttl_s)
             tmp = target.with_name(f".{tool}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
             tmp.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True), encoding="utf-8")
             replace_with_retry(tmp, target)
+    if fenced:
+        _log_event(target.parent, {"kind": "LEASE_FENCED_LIVE_SESSION", "tool": tool, "attempted_state": state,
+                                   "at": record["observed_at"], "session": fenced})
     if cleared:
         _log_event(target.parent, {"kind": "LEASE_CLEARED_BY_TURN", "tool": tool, "cleared_state": cleared,
                                    "at": record["observed_at"], "session": session or ""})
@@ -485,3 +491,32 @@ def _dispatch_queued(project: Path, tool: str, runner: Any) -> None:
         dispatch_queued(project, tool, runner=runner)
         return
     _spawn_detached(QUEUE_SPAWN_CODE, str(project), tool)
+
+
+def _fenced_live_session(target: Path, tool: str, session: str | None, moment: float) -> str:
+    """Return the bound session id when an unbound manual lease would overwrite a live desk-bound session."""
+    desk_path = target.parent / f"user_desk_{tool}.json"
+    try:
+        desk = json.loads(desk_path.read_text(encoding="utf-8"))
+        record = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(desk, dict) or not isinstance(record, dict):
+        return ""
+    bound = str(desk.get("thread") or "").strip()
+    if not bound or session == bound:
+        return ""
+    if record.get("state") != "ACTIVE" or record.get("lease") is True:
+        return ""
+    expires_at = record.get("expires_at")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)) or expires_at <= moment:
+        return ""
+    sessions = record.get("sessions")
+    if not isinstance(sessions, dict):
+        return ""
+    bound_exp = sessions.get(bound)
+    if isinstance(bound_exp, bool) or not isinstance(bound_exp, (int, float)) or bound_exp <= moment:
+        return ""
+    if tool == "codex" and codex_quota_block(_epoch(record.get("observed_at")), moment) is not None:
+        return ""
+    return bound

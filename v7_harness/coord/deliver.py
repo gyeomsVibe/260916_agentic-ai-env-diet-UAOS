@@ -317,20 +317,21 @@ def _deliver_to_claude_locked(
         stderr = getattr(cp, "stderr", "") or ""
         if attempt == 1:
             argv_list = retry_argv
-            if rc == 0:
+            if rc == 0 and resume:
                 session_path = None
             break
-        if rc != 0 and "already in use" in stderr.lower() and resume and session_id and not session:
+        if rc != 0 and "already in use" in stderr.lower() and session_id and not session:
             fresh_id = str(uuid.uuid4())
             retry_argv = [
                 "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
                 for a in argv_list
             ]
+            session_id = fresh_id
             continue
         break
 
     if rc != 0:
-        if session_path and resume and "already in use" not in stderr.lower():
+        if session_path and (resume or "already in use" in stderr.lower()):
             session_path.unlink(missing_ok=True)
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:rc={rc}", tuple(argv_list), stderr[:500])
 
