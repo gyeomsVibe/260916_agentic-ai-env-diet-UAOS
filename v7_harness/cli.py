@@ -619,10 +619,12 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
 
 
 def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
-    from .disjoint_mediator import run_independent_flagman_pulse
+    from .disjoint_mediator import ensure_independent_flagman_daemon, run_independent_flagman_pulse
 
     project = Path(args.project)
     res = run_independent_flagman_pulse(project, auto_heal=not getattr(args, "no_heal", False))
+    if getattr(args, "ensure_daemon", False):
+        res["daemon"] = ensure_independent_flagman_daemon(project, spawn_if_stopped=True)
     print(json.dumps(res, ensure_ascii=False, indent=2))
     return 0
 
@@ -998,6 +1000,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_coord_fp.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_fp.add_argument("--no-heal", action="store_true", help="Observe WFG without mutating state")
+    p_coord_fp.add_argument("--ensure-daemon", action="store_true", help="Spawn detached 0-token OS background daemon if not running")
     p_coord_fp.set_defaults(func=cmd_coord_flagman_pulse)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
