@@ -1,4 +1,4 @@
-"""U273: Unit tests for Disjoint Traffic-Light Mediator (`v7_harness/disjoint_mediator.py`)."""
+"""U273: Unit tests for Competent Zero-Wait Flagman (`v7_harness/disjoint_mediator.py`)."""
 
 from __future__ import annotations
 
@@ -9,89 +9,71 @@ from pathlib import Path
 from v7_harness.disjoint_mediator import (
     acquire_lane_lease,
     evaluate_scoped_divergence,
+    flagman_route_lanes,
+    flagman_sync_companion_tests_into_staging,
     release_lane_lease,
 )
 from v7_harness.isolation.manifest import build_manifest, create_patch_bundle
 
 
-class TestU273DisjointTrafficLightMediator(unittest.TestCase):
-    def test_traffic_light_green_parallel_on_disjoint_scopes(self) -> None:
+class TestU273ZeroWaitFlagman(unittest.TestCase):
+    def test_flagman_dynamic_lane_carve_out_zero_wait(self) -> None:
+        # Even if Ollama was carelessly given wildcard '*' or overlapping 'tests/test_u272.py',
+        # the Flagman carves out tests/docs to Haiku and code to Ollama with 0ms wait!
+        routed = flagman_route_lanes(
+            ollama_scopes=["v7_harness/rsi.py", "tests/test_u272.py"],
+            haiku_scopes=["tests/test_u272.py", "docs/100_design.html"],
+        )
+        self.assertEqual(routed["flagman_action"], "ZERO_WAIT_DYNAMIC_BYPASS")
+        self.assertEqual(routed["wait_ms"], 0)
+        self.assertFalse(routed["ollama_Blocked"])
+        self.assertFalse(routed["haiku_Blocked"])
+        self.assertTrue(routed["disjoint_guaranteed"])
+        self.assertEqual(routed["ollama_assigned_scopes"], ["v7_harness/rsi.py"])
+        self.assertEqual(routed["haiku_assigned_scopes"], ["tests/test_u272.py", "docs/100_design.html"])
+
+    def test_auto_carve_on_lease_acquisition_never_stops_ollama(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            res_olla = acquire_lane_lease(
-                root,
-                lane_id="U272-L1",
-                worker="ollama",
-                allowed_scopes=["v7_harness/rsi.py"],
-                now=1000.0,
-            )
-            self.assertTrue(res_olla["ok"])
-            self.assertEqual(res_olla["signal"], "GREEN_PARALLEL")
-
             res_haiku = acquire_lane_lease(
                 root,
                 lane_id="U272-H1",
                 worker="haiku",
-                allowed_scopes=["tests/test_u272.py", "docs/*"],
-                now=1001.0,
+                allowed_scopes=["tests/test_u272.py"],
+                now=1000.0,
             )
             self.assertTrue(res_haiku["ok"])
-            self.assertEqual(res_haiku["signal"], "GREEN_PARALLEL")
-            self.assertIn("U272-L1", res_haiku["active_companion_lanes"])
 
-            rel = release_lane_lease(root, lane_id="U272-L1", now=1002.0)
-            self.assertTrue(rel["released"])
-
-    def test_traffic_light_red_on_overlapping_scopes_or_dual_ollama_gpu(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            acquire_lane_lease(
+            # Ollama arrives with overlapping scope but auto_carve_on_overlap=True -> 0ms wait, immediate pass!
+            res_olla = acquire_lane_lease(
                 root,
                 lane_id="U272-L1",
                 worker="ollama",
-                allowed_scopes=["v7_harness/*.py"],
-                now=1000.0,
-            )
-            # Second Ollama lane must be blocked by GPU serial lock
-            res_olla2 = acquire_lane_lease(
-                root,
-                lane_id="U272-L2",
-                worker="ollama",
-                allowed_scopes=["tests/test_other.py"],
+                allowed_scopes=["v7_harness/rsi.py", "tests/test_u272.py"],
+                auto_carve_on_overlap=True,
                 now=1001.0,
             )
-            self.assertFalse(res_olla2["ok"])
-            self.assertEqual(res_olla2["signal"], "RED_PATH_CONFLICT")
-            self.assertTrue(any("OLLAMA_GPU_SERIAL_LOCK" in c["reason"] for c in res_olla2["conflicts"]))
+            self.assertTrue(res_olla["ok"])
+            self.assertEqual(res_olla["wait_ms"], 0)
+            self.assertEqual(res_olla["flagman_action"], "ZERO_WAIT_DYNAMIC_BYPASS")
+            self.assertEqual(res_olla["allowed_scopes"], ["v7_harness/rsi.py"])
+            release_lane_lease(root, lane_id="U272-L1", now=1002.0)
 
-            # Haiku lane overlapping v7_harness/rsi.py must be blocked with RED_PATH_CONFLICT
-            res_haiku_bad = acquire_lane_lease(
-                root,
-                lane_id="U272-H1",
-                worker="haiku",
-                allowed_scopes=["v7_harness/rsi.py"],
-                now=1002.0,
-            )
-            self.assertFalse(res_haiku_bad["ok"])
-            self.assertEqual(res_haiku_bad["signal"], "RED_PATH_CONFLICT")
-            self.assertTrue(any("DISJOINT_SCOPE_OVERLAP" in c["reason"] for c in res_haiku_bad["conflicts"]))
-
-    def test_yellow_scoped_rebase_resolves_source_diverged_between_ollama_and_haiku(self) -> None:
+    def test_zero_wait_scoped_bypass_and_live_test_hot_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "src"
             stg = Path(tmp) / "stg"
             (src / "v7_harness").mkdir(parents=True)
             (src / "tests").mkdir(parents=True)
             (src / "v7_harness" / "rsi.py").write_text("x = 1\n", encoding="utf-8")
-            (src / "tests" / "test_u272.py").write_text("assert True\n", encoding="utf-8")
+            (src / "tests" / "test_u272.py").write_text("assert False\n", encoding="utf-8")
 
             base_manifest = build_manifest(src)
 
-            # Copy to staging for Ollama pilot run
             (stg / "v7_harness").mkdir(parents=True)
             (stg / "tests").mkdir(parents=True)
-            (stg / "v7_harness" / "rsi.py").write_text("x = 2\n", encoding="utf-8")  # Ollama edits rsi.py
-            (stg / "tests" / "test_u272.py").write_text("assert True\n", encoding="utf-8")
+            (stg / "v7_harness" / "rsi.py").write_text("x = 2\n", encoding="utf-8")
+            (stg / "tests" / "test_u272.py").write_text("assert False\n", encoding="utf-8")
 
             target_manifest = build_manifest(stg)
             bundle = create_patch_bundle(
@@ -101,10 +83,9 @@ class TestU273DisjointTrafficLightMediator(unittest.TestCase):
                 target_dir=stg,
             )
 
-            # Meanwhile, Haiku edits tests/test_u272.py in src directly!
-            (src / "tests" / "test_u272.py").write_text("assert 1 == 1\n", encoding="utf-8")
+            # Haiku edits tests/test_u272.py in src while Ollama runs in stg (without any manual lease registration)
+            (src / "tests" / "test_u272.py").write_text("assert x == 2\n", encoding="utf-8")
 
-            # Evaluate scoped divergence for Ollama's allowed_scopes=["v7_harness/rsi.py"]
             med = evaluate_scoped_divergence(
                 base_manifest=base_manifest,
                 source_dir=src,
@@ -113,23 +94,19 @@ class TestU273DisjointTrafficLightMediator(unittest.TestCase):
                 bundle=bundle,
             )
             self.assertEqual(med["signal"], "YELLOW_SCOPED_REBASE")
-            self.assertEqual(med["conflicting_paths"], [])
+            self.assertEqual(med["flagman_action"], "ZERO_WAIT_SCOPED_BYPASS")
+            self.assertEqual(med["wait_ms"], 0)
             self.assertEqual(med["disjoint_companion_paths"], ["tests/test_u272.py"])
-            rebased = med["rebased_bundle"]
-            self.assertIsNotNone(rebased)
-            self.assertEqual(rebased.base_manifest_hash, med["current_manifest"].manifest_hash)
 
-            # Now simulate a real conflict: someone also modified v7_harness/rsi.py in src!
-            (src / "v7_harness" / "rsi.py").write_text("x = 999\n", encoding="utf-8")
-            med_conflict = evaluate_scoped_divergence(
-                base_manifest=base_manifest,
+            # Hot-sync Haiku's updated test into Ollama's staging dir before accept_cmd
+            synced = flagman_sync_companion_tests_into_staging(
                 source_dir=src,
-                excludes=[],
+                staging_dir=stg,
+                disjoint_companion_paths=med["disjoint_companion_paths"],
                 pilot_allowed_scopes=["v7_harness/rsi.py"],
-                bundle=bundle,
             )
-            self.assertEqual(med_conflict["signal"], "RED_CONFLICTING_DIVERGENCE")
-            self.assertIn("v7_harness/rsi.py", med_conflict["conflicting_paths"])
+            self.assertEqual(synced, ["tests/test_u272.py"])
+            self.assertEqual((stg / "tests" / "test_u272.py").read_text(encoding="utf-8"), "assert x == 2\n")
 
 
 if __name__ == "__main__":

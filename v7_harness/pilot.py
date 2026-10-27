@@ -730,33 +730,29 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         except Exception:
             watch_error = ("EXTERNAL_WRITE", "UNKNOWN")
 
-        # 9b. U96-S + U273 Traffic-Light Mediator: check source files changed during the run.
-        # When config.allowed_scopes is explicitly constrained AND a companion lane (e.g., Haiku on tests/* or docs/*)
-        # holds an active registered lease in .coord/mediator/lanes.json (or disjoint_parallel_mediation is active),
-        # only changes overlapping this pilot's allowed_scopes trigger SOURCE_DIVERGED; disjoint companion changes
-        # receive a YELLOW_SCOPED_REBASE signal so Ollama and Haiku never abort each other on disjoint files.
+        # 9b. U96-S + U273 Competent Zero-Wait Flagman (유능한 신호수):
+        # Whenever config.allowed_scopes is explicitly constrained (e.g. Ollama on v7_harness/rsi.py),
+        # concurrent edits by a companion worker (e.g. Haiku on tests/* or docs/*) outside allowed_scopes
+        # are AUTOMATICALLY bypassed with 0ms wait (ZERO_WAIT_SCOPED_BYPASS) without needing manual lease registration!
         source_changed = source_escape_paths(workspace.base_manifest, Path(config.source_dir), source_excludes)
         _mediator_signal = "GREEN_NO_DIVERGENCE"
         _disjoint_companion_paths: list[str] = []
-        if source_changed:
-            from v7_harness.disjoint_mediator import _load_state as _load_mediator_state, evaluate_scoped_divergence
+        if source_changed and config.allowed_scopes:
+            from v7_harness.disjoint_mediator import evaluate_scoped_divergence
 
-            med_state = _load_mediator_state(Path(config.source_dir))
-            has_companion_lease = bool(med_state.get("active_lanes"))
-            if has_companion_lease and config.allowed_scopes:
-                med_eval = evaluate_scoped_divergence(
-                    base_manifest=workspace.base_manifest,
-                    source_dir=Path(config.source_dir),
-                    excludes=source_excludes,
-                    pilot_allowed_scopes=config.allowed_scopes,
-                    bundle=None,
-                )
-                _mediator_signal = med_eval["signal"]
-                if _mediator_signal == "YELLOW_SCOPED_REBASE":
-                    _disjoint_companion_paths = list(med_eval.get("disjoint_companion_paths") or [])
-                    source_changed = []
-                else:
-                    source_changed = list(med_eval.get("conflicting_paths") or source_changed)
+            med_eval = evaluate_scoped_divergence(
+                base_manifest=workspace.base_manifest,
+                source_dir=Path(config.source_dir),
+                excludes=source_excludes,
+                pilot_allowed_scopes=config.allowed_scopes,
+                bundle=None,
+            )
+            _mediator_signal = med_eval["signal"]
+            if _mediator_signal == "YELLOW_SCOPED_REBASE":
+                _disjoint_companion_paths = list(med_eval.get("disjoint_companion_paths") or [])
+                source_changed = []
+            else:
+                source_changed = list(med_eval.get("conflicting_paths") or source_changed)
         if source_changed and watch_error is None:
             watch_error = ("SOURCE_DIVERGED", "UNKNOWN")
         external_paths.extend(f"source:{path}" for path in source_changed)
@@ -818,13 +814,16 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                 promotion = "DRY_RUN_PASSED" if dry.success else dry.status
                 dry_run_passed = dry.success
             except SourceDivergenceError:
-                # U273 Traffic-Light Mediator: if a registered disjoint companion lane mutated non-overlapping files,
-                # rebase the PatchBundle onto the current source manifest hash so dry_run_promotion succeeds cleanly.
-                from v7_harness.disjoint_mediator import _load_state as _load_mediator_state, evaluate_scoped_divergence
+                # U273 Competent Zero-Wait Flagman (유능한 신호수): automatically rebase PatchBundle onto current
+                # source manifest when concurrent companion edits are 100% disjoint from config.allowed_scopes,
+                # and hot-sync companion tests/* into staging_dir before accept_cmd runs!
+                from v7_harness.disjoint_mediator import (
+                    evaluate_scoped_divergence,
+                    flagman_sync_companion_tests_into_staging,
+                )
 
-                med_state = _load_mediator_state(Path(config.source_dir))
                 rebased_ok = False
-                if med_state.get("active_lanes") and config.allowed_scopes and bundle is not None:
+                if config.allowed_scopes and bundle is not None:
                     med_eval = evaluate_scoped_divergence(
                         base_manifest=workspace.base_manifest,
                         source_dir=Path(config.source_dir),
@@ -839,6 +838,12 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                             (runs_dir / "bundle.json").write_text(json.dumps(bundle.to_dict(), sort_keys=True), encoding="utf-8")
                         except OSError:
                             pass
+                        flagman_sync_companion_tests_into_staging(
+                            source_dir=Path(config.source_dir),
+                            staging_dir=workspace.staging_dir,
+                            disjoint_companion_paths=med_eval.get("disjoint_companion_paths") or [],
+                            pilot_allowed_scopes=config.allowed_scopes,
+                        )
                         dry = dry_run_promotion(
                             source_dir=config.source_dir, patch_bundle=bundle, allowed_scopes=config.allowed_scopes,
                             excludes=source_excludes,
