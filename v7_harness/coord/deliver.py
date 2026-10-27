@@ -74,6 +74,26 @@ _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
 _FENCE_RE = re.compile(r"^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)", re.MULTILINE | re.DOTALL)
 _QUOTED_RE = re.compile(r'"[^"\n]*"|“[^”\n]*”|(?<![\w\'])\'[^\'\n]*\'(?!\w)|`[^`\n]*`|^[ \t]*>.*$', re.MULTILINE)
 DELTA_LIMIT = 200  # an inferred delta is the hook's one-line summary; the full text stays in `message`
+# U188: a verdict a turn-based tool writes only as text never wakes its receiver. 98 of 198 codex->claude letters
+# (2026-10-14) carried no waking class (26 NOTICE, 72 untagged without a token), among them the verdicts
+# relay_f3fcef63 (REVISE) and relay_1be9792b (NOT ACCEPTED), which left Claude idle holding actionable work. Upper
+# case whole tokens only, longest first, so "NOT ACCEPTED" wins over "ACCEPTED" and PASSWORD/BYPASS never match.
+_VERDICT_TEXT_RE = re.compile(
+    r"(?<![A-Za-z0-9_=-])(?:NOT ACCEPTED|ACCEPTED|PASS|FAIL|REVISE|REWORK|PIVOT|APPROVE|NO-GO)(?![A-Za-z0-9_-])")
+
+
+def _unstructured_verdict(message: str, target: str | None, wake_class: str | None,
+                          verdict_requested: bool | None, verdict: str | None) -> str:
+    """U188: the verdict token of a codex/claude letter whose first unquoted line is a verdict without its field."""
+    if target not in ("codex", "claude") or verdict is not None or verdict_requested is True \
+            or wake_class == "ACTIONABLE":
+        return ""
+    text = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message))
+    if _ACK_RE.search(text.upper()):
+        return ""
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    found = _VERDICT_TEXT_RE.search(first)
+    return found.group(0) if found else ""
 
 
 def _digest(actor: str, message: str, card: str = "", window: str | None = None,
@@ -91,6 +111,8 @@ def _digest(actor: str, message: str, card: str = "", window: str | None = None,
     elif target is not None:
         key = json.dumps(["uaos-relay-v2", actor, message, card, window or "" if card else "", target],
                          ensure_ascii=False, separators=(",", ":"))
+    if window and not card:
+        key = json.dumps(["uaos-relay-native-v1", key, window], ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
@@ -101,6 +123,16 @@ def _requires_wake(message: str) -> bool:
         return False
     upper = _NEGATED_RE.sub(" ", upper)
     return any(pattern.search(upper) for pattern in _WAKE_RES)
+
+
+def _wants_wake(message: str, *, wake_class: str | None = None, verdict: str | None = None,
+                verdict_requested: bool | None = None) -> bool:
+    if wake_class in ("NOTICE", "ACK_ONLY") or verdict_requested is False or _ACK_RE.search(
+            _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()):
+        return False
+    if wake_class == "ACTIONABLE" or bool(verdict) or verdict_requested is True:
+        return True
+    return _requires_wake(message)
 
 
 # ── 비밀 검사 ────────────────────────────────────────────────
@@ -266,31 +298,40 @@ def _deliver_to_claude_locked(
     if window_cwd:  # U115 judge: resume where the window's transcript lives (it may have entered a worktree)
         kwargs["cwd"] = window_cwd
 
-    try:
-        cp = execute(argv_list, **kwargs)
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), "")
-
-    rc = getattr(cp, "returncode", 1)
-    stdout = getattr(cp, "stdout", "") or ""
-    stderr = getattr(cp, "stderr", "") or ""
-
-    if rc != 0 and not session and session_id and "already in use" in stderr.lower():
-        ephemeral_id = str(uuid.uuid4())
-        retry_argv = [claude_bin, "-p", message, "--output-format", "json", "--session-id", ephemeral_id]
-        for tool in allowed_tools:
-            retry_argv.extend(["--allowedTools", tool])
+    rc = 1
+    stdout = ""
+    stderr = ""
+    retry_argv = argv_list
+    for attempt in range(2):
+        run_argv = retry_argv if attempt == 1 else argv_list
         try:
-            cp = execute(retry_argv, **kwargs)
-            rc = getattr(cp, "returncode", 1)
-            stdout = getattr(cp, "stdout", "") or ""
-            stderr = getattr(cp, "stderr", "") or ""
-            argv_list = retry_argv
-            session_path = None
+            cp = execute(run_argv, **kwargs)
         except (subprocess.TimeoutExpired, OSError) as exc:
-            return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(retry_argv), "")
+            if attempt == 0:
+                if session_path and resume:
+                    session_path.unlink(missing_ok=True)
+                return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), "")
+            break
+        rc = getattr(cp, "returncode", 1)
+        stdout = getattr(cp, "stdout", "") or ""
+        stderr = getattr(cp, "stderr", "") or ""
+        if attempt == 1:
+            argv_list = retry_argv
+            if rc == 0:
+                session_path = None
+            break
+        if rc != 0 and "already in use" in stderr.lower() and resume and session_id and not session:
+            fresh_id = str(uuid.uuid4())
+            retry_argv = [
+                "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
+                for a in argv_list
+            ]
+            continue
+        break
 
     if rc != 0:
+        if session_path and resume and "already in use" not in stderr.lower():
+            session_path.unlink(missing_ok=True)
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:rc={rc}", tuple(argv_list), stderr[:500])
 
     # Claude CLI JSON 응답에서 result 추출
@@ -371,6 +412,9 @@ def _payload(actor: str, message: str, digest: str, target: str | None, card: st
             "requested_target": target or "auto"}
     if card:  # U115: only a card letter carries these keys, so a letter without --card keeps today's bytes
         body.update(card=card, window=window)
+    elif window and target != "antigravity":  # U214: an explicit native thread binds the letter to that receiver
+        # (cause 1); U115 keys stay card-only, and Antigravity's headless auto-reply acks under its own id (relay_2d46a6ae).
+        body["native_receiver"] = window
     # U141-A: the structured wake fields the watcher classifies. They are written only when given, so an untagged
     # letter keeps today's bytes and stays LEGACY.
     for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested), ("verdict", verdict),
@@ -1107,6 +1151,7 @@ def _deliver_unlocked(
     card: str = "",
     window: str = "",
     identity_digest: str | None = None,
+    wants_turn: bool | None = None,
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -1134,7 +1179,10 @@ def _deliver_unlocked(
     if target == "claude":
         from v7_harness.coord.watch import watcher_live, watcher_wakes
         # U117: a watcher that wakes its own session takes real deltas too; U64's headless turn stays for the rest.
-        if watcher_live(desk, "claude") and (not _requires_wake(message) or watcher_wakes(desk, "claude")):
+        need_wake = _requires_wake(message) if wants_turn is None else wants_turn
+        if watcher_live(desk, "claude") and (not need_wake or watcher_wakes(desk, "claude")):
+            _clear_owned_pending(pending, pending_owner)
+            pending.unlink(missing_ok=True)
             return DeliverResult(False, "claude", "QUEUED_INTERACTIVE", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
         # U74-D: an explicit ACK_ONLY never spends a paid turn, even with no watcher (global relay rule). The letter
@@ -1172,6 +1220,8 @@ def _deliver_unlocked(
         # The claim serializes competing dispatchers. The original is returned
         # to inbox after the attempt; only recipient coord ack may settle it.
         envelope = f"[UAOS relay id={message_id} digest={digest}]\n{message}"
+        if window:
+            envelope += f"\nNative receiver {window}: after disposition, run coord ack --id {message_id} --consumer {window}."
         if target != "claude":
             envelope += (f"\nAfter processing, run coord ack --id {message_id} for this project. "
                          "The sender keeps this message in the inbox until ACK.")
@@ -1272,10 +1322,18 @@ def deliver(
             queued_for, target = target, None  # U134-C: queued below until the tool's next ACTIVE turn
     # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
-    window = None
+    window = thread or None
     if card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
+    token = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
+    if token:
+        # U188 (Codex design verdict relay_61456b14): text never becomes authoritative and NOTICE never wakes, so the
+        # contradiction fails visibly before any publish; the sender resends with the structured field.
+        diag = (f"UNSTRUCTURED_VERDICT: the first line reads as verdict {token!r} but carries no wake field; resend "
+                "with --verdict <PASS|REVISE|FAIL|APPROVE|PIVOT|REWORK> (or --wake-class ACTIONABLE --delta), or "
+                "mark a status echo ACK_ONLY")
+        return DeliverResult(False, target or "mailbox_only", "UNSTRUCTURED_VERDICT", (), diag, message_id, digest)
     explicit = {key: value for key, value in (("wake_class", wake_class), ("verdict_requested", verdict_requested),
                                               ("verdict", verdict), ("delta", delta)) if value is not None}
     if not explicit and requested_target and _requires_wake(message):
@@ -1298,7 +1356,9 @@ def deliver(
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
-    if target == "claude" and _requires_wake(message) and not pending.is_file():
+    wants_turn = _wants_wake(message, wake_class=explicit.get("wake_class"), verdict=explicit.get("verdict"),
+                             verdict_requested=explicit.get("verdict_requested"))
+    if target == "claude" and wants_turn and not pending.is_file():
         try:
             _write_receipt(pending, {"message_id": message_id, "target": "claude", "state": "PENDING"})
         except FileExistsError:
@@ -1324,14 +1384,19 @@ def deliver(
                                  str(box.inbox_dir / f"{message_id}.json"))
         # U95-A: no CLI wakes Antigravity; its PreInvocation hook names the letter on its next turn (agy_line).
         # U118: a real delta stays unread until a user turn there; say so and name the headless route (user report).
+        # U194: a structured verdict request asks Antigravity for a turn too (receipt relay_19f9c6aa). Narrowed to
+        # this branch (Codex relay_5be83219): the U143 sound above keeps its rule; NOTICE/ACK_ONLY never ask.
+        agy_turn = wants_turn or (explicit.get("verdict_requested") is True
+                                  and explicit.get("wake_class") not in ("NOTICE", "ACK_ONLY"))
         unread = ("UNREAD until a user turn in Antigravity; for a verdict run `pilot review --reviewer agy` "
-                  "(headless, no user)") if wants_turn else ""
+                  "(headless, no user)") if agy_turn else ""
         if unread and actor in ("claude", "codex") and os.environ.get("UAOS_AGY_AUTO", "1") != "0":
             # U120: a headless one-turn answer (U119 live: 27,989 tokens) is mailed back to the sender; a failure,
             # a loop tag or the daily cap keeps the U118 UNREAD route. UAOS_AGY_AUTO=0 opts out.
             from v7_harness.coord.agy_dispatch import dispatch
+            # U199: a verdict request is the commit-gate audit; its answer is never held back by the daily cap
             row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run,
-                           card=card)
+                           card=card, audit=verdict_requested is True)
             detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
             unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
@@ -1363,7 +1428,7 @@ def deliver(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", identity_digest=digest)
+                                 card=card, window=window or "", identity_digest=digest, wants_turn=wants_turn)
     finally:
         _release_guard(guard, owner)
 

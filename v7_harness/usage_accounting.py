@@ -20,6 +20,9 @@ PROVIDERS = ('codex', 'claude', 'antigravity', 'ollama')
 METRICS = ('uncached_input', 'cache_read', 'cache_write', 'output', 'reasoning')
 SCHEMA_VERSION = 1
 PARSER_REVISION = 2  # Revision 1 mixed independent native/legacy cumulative scopes.
+# Longest JSONL line parsed; 8 MiB exceeds any observed transcript row yet caps memory per readline.
+MAX_LINE_BYTES = 8 * 1024 * 1024
+DIGEST_START = '00' * 32  # Fixed chain origin: the same lines always give the same digest.
 
 
 def _hash(value):
@@ -302,28 +305,43 @@ def collect(home=None, db=None):
                 stat = path.stat()
                 old = con.execute('SELECT * FROM sources WHERE path=?', (source,)).fetchone()
                 revision_matches = bool(old and json.loads(old['state']).get('_parser_revision') == PARSER_REVISION)
-                if revision_matches and (old['mtime'], old['size']) == (stat.st_mtime_ns, stat.st_size):
+                if (revision_matches and (old['mtime'], old['size']) == (stat.st_mtime_ns, stat.st_size)
+                        and old['offset'] == stat.st_size):  # offset < size: partial tail still pending
                     result['files_unchanged'] += 1
                     continue
                 with path.open('rb') as stream:
-                    incremental = bool(revision_matches and stat.st_size > old['size'] and
+                    incremental = bool(revision_matches and stat.st_size >= old['size'] and
                                        _guard(stream, old['offset']) == old['guard'])
                     offset = old['offset'] if incremental else 0
                     state = json.loads(old['state']) if incremental else {'session': _hash(source), '_parser_revision': PARSER_REVISION}
                     stats = json.loads(old['stats']) if incremental else _stats()
                     if not incremental:
                         con.execute('DELETE FROM contributions WHERE source=?', (source,))
-                    digest = hashlib.sha256()
-                    if incremental:
-                        digest.update(bytes.fromhex(old['digest']))
+                    digest = old['digest'] if incremental else DIGEST_START
                     stream.seek(offset)
                     while True:
-                        raw = stream.readline()
-                        if not raw or not raw.endswith(b'\n'):
+                        raw = stream.readline(MAX_LINE_BYTES + 1)
+                        if not raw:
+                            break
+                        line_hash = hashlib.sha256(raw)
+                        complete = raw.endswith(b'\n')
+                        oversize = not complete and len(raw) > MAX_LINE_BYTES
+                        while oversize and not complete:  # Drain in bounded chunks, never buffer the line.
+                            chunk = stream.readline(MAX_LINE_BYTES)
+                            if not chunk:
+                                break
+                            line_hash.update(chunk)
+                            complete = chunk.endswith(b'\n')
+                        if not complete:
                             break  # An in-flight partial line is retried on a later append.
                         offset = stream.tell()
-                        digest.update(raw)
+                        digest = hashlib.sha256(bytes.fromhex(digest) + line_hash.digest()).hexdigest()
                         stats['rows'] += 1
+                        if oversize:
+                            stats['oversize_rows'] = stats.get('oversize_rows', 0) + 1
+                            stats['malformed_rows'] += 1
+                            stats['errors'] += 1
+                            continue
                         try:
                             row = json.loads(raw)
                             if not isinstance(row, dict):
@@ -345,7 +363,7 @@ def collect(home=None, db=None):
                     guard = _guard(stream, offset)
                     con.execute('INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?,?,?,?)',
                         (source, provider, stat.st_mtime_ns, stat.st_size, offset, guard,
-                         digest.hexdigest(), json.dumps(state), json.dumps(stats), _iso(datetime.now(timezone.utc))))
+                         digest, json.dumps(state), json.dumps(stats), _iso(datetime.now(timezone.utc))))
                     result['files_parsed'] += 1
                     result['files_incremental'] += int(incremental)
             except OSError:

@@ -1,13 +1,12 @@
 # Antigravity — 이 프로젝트의 상시 진입 규칙
 
-- 단일 작업 원장은 `.coord/PLAN.md`, 공통 예산·품질 정본은 `docs/35_token-budget-routing-policy.md`다. 작업 시작 전에 현재 카드·단일 작성자·QUIET_LOCK을 확인한다.
-- 사용자 대화창은 짧고 가독성 있게, 저장소 학습 가이드는 초보자에게 충분히 자세히 쓴다. 사용자의 미완성 아이디어는 `docs/25_AI_4도구_아이디어_조사와_위임전_매뉴얼_운영규칙.md`에 따라 근거 조사·실행 계약으로 바꾼다. Ollama 호출 전 작업 프로세스 매뉴얼을 파일로 발행하고 **내용을 실제 입력으로 전달**한다.
-- 평상시에는 별도 관측 경로의 검증을 우선한다. 원격 구현은 작은 범위·최대 사용량·결정적 인수를 정한 계약에서만 수행한다. 세부 절차: `docs/37_antigravity-budget-manual.md`.
+- 단일 작업 원장은 `.coord/PLAN.md`, 공통 예산·품질 정본은 `docs/27_token-budget-routing-policy.md`다. 작업 시작 전에 현재 카드·단일 작성자·QUIET_LOCK을 확인한다.
+- 사용자 대화창은 짧고 가독성 있게, 저장소 학습 가이드는 초보자에게 충분히 자세히 쓴다. 사용자의 미완성 아이디어는 `docs/AI_4도구_아이디어_조사와_위임전_매뉴얼_운영규칙.md`에 따라 근거 조사·실행 계약으로 바꾼다. Ollama 호출 전 작업 프로세스 매뉴얼을 파일로 발행하고 **내용을 실제 입력으로 전달**한다.
+- 평상시에는 별도 관측 경로의 검증을 우선한다. 원격 구현은 작은 범위·최대 사용량·결정적 인수를 정한 계약에서만 수행한다. 세부 절차: `docs/29_antigravity-budget-manual.md`.
 - Codex와 Claude가 모두 실제 제한·부재인 때에만 임시 총괄을 맡는다. 잔여율이 낮거나 상태가 `UNKNOWN`이라는 이유만으로 총괄을 넘겨받지 않는다. 복귀 시 diff·테스트·사용량과 미해결 위험을 한 번 인계한다.
 - Ollama는 단순 추론·의지 없는 전자계산기, 전화기다. 기계적 반복 노동에 먼저 사용하고 같은 작업 ID로 로컬 토큰·벽시계·인수 결과를 기록한다. Ollama의 자기 PASS를 채택하지 않는다.
-- U23의 우편함 무손실·감시관 반복 기상은 U32에서 반례 재작업을 마쳤으나(docs/45_metaphor-realization-implementation-record_2026-09-25.md), Codex 독립 판정 전까지는 보증하지 않는다. 변경 없는 상태의 반복 알림과 유료 모델의 주기적 폴링은 하지 않는다.
-- 작업자로서는 `pilot manual lint`를 통과한 계약 매뉴얼(`pilot run --manual`)만 받는다. 매뉴얼의 `judge`가 antigravity인 자기 작업은 판정·승인하지 않는다(`SELF_JUDGE`). 세션 시작 시 `coord presence --tool antigravity --state ACTIVE`. 세부: `docs/46_standard-process-and-worker-harness.md`.
-- RSI 정본 `docs/39_evidence-gated-rsi-for-uaos.md`를 따른다. 각 원격 호출과 Ollama 호출·실패의 영수증을 같은 `work_id`로 `.coord/usage/`에 기록한다. 개선안은 제안·독립 반례 검토까지만 맡고 자기 변경을 자기 점수로 승인하지 않는다. 원격 작업 매뉴얼의 `remote_budget_tokens`는 이제 모든 agy 실행에 적용된다(B85: 입력+출력+캐시 합계, 초과 시 BLOCKED·승인 불가). `rsi` 관문에서 Antigravity는 검증자(verifier)까지이며 `rsi adopt` 판정자가 될 수 없다(docs/47_rsi-self-improvement-blind-spots-and-evidence-gate.md).
+- U23의 우편함 무손실·감시관 반복 기상은 U32에서 반례 재작업을 마쳤으나(docs/36), Codex 독립 판정 전까지는 보증하지 않는다. 변경 없는 상태의 반복 알림과 유료 모델의 주기적 폴링은 하지 않는다.
+- 작업자로서는 `pilot manual lint`를 통과한 계약 매뉴얼(`pilot run --manual`)만 받는다. 매뉴얼의 `judge`가 antigravity인 자기 작업은 판정·승인하지 않는다(`SELF_JUDGE`). 세션 시작 시 `coord presence --tool antigravity --state ACTIVE`. 세부: `docs/37`.
+- RSI 정본 `docs/31_evidence-gated-rsi-for-uaos.md`를 따른다. 각 원격 호출과 Ollama 호출·실패의 영수증을 같은 `work_id`로 `.coord/usage/`에 기록한다. 개선안은 제안·독립 반례 검토까지만 맡고 자기 변경을 자기 점수로 승인하지 않는다. 원격 작업 매뉴얼의 `remote_budget_tokens`는 이제 모든 agy 실행에 적용된다(B85: 입력+출력+캐시 합계, 초과 시 BLOCKED·승인 불가). `rsi` 관문에서 Antigravity는 검증자(verifier)까지이며 `rsi adopt` 판정자가 될 수 없다(docs/38).
 - 사용자에게 넘기는 일(`남은 일`)은 Safety의 사람 전용 목록(데이터 삭제·원격 push·배포·공개 게시·지출·계정·자격 증명·권한·시스템 설정)뿐이다. 그 밖의 일(정본과 충돌하는 미커밋 변경 되돌리기, 병합 뒤 런타임 재설치, 다른 도구 완료 보고 확인)은 `.work/backup_<날짜>/` 백업 뒤 승인 없이 직접 끝내고, 완료 보고에는 실제 상태로 확인한 값만 적는다(U121, 2026-10-01 사용자 지시).
-- 보고에는 기사, 깃허브 저장소 링크를 포함한 관련 근거데이터를 필수요소로 한다(사용자 지정, 2026-10-20 영구 고정). 1차 출처 링크가 없는 기획·보고·제안은 FAILED(반려) 처리한다.
-- 참조·벤치마킹 자료실 전역 규칙(U250, 2026-10-26 사용자 영구 지정): UAOS-RSI 운영체제에서 참조·분석·벤치마킹할 GitHub 샘플 및 외부 공개 저장소는 어느 도구·세션에서든 반드시 `D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library\<저장소명>` 경로에 독립 Git 프로젝트로 일괄 저장하고 `.work\library\README.md` 색인표(폴더·원본 URL·라이선스·커밋 SHA·파일 수)에 등록한다. 받은 외부 코드는 신뢰하지 않는 읽기 전용 자료로 격리(`.gitignore`의 `.work/`로 본 저장소 커밋 제외)하며, 해당 폴더 안에서 설치·빌드·스크립트 실행(`npm install`, `cargo build` 등)을 절대 수행하지 않는다.
+- **UAOS-RSI 근본 존재이유 및 Codex $20 Plus 아스트라 핵심 역량 보호(U257, 2026-10-27 사용자 영구 지정)**: **"최대 성과를 목표로 3대 AI 도구 (Antigravity, Claude Code, Codex)의 부족한 토큰예산을 절약하는 3대 AI도구 '병렬'-협업-운영시스템, 하지만 결과물의 최상의 품질기준이 근본 존재이유이다."** 사용량 제한 및 구독제 업그레이드의 재정적 부담으로 UAOS-RSI를 만들었으며, 모든 프로세스는 최대 성과·최상 품질 도출을 기본 프레임으로 삼는다. Codex가 $20 Plus 구독으로 아스트라 모델을 핵심 키포인트(`CODEX_EXCLUSIVE_KEYPOINTS`)에만 쓸 수 있도록, 비핵심 일반 업무 승인은 Antigravity와 Claude Code가 상호 교차 승인(`author != judge`, 최상 품질 게이트 필수)으로 수행한다.

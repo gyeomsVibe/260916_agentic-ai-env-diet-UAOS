@@ -21,18 +21,22 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import ingress
 from .merge_route import MERGERS
 from .presence import TOOLS
 
 # Half the Claude main-session cache lifetime (1 h, global rules): a reroute starts before a resumed waiting session
 # pays a full cache rebuild, and a normal review round trip (minutes) never trips it.
 MAX_WAIT_S = 1800
+# U203: a ballot open for two vote windows (a vote expires after MAX_WAIT_S) without every ACTIVE tool is held
+# by an idle tool, not a deciding one; its missing vote no longer holds the reroute (Raft-style election timeout).
+QUORUM_TIMEOUT_S = 2 * MAX_WAIT_S
 # Who can do each kind of step, in order of preference. merge: 윤겸스's order (merge_route.MERGERS). verdict: Codex
 # conducts, Antigravity is the independent judge when it is away. letter: any peer that can read and act on it.
 # implement: Claude is the default implementer (global rules), then Antigravity, then Codex.
 CAPABILITY = {
     "merge": MERGERS,
-    "verdict": ("codex", "claude", "antigravity"),
+    "verdict": ("codex", "antigravity"),
     "implement": ("claude", "antigravity", "codex"),
 }
 WAIT_STATES = ("HUMAN", "REVIEW", "BLOCKED")
@@ -49,6 +53,14 @@ HUMAN_ONLY_RE = re.compile(
 STATE_DIR = Path(".coord") / "stall"
 SCHEDULE = Path(".coord") / "master_schedule.json"
 QUEUED = Path(".coord") / "mailbox" / "delivery" / "queued"
+# U214: a dispatched letter waits in INBOX until `coord ack` moves it to ACK; deliver stamps the dispatch moment once
+# in the ACCEPTED receipt; dispatched waits count only from the WATERMARK written at the first scan.
+INBOX = Path(".coord") / "mailbox" / "inbox"
+ACK = Path(".coord") / "mailbox" / "ack"
+ACCEPTED = Path(".coord") / "mailbox" / "delivery" / "accepted"
+WATERMARK = STATE_DIR / "watermark.json"
+TERMINAL = ("DONE", "CANCELLED")
+AGY_REPLY = re.compile(r"\[agy-auto\] re ([A-Za-z0-9_]+)")
 
 
 def _item_id(item: str) -> str:
@@ -72,9 +84,12 @@ def _write_json(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
-def _letter_waits(project: Path) -> list[dict[str, Any]]:
+def _letter_waits(project: Path, schedule: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     found = []
     root = project / QUEUED
+    answered = _answered(project, _watermark(project, time.time()))
+    ended = {str(p.get("phase_id")) for p in (schedule if isinstance(schedule, dict) else {}).get("phases") or []
+             if isinstance(p, dict) and p.get("state") in TERMINAL}
     for target_dir in sorted(p for p in root.glob("*") if p.is_dir()):
         target = target_dir.name
         for letter in sorted(target_dir.glob("*.json")):
@@ -89,8 +104,99 @@ def _letter_waits(project: Path) -> list[dict[str, Any]]:
             # (relay_45a03503, defect 1), and U120 already uses this token as the wake word.
             if "VERDICT_REQUESTED=YES" not in str(payload.get("message", "")):
                 continue
+            body = _payload(project / INBOX / letter.name) or payload
+            if ((project / ACK / letter.name).exists() or letter.stem in answered
+                    or str(body.get("card", "")) in ended):
+                continue
             found.append({"item": f"letter:{target}:{letter.stem}", "kind": "verdict", "waiting_on": target,
                           "author": str(payload.get("actor", "")), "since": since, "pr": ""})
+    return found
+
+
+def _watermark(project: Path, moment: float) -> float:
+    """U214: the explicit start of dispatched waits, written once at the first scan, so the inbox history before it
+    never bursts into reroutes (Antigravity CE1). An unreadable or malformed watermark counts no letter at all."""
+    path = project / WATERMARK
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get("since")
+    except FileNotFoundError:
+        _write_json(path, {"since": moment})
+        return moment
+    except (OSError, ValueError, AttributeError):
+        return float("inf")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else float("inf")
+
+
+def _payload(path: Path) -> dict[str, Any] | None:
+    """U214: the payload of one mailbox letter; None when it is unreadable or has no payload object."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    body = record.get("payload") if isinstance(record, dict) else None
+    return body if isinstance(body, dict) else None
+
+
+def _reply_to(body: dict[str, Any]) -> str:
+    """U214: the letter id a reply answers: payload `in_reply_to`, the same key in a JSON message, or `[agy-auto] re`."""
+    value, message = body.get("in_reply_to"), str(body.get("message", ""))
+    if not value and message.lstrip().startswith("{"):
+        try:
+            inner = json.loads(message)
+        except ValueError:
+            inner = None
+        value = inner.get("in_reply_to") if isinstance(inner, dict) else None
+    if not value and (match := AGY_REPLY.match(message)):
+        value = match.group(1)
+    return value if isinstance(value, str) else ""
+
+
+def _dispatched_at(project: Path, message_id: str) -> float | None:
+    """U214: the dispatch moment deliver wrote once in the accepted receipt; a file mtime moves on rewrite or copy."""
+    try:
+        record = json.loads((project / ACCEPTED / f"{message_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    stamp = record.get("timestamp_ns") if isinstance(record, dict) else None
+    ok = (isinstance(stamp, int) and not isinstance(stamp, bool) and stamp > 0
+          and record.get("state", "DISPATCHED") == "DISPATCHED")
+    return stamp / 1e9 if ok else None
+
+
+def _answered(project: Path, mark: float) -> set[str]:
+    """U214: ids answered by any reply written since the watermark, read or not yet read (inbox and ack)."""
+    found = set()
+    for folder in (INBOX, ACK):
+        for path in (project / folder).glob("*.json"):
+            try:
+                fresh = path.stat().st_mtime >= mark
+            except OSError:
+                continue
+            body = _payload(path) if fresh else None
+            if body is not None:
+                found.add(_reply_to(body))
+    return found
+
+
+def _inbox_waits(project: Path, schedule: dict[str, Any] | None, moment: float) -> list[dict[str, Any]]:
+    """U214: deliver dispatches at once, so a sent verdict request waits in the inbox until it is acked, answered
+    (in_reply_to) or its card's phase is terminal; only letters dispatched after the watermark count."""
+    from .desk_delta import canonical
+
+    mark = _watermark(project, moment)
+    ended = {str(p.get("phase_id")) for p in (schedule or {}).get("phases") or []
+             if isinstance(p, dict) and p.get("state") in TERMINAL}
+    answered, found = _answered(project, mark), []
+    for path in sorted((project / INBOX).glob("*.json")):
+        body, since = _payload(path), _dispatched_at(project, path.stem)
+        if (path.name.startswith("evt_") or body is None or since is None or since < mark
+                or path.stem in answered or (project / ACK / path.name).exists()):
+            continue
+        asked = body.get("verdict_requested") is True or "VERDICT_REQUESTED=YES" in str(body.get("message", ""))
+        target = canonical(str(body.get("requested_target") or body.get("to") or ""))
+        if body.get("wake_class") == "ACTIONABLE" and asked and target and str(body.get("card", "")) not in ended:
+            found.append({"item": f"letter:{target}:{path.stem}", "kind": "verdict", "waiting_on": target,
+                          "author": str(body.get("actor", "")), "since": since, "pr": ""})
     return found
 
 
@@ -100,7 +206,11 @@ def _phase_waits(schedule: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(phase, dict) or not phase.get("phase_id"):
             continue
         state, waiting_on = str(phase.get("state", "")), str(phase.get("waiting_on", ""))
-        if state not in WAIT_STATES and not waiting_on:
+        if state not in WAIT_STATES:
+            continue
+        if phase.get("blocker_kind") in ("SAFETY_GATE", "SCOPE_DECISION", "HUMAN_AUTH"):
+            continue
+        if phase.get("implementation_go") is False or phase.get("actuator_verdict") == "STOP_NO_IMPLEMENTATION_GO":
             continue
         text = f"{phase['phase_id']} {phase.get('human', '')} {phase.get('note', '')}".lower()
         if state == "HUMAN" and HUMAN_ONLY_RE.search(text):
@@ -154,7 +264,7 @@ def action(wait: dict[str, Any], owner: str) -> str:
     return f"{owner} takes the step"
 
 
-def scan(project: Path, tool: str, *, now: float | None = None,
+def scan(project: Path, tool: str | None, *, now: float | None = None,
          desk: dict[str, dict[str, Any]] | None = None, max_wait_s: int = MAX_WAIT_S) -> dict[str, Any]:
     from .next_card import coord_root
     from .stream import _exclusive
@@ -183,7 +293,8 @@ def scan(project: Path, tool: str, *, now: float | None = None,
         if not all(isinstance(x, dict) for x in (seen, votes, adopted)):
             result["error"] = "stall state corrupt"
             return result
-        waits = _letter_waits(project) + (_phase_waits(schedule) if schedule is not None else [])
+        letters = {w["item"]: w for w in _inbox_waits(project, schedule, moment) + _letter_waits(project, schedule)}
+        waits = list(letters.values()) + (_phase_waits(schedule) if schedule is not None else [])
         live = {w["item"] for w in waits}
         seen = {k: v for k, v in seen.items() if k in live}
         # A phase has waited at least since the schedule file was last written: it was already in its waiting state
@@ -198,16 +309,22 @@ def scan(project: Path, tool: str, *, now: float | None = None,
                 first = min(float(seen.get(wait["item"], moment)), written, wait.pop("declared", None) or moment)
                 wait["since"] = seen[wait["item"]] = first
         changed_schedule = False
+        result["ingress"] = []
         for wait in waits:
             age = moment - float(wait["since"])
             done = adopted.get(wait["item"])
+            # U215: no ingress 10 s after dispatch probes the receiver; a LIMITED one is replanned now, not at 30 min.
+            record = desk.get(wait["waiting_on"]) or {}
+            if (decision := ingress.decide(wait, record, moment)) != "WAIT":
+                result["ingress"].append({"item": wait["item"], "decision": decision})
             # An adoption covers only the wait instance it was made for; a phase that waits again later is a new
             # instance with a new start and is rerouted again (Codex judge U166-APPLY4, finding 2).
-            if age < max_wait_s or (isinstance(done, dict) and done.get("since") == wait["since"]):
+            if age < ingress.limit(wait, record, moment, max_wait_s) or (
+                    isinstance(done, dict) and done.get("since") == wait["since"]):
                 continue
             owners = route(wait, desk)
             entry = {"item": wait["item"], "kind": wait["kind"], "waiting_on": wait["waiting_on"],
-                     "age_s": int(age), "route": owners}
+                     "age_s": int(age), "route": owners, "author": wait["author"], "since": wait["since"]}
             if not owners:
                 result["blocked"].append(entry)
                 continue
@@ -220,23 +337,30 @@ def scan(project: Path, tool: str, *, now: float | None = None,
             if (not isinstance(ballot, dict) or ballot.get("owner") != owners[0]
                     or ballot.get("since") != wait["since"] or not isinstance(ballot.get("by"), dict)):
                 ballot = {"owner": owners[0], "since": wait["since"], "by": {}}
+            ballot.setdefault("opened", moment)  # U203: when this wait instance first had a ballot
             ballot["by"] = {t: ts for t, ts in ballot["by"].items()
                             if isinstance(ts, (int, float)) and moment - ts < max_wait_s}
-            ballot["by"][tool] = moment
+            if tool:  # U203: the sentinel scans without a vote of its own
+                ballot["by"][tool] = moment
             votes[wait["item"]] = ballot
             voters = sorted(ballot["by"])
             entry.update({"owner": owners[0], "action": action(wait, owners[0]), "voters": voters,
                           "present": present})
             result["stalled"].append(entry)
-            if schedule is not None and present and set(present) <= set(voters):
+            timed_out = moment - float(ballot["opened"]) >= QUORUM_TIMEOUT_S
+            if schedule is not None and present and (set(present) <= set(voters) or timed_out):
                 note = "U166 reroute: waiting is a failure"
                 original = next((p for p in schedule.get("phases") or [] if isinstance(p, dict)
                                  and wait["item"] == f"phase:{p.get('phase_id')}"), None)
                 if original is not None:
                     # Reassign the waiting phase itself, so its dependents stay linked and the tool that was waited
                     # on cannot take the same step again when it returns (Codex judge U166-APPLY3, finding 2).
-                    original["rerouted_from"] = {k: original.get(k) for k in ("owner_tool", "state", "waiting_on")}
+                    original["rerouted_from"] = {k: original.get(k) for k in
+                                                 ("owner_tool", "owner_session", "state", "waiting_on")}
                     original.pop("waiting_on", None)
+                    # U203: the old owner's session would bind the transition wake to a thread the new owner
+                    # cannot ack
+                    original.pop("owner_session", None)
                     original.update({"state": "READY", "owner_tool": owners[0], "action": entry["action"],
                                      "agreed_by": present, "note": note})
                     phase_id = str(original["phase_id"])

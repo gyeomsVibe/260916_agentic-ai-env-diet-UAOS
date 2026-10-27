@@ -30,7 +30,7 @@ RELAY_RE = re.compile(r"^relay_[0-9a-f]{32}$")
 # The verdict is a letter from an independent judge, not a commit trailer: the author writes its own trailers, so a
 # trailer is self-approval (Antigravity design audit relay_45a03503, defect 2). The letter must come from a judge tool
 # that is not the PR's author, name this exact head, and its first verdict word must be PASS or APPROVE.
-JUDGES = ("codex", "antigravity")
+JUDGES = ("codex", "claude", "antigravity")
 VERDICT_WORD_RE = re.compile(r"\b(PASS|APPROVE|REVISE|FAIL|REJECT|BLOCK)\b")
 LETTER_DIRS = ("inbox", "claimed", "ack")
 # Feature branches are named <tool>/<card>-...; the prefix is the authoring tool.
@@ -116,6 +116,69 @@ def gate(view: dict[str, Any], head: str, letter: dict[str, Any]) -> None:
     words = VERDICT_WORD_RE.findall(message.upper())
     if head not in message or not words or words[0] not in ("PASS", "APPROVE"):
         raise MergeRefused("verdict letter does not pass this exact head")
+
+
+_SUBPROC_GH_MERGE_RE = re.compile(
+    r"""[\x27"](?:pr[\x27"]\s*,\s*[\x27"]merge|api[\x27"]\s*,[^\]]*?\bpulls/\d+/merge)\b""",
+    re.IGNORECASE,
+)
+_PULLS_MERGE_API_RE = re.compile(r"(?:^|/)pulls/\d+/merge(?:$|[?#])", re.IGNORECASE)
+_SEGMENT_RE = re.compile(r"(?:[^;&|\n\x22\x27]|\x22[^\x22]*\x22|\x27[^\x27]*\x27)+")
+_TOKEN_RE = re.compile(r"\x22[^\x22]*\x22|\x27[^\x27]*\x27|\S+")
+
+
+def _tokens_are_gh_merge(tokens: list[str]) -> bool:
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx].strip().strip("'\"")
+        if not tok or tok in ("&", "env", "sudo", "command", "nohup"):
+            idx += 1
+            continue
+        if tok.startswith("$env:") or (re.match(r"^[A-Za-z_]\w*=", tok) and "/" not in tok and "\\" not in tok):
+            idx += 1
+            continue
+        break
+    if idx >= len(tokens):
+        return False
+    exe = tokens[idx].strip().strip("'\"").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if exe not in ("gh", "gh.exe"):
+        return False
+    rest = [t.strip().strip("'\"") for t in tokens[idx + 1 :]]
+    low = [t.lower() for t in rest]
+    if "pr" in low and "merge" in low[low.index("pr") + 1 :]:
+        return True
+    if "api" in low and any(_PULLS_MERGE_API_RE.search(t) for t in rest):
+        return True
+    return False
+
+
+def raw_gh_merge_denied(command: str | list[Any], env: dict[str, str] | None = None) -> str | None:
+    """U258: refuse direct `gh pr merge` or `gh api .../pulls/<N>/merge` outside a gated `uaos coord merge` worker."""
+    if (env if env is not None else os.environ).get("UAOS_WORKER") == "1":
+        return None
+    if isinstance(command, list):
+        matched = _tokens_are_gh_merge([str(x) for x in command])
+    else:
+        text = str(command or "")
+        matched = bool(_SUBPROC_GH_MERGE_RE.search(text)) or any(
+            _tokens_are_gh_merge(_TOKEN_RE.findall(seg)) for seg in _SEGMENT_RE.findall(text)
+        )
+    if matched:
+        return (
+            "Direct 'gh pr merge' / 'gh api .../pulls/<N>/merge' is refused (U258); run "
+            "'uaos coord merge --pr <N> --head <40-hex> --verdict <relay_id>' so a same-head "
+            "non-author PASS verdict is verified first."
+        )
+    return None
+
+
+def require_same_head_peer_verdict(project: Path, *, branch: str, head: str, verdict_relay: str) -> dict[str, Any]:
+    """U258: hard pre-merge guard ensuring a same-head non-author PASS/APPROVE relay exists before any merge."""
+    check_args(1, head, verdict_relay)
+    letter = read_verdict(project, verdict_relay)
+    fake_view = {"state": "OPEN", "mergeable": "MERGEABLE", "headRefOid": head, "headRefName": branch}
+    gate(fake_view, head, letter)
+    return {"ok": True, "head": head, "verdict": verdict_relay, "judge": letter.get("actor")}
 
 
 def _text(raw: Any) -> str:
@@ -225,6 +288,7 @@ def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None
     try:
         check_args(pr, head, verdict)
         view = pr_view(pr, project, runner)
+        require_same_head_peer_verdict(project, branch=str(view.get("headRefName") or ""), head=head, verdict_relay=verdict)
         gate(view, head, read_verdict(project, verdict))
         ci_run = ci_attested(view, pr, head, project, runner)
     except (MergeRefused, OSError, subprocess.SubprocessError, ValueError) as exc:

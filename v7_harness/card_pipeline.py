@@ -12,6 +12,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from subprocess import TimeoutExpired
+
+from v7_harness import runtime_install
+from v7_harness.coord import merge_route
 from v7_harness.coord.usage_ledger import record_usage
 from v7_harness.coord.presence import read as read_presence
 
@@ -339,13 +343,31 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
             if row.get("state") == "ANSWERED" and row.get("conversation_id") == conv:
                 agy_evidence.append(f"agy reply {row.get('reply_id')}")
     for run_dir in [desk / ".coord"] if run_dirs is None else run_dirs:
-        for path in sorted(Path(run_dir).glob(f"runs/{card}-*/review_agy.json")):
+        for path in sorted({*Path(run_dir).glob(f"runs/{card}-*/review_agy.json"),
+                            *Path(run_dir).glob(f"runs/{card}/review_agy.json")}):
             try:
                 review = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if isinstance(review, dict) and review.get("verdict") in AGY_VERDICTS:
+            if _real_agy_review(review, path.parent.name):
                 agy_evidence.append(f"agy review {path.parent.name} {review['verdict']}")
+        for path in sorted({*Path(run_dir).glob(f"runs/{card}-*/judge_agy.json"),
+                            *Path(run_dir).glob(f"runs/{card}/judge_agy.json")}):
+            try:
+                judged = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(judged, dict) and judged.get("verdict") == "APPROVE":
+                agy_evidence.append(f"agy judge {path.parent.name} APPROVE")
+    for folder in (desk / ".coord" / "mailbox" / "inbox", desk / ".coord" / "mailbox" / "ack"):
+        for path in sorted(folder.glob("relay_*.json")) if folder.is_dir() else ():
+            try:
+                payload = (json.loads(path.read_text(encoding="utf-8")) or {}).get("payload") or {}
+            except (OSError, ValueError, AttributeError):
+                continue
+            if (isinstance(payload, dict) and payload.get("actor") == "antigravity"
+                    and payload.get("card") == card and payload.get("verdict") in AGY_VERDICTS):
+                agy_evidence.append(f"agy letter {path.stem} {payload['verdict']}")
     skips = [r for r in mine if r.get("kind") == "card_skip"]
     for skip in skips:
         slot, reason = skip.get("skip_slot"), skip.get("skip_reason")
@@ -356,3 +378,111 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
             found.append(f"skip {reason}: {skip.get('evidence')}")
     missing = [slot for slot, found in (("ollama", ollama_evidence), ("agy", agy_evidence)) if not found]
     return {"card": card, "ok": not missing, "ollama": ollama_evidence, "agy": agy_evidence, "missing": missing}
+
+
+# U221: "done" is earned from the remote PR and the installed runtime, never from a label or a local ref.
+DONE_FIELD_MAX = 160  # one plain sentence in the 3-line report
+SHA40_RE = re.compile(r"[0-9a-f]{40}")  # the lower-case full sha that gh returns as headRefOid
+RUNTIME_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,127}")  # runtime_install names: <version>-<12 hex>
+# Everything a reader may raise: each means "unknown", and unknown is never done.
+DONE_READ_ERRORS = (merge_route.MergeRefused, TimeoutExpired, OSError, ValueError, KeyError, TypeError,
+                    AttributeError, runtime_install.RuntimeError_)
+
+
+def _real_agy_review(review, task: str) -> bool:
+    """U192: schema hardening only. Count a record that has review.py's strict agy fields for this run dir's task.
+    A hand-copied record still passes: this is not proof an agy run happened (Codex REVISE relay_0e17d7f3)."""
+    if not isinstance(review, dict) or review.get("verdict") not in AGY_VERDICTS:
+        return False
+    usage, conv, bundle = review.get("usage"), review.get("judge_conversation_id"), review.get("bundle_id")
+    tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+    return (review.get("reviewer") == "agy" and review.get("task_id") == task and review.get("cost_gate") == "WITHIN"
+            and isinstance(conv, str) and bool(conv) and type(tokens) is int and tokens > 0
+            and isinstance(bundle, str) and bool(re.fullmatch(r"[0-9a-f]{64}", bundle)) and bundle != "0" * 64)
+
+
+def _one_line(name, value) -> str:
+    """U221: one plain line of at most DONE_FIELD_MAX characters; every str.splitlines separator is refused."""
+    if not isinstance(value, str) or not value.strip() or len(value) > DONE_FIELD_MAX or value.splitlines() != [value]:
+        raise ValueError(f"{name} must be one non-empty line of at most {DONE_FIELD_MAX} characters")
+    return value.strip()
+
+
+def _done_arg_problems(pr_url, head, runtime=None) -> list[str]:
+    """U221: argument problems as a list, so check_done never raises and done_report refuses the same inputs."""
+    problems = []
+    if not (isinstance(pr_url, str) and merge_route.GITHUB_PR_RE.fullmatch(pr_url)):
+        problems.append(f"BAD_PR_URL: {str(pr_url)[:80]!r} is not a https://github.com/<owner>/<repo>/pull/<n> url")
+    if not (isinstance(head, str) and SHA40_RE.fullmatch(head)):
+        problems.append(f"BAD_HEAD: {str(head)[:80]!r} is not a 40-hex lower-case commit sha")
+    if runtime is not None and not (isinstance(runtime, str) and RUNTIME_RE.fullmatch(runtime)):
+        problems.append(f"BAD_RUNTIME: {str(runtime)[:80]!r} is not a runtime version name")
+    return problems
+
+
+def done_report(project, card, what, pr_url, head, runtime=None, user_action=None) -> str:
+    """U221: the 3-line completion report; check_done must pass before it is shown as done."""
+    _check(card)
+    name, what = _one_line("project", project), _one_line("what", what)
+    runtime = _one_line("runtime", runtime) if runtime is not None else None
+    action = _one_line("user_action", user_action) if user_action else None
+    if _done_arg_problems(pr_url, head, runtime):
+        raise ValueError("; ".join(_done_arg_problems(pr_url, head, runtime)))
+    installed = f"런타임 {runtime}에 설치됐습니다" if runtime else "런타임 설치가 필요 없는 변경입니다"
+    last = f"- **남은 일**: {action}" if action else "- 다음: 사용자가 할 일은 없습니다. 새 세션부터 바로 적용됩니다."
+    return "\n".join((f"**결과**: {name}의 {card} 작업이 완료됐습니다 — {what}",
+                      f"- 근거: 변경이 {pr_url} 로 병합됐고(커밋 {head[:7]}), {installed}.", last))
+
+
+def _head_ok(view, head) -> bool:
+    """U221: head is the PR's headRefOid, or, for a squash or rebase merge, the merge commit that landed it."""
+    merge = view.get("mergeCommit")
+    landed = merge.get("oid") if isinstance(merge, dict) else None
+    return head == view.get("headRefOid") or (landed is not None and head == landed)
+
+
+def _remote_problems(checkout, pr_url, head, pr_reader) -> list[str]:
+    """U221: the PR is MERGED under this url and head; any read failure is a problem (unknown is not done)."""
+    try:
+        view = pr_reader(int(pr_url.rsplit("/", 1)[1]), Path(checkout))
+        state, url, head_ok = view["state"], view["url"], _head_ok(view, head)
+    except DONE_READ_ERRORS as exc:
+        return [f"REMOTE_UNKNOWN: {type(exc).__name__}: {str(exc)[:120]}"]
+    problems = [f"REMOTE_NOT_MERGED: state={state!r}"] if state != "MERGED" else []
+    problems += [f"REMOTE_URL_MISMATCH: {url!r}"] if url != pr_url else []
+    problems += [] if head_ok else [f"REMOTE_HEAD_MISMATCH: {head[:7]} is neither the PR head nor its merge commit"]
+    return problems
+
+
+def _runtime_problems(runtime, uaos_home, runtime_verify) -> list[str]:
+    """U221: the named runtime re-hashes clean against its manifest and is the one current.json points at."""
+    if not runtime:
+        return []
+    home = Path(uaos_home) if uaos_home else Path.home()  # runtime_install keeps its tree under <home>/.uaos
+    try:
+        runtime_verify(home, runtime)
+        current = runtime_install.read_current(home).get("version")
+    except DONE_READ_ERRORS as exc:
+        return [f"RUNTIME_UNVERIFIED: {runtime}: {type(exc).__name__}: {str(exc)[:120]}"]
+    return [] if current == runtime else [f"RUNTIME_NOT_CURRENT: {runtime} != {current}"]
+
+
+def check_done(checkout, pr_url, head, runtime=None, uaos_home=None, pr_reader=None, runtime_verify=None) -> list[str]:
+    """U221: "done" is earned: the PR is MERGED on the remote with this url and head and, when named, the runtime
+    verifies. Readers are injectable for tests; the defaults are the reviewed merge_route.pr_view and verify."""
+    problems = _done_arg_problems(pr_url, head, runtime)
+    if problems:
+        return problems
+    problems = _remote_problems(checkout, pr_url, head, pr_reader or merge_route.pr_view)
+    return problems + _runtime_problems(runtime, uaos_home, runtime_verify or runtime_install.verify)
+
+
+def sync_project_hub(checkout) -> dict[str, Any]:
+    """U240: synchronize docs/00_DOCUMENT_INDEX.md and docs/00_DOCUMENT_HUB.html at card or project finish."""
+    from v7_harness.docs_manager import ensure_doc_index, ensure_docs_dir, sync_doc_index
+
+    root = Path(checkout)
+    index_md = ensure_doc_index(root)
+    sync_doc_index(root)
+    hub_html = ensure_docs_dir(root) / "00_DOCUMENT_HUB.html"
+    return {"ok": True, "index_md": str(index_md), "hub_html": str(hub_html)}

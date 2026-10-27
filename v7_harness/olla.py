@@ -50,11 +50,18 @@ OUTLINE_MAX_LINES = 60  # U108: enough to place every def of a 1,300-line module
 
 
 def _post(path: str, payload: dict, timeout: int = 900) -> dict:
-    request = urllib.request.Request(
-        f"{HOST}{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    """U229-B2: journal every Ollama POST (embedding included); payload hash only, never raw text."""
+    import hashlib
+    from v7_harness.invocation import _integer, tracked_call
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    with tracked_call(caller=os.environ.get("UAOS_CALLER") or _caller(), project=str(Path.cwd()),
+                      work_id=os.environ.get("UAOS_WORK_ID", "UNSCOPED"),
+                      purpose=os.environ.get("UAOS_PURPOSE", "ollama_post"), model=str(payload.get("model") or "unknown"),
+                      input_sha256=digest, db=os.environ.get("UAOS_INVOCATION_DB")) as receipt:
+        body = _post_raw(path, payload, timeout)
+        receipt.update(outcome="SUCCEEDED", error_class=None, provider="ollama",
+                       input_tokens=_integer(body.get("prompt_eval_count")), output_tokens=None)
+    return body
 
 
 def _get(path: str, timeout: int = 10) -> dict:
@@ -671,6 +678,13 @@ def shell_read_hint(event: dict) -> str | None:
     base = Path(event.get("cwd") or ".")
     paths = [Path(raw) if Path(raw).is_absolute() else base / raw for raw in shell_read_targets(str(command))]
     if event.get("hook_event_name") == "PreToolUse":
+        from v7_harness.coord.merge_route import raw_gh_merge_denied
+        deny_merge = raw_gh_merge_denied(str(command))
+        if deny_merge:
+            log_usage("deny_raw_gh_merge")
+            return json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": deny_merge}})
         return shell_read_deny(paths)
     for path in paths:
         hint = read_hint({"tool_input": {"file_path": str(path)}})
@@ -1121,6 +1135,14 @@ def cmd_hook_bash(args: argparse.Namespace) -> int:
         target = deep_cd_target(command, str(event.get("cwd") or ""))
     except (ValueError, AttributeError, TypeError):
         return 0
+    from v7_harness.coord.merge_route import raw_gh_merge_denied
+    deny_merge = raw_gh_merge_denied(command)
+    if deny_merge:
+        log_usage("deny_raw_gh_merge")
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason": deny_merge}}))
+        return 0
     if not target and event.get("tool_name") == "Bash" and noisy_command(command):
         updated = dict(event.get("tool_input") or {})
         updated["command"] = squeeze_rewrite(command)
@@ -1205,6 +1227,11 @@ def agy_hook(event_name: str, event: dict) -> dict | None:
         call = event.get("toolCall") or {}
         args = call.get("args") or {}
         if call.get("name") == "run_command":
+            from v7_harness.coord.merge_route import raw_gh_merge_denied
+            deny_merge = raw_gh_merge_denied(str(args.get("CommandLine") or ""))
+            if deny_merge:
+                log_usage("deny_raw_gh_merge")
+                return {"decision": "deny", "reason": deny_merge}
             target = deep_cd_target(str(args.get("CommandLine") or ""), str(args.get("Cwd") or ""))
             if target:
                 log_usage("deny_deep_cd", chars=len(target))
@@ -1379,6 +1406,16 @@ def code_outline(path: Path) -> str:
 def _outline_note(path: Path) -> str:
     outline = code_outline(path)
     return f"\nExact outline of {path.name}:\n{outline}" if outline else ""
+
+
+
+
+def _post_raw(path: str, payload: dict, timeout: int = 900) -> dict:
+    request = urllib.request.Request(
+        f"{HOST}{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 if __name__ == "__main__":

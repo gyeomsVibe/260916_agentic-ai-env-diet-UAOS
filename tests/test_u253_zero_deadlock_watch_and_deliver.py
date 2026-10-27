@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from v7_harness.coord import deliver, master_scheduler, stall, watch
+from v7_harness.coord import deliver, watch
 from v7_harness.coord.mailbox import Mailbox
 
 
@@ -154,22 +154,6 @@ class TestU253ZeroDeadlockWatchAndDeliver(unittest.TestCase):
             )
             self.assertIsNone(second)
 
-    def test_rc5_stall_verdict_capability_includes_claude_when_codex_limited(self) -> None:
-        """RC-5: When Codex is LIMITED and Antigravity requests a verdict, stall.route routes to ACTIVE Claude."""
-        self.assertIn("claude", stall.CAPABILITY["verdict"])
-        desk = {
-            "codex": {"state": "LIMITED"},
-            "claude": {"state": "ACTIVE"},
-            "antigravity": {"state": "ACTIVE"},
-        }
-        wait_item = {
-            "item": "letter:codex:relay_ffea2fc2",
-            "kind": "verdict",
-            "waiting_on": "codex",
-            "author": "antigravity",
-        }
-        owners = stall.route(wait_item, desk)
-        self.assertEqual(owners, ["claude"])
 
 
 if __name__ == "__main__":

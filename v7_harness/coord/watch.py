@@ -38,6 +38,10 @@ LIVE_MIN_S = 90.0
 # Longer than the 120 s Claude dispatch timeout plus receipt writes. A crashed dispatcher must not suppress the
 # interactive fallback forever; after this bound the marker is evidence of failure, not an active dispatch.
 PENDING_MAX_AGE_S = 300.0
+# U179: 60 s between long-wait scans. A scan takes the stall lock, reads the schedule and the queued letters and
+# writes three small state files, so it does not run on every 2 s inbox scan; 60 s bounds lateness to 3% of
+# stall.MAX_WAIT_S (1800 s). Never tokens.
+STALL_SCAN_S = 60.0
 # U141-A: an empty O_EXCL placeholder younger than this is a claim being written (the full record follows within
 # milliseconds), so it counts as EXISTS. An older empty one is a crashed claim: CORRUPT, kept, never a wake.
 PLACEHOLDER_GRACE_S = 5.0
@@ -329,8 +333,54 @@ def _release_locks(project: Path, tools: list[str], mine: dict[str, Any]) -> Non
             pass
 
 
+def _stalled_wait(project: Path, tools: tuple[str, ...], clock: Callable[[], float]) -> dict[str, Any] | None:
+    """U179: the first stalled wait one of `tools` has a part in and has not been woken for yet."""
+    from v7_harness.coord import stall
+
+    for tool in tools:
+        try:
+            result = stall.scan(project, tool, now=clock())
+        except (OSError, ValueError):
+            continue  # a locked or unreadable stall state: the next scan looks again, the watch goes on
+        for entry in result["stalled"] + result["blocked"]:
+            if tool not in (entry["author"], entry["waiting_on"], entry.get("owner")):
+                continue
+            # One receipt per wait instance: a step that waits again later has a new `since` and wakes again.
+            key = f"stall:{entry['item']}:{entry['since']}"
+            if claim_wake(project, tool, key, hashlib.sha256(key.encode("utf-8")).hexdigest(),
+                          clock=clock) == "CLAIMED":
+                return {"id": key, "reason": "STALLED_WAIT", "item": entry["item"], "kind": entry["kind"],
+                        "waiting_on": entry["waiting_on"], "age_s": entry["age_s"], "owner": entry.get("owner"),
+                        "requested_target": tool}
+    return None
+
+
+def _native_eligible(project, message_id, body, session, now):
+    """Native listeners must reject stale and foreign work before consuming any claim."""
+    from .stop_gate import _foreign, LETTER_FRESH_S
+    from .continuity import _desk_matches
+    if not isinstance(body, dict) or not _desk_matches(project, session):
+        return False
+    if body.get('requested_target') != 'claude' or body.get('delta') == 'ACK_ONLY':
+        return False
+    from . import windows as _windows
+    unbound_card = (body.get('card') and not (body.get('native_receiver') or body.get('window'))
+                    and _windows.window_for(project, str(body['card']), 'claude') is None)
+    if not unbound_card and _foreign(project, 'claude', session, body):
+        return False
+    try:
+        stamp = (project / '.coord/mailbox/inbox' / f'{message_id}.json').stat().st_mtime
+        desk = json.loads((project / '.coord/presence/user_desk_claude.json').read_text(encoding='utf-8'))
+        since = desk.get('at', now - LETTER_FRESH_S)
+        return isinstance(since, (int, float)) and max(since, now - LETTER_FRESH_S) <= stamp <= now
+    except (OSError, ValueError):
+        return False
+
+
 def _schedule_ready_wake(project: Path, tools: tuple[str, ...], clock: Callable[[], float]) -> dict[str, Any] | None:
     """U253: level-triggered wake when `.coord/master_schedule.json` has an unclaimed READY/ACTIVE phase for `tools`."""
+    from .next_card import TERMINAL
+
     sched_path = Path(project) / ".coord" / "master_schedule.json"
     try:
         raw = json.loads(sched_path.read_text(encoding="utf-8"))
@@ -342,7 +392,7 @@ def _schedule_ready_wake(project: Path, tools: tuple[str, ...], clock: Callable[
     done_ids = {
         str(p.get("phase_id") or p.get("id") or "")
         for p in phases
-        if isinstance(p, dict) and p.get("state") == "DONE"
+        if isinstance(p, dict) and p.get("state") in TERMINAL
     }
     for p in phases:
         if not isinstance(p, dict):
@@ -380,7 +430,7 @@ def _schedule_ready_wake(project: Path, tools: tuple[str, ...], clock: Callable[
 def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_TIMEOUT_S,
           interval_s: float = DEFAULT_INTERVAL_S, clock: Callable[[], float] | None = None,
           sleep: Callable[[float], None] | None = None, wakes_session: bool = False,
-          policy: str = "legacy") -> dict[str, Any] | None:
+          policy: str = "legacy", native_session: str | None = None) -> dict[str, Any] | None:
     """Return the first letter addressed to one of `tools` that was not in the inbox when the watch began.
 
     Letters already waiting are what `coord inbox` shows at session start; the watch reports only new ones, so a
@@ -404,15 +454,20 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     token = uuid.uuid4().hex
     locks: list[str] = []
     mine = {"pid": os.getpid(), "process_created": process_identity(os.getpid()), "token": token}
-    if structured:
+    if structured and not native_session:
         locks, owned_by_other = _take_locks(project, tools, mine)
         if owned_by_other is not None:
             _release_locks(project, locks, mine)
             return {"state": "ALREADY_WATCHING", "tool": owned_by_other}
     seen = set() if structured else set(box.list_inbox())
     deadline = clock() + timeout_s
+    next_stall_scan = deadline - timeout_s  # the first scan runs at once; no extra clock read (U117 test counts them)
     try:
         while True:
+            if native_session:
+                from .continuity import _desk_matches
+                if not _desk_matches(Path(project), native_session):
+                    return None
             _beat(project, tools, token, interval_s, clock(), wakes_session)
             # U94-R1: decide on the name first and read a letter's file only when its id is new to this watch.
             for message_id in box.list_inbox():
@@ -437,6 +492,8 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                     continue  # claimed meanwhile, or not readable yet: the next scan looks again, as peek() did
                 seen.add(message_id)
                 payload = data.get("payload")
+                if native_session and not _native_eligible(Path(project), message_id, payload, native_session, clock()):
+                    continue
                 if _addressed(payload, tools):
                     body = payload if isinstance(payload, dict) else {}
                     found = {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),
@@ -452,10 +509,20 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                             cls = "ACTIONABLE"
                     if cls != "ACTIONABLE":
                         continue  # NOTICE, INVALID and LEGACY never wake; the hook shows them at zero tokens
-                    if claim_wake(project, target, message_id, letter_digest(message_id, body),
+                    digest = letter_digest(message_id, body)
+                    if native_session:
+                        if acked_wake_path(project, target, digest).is_file():
+                            continue
+                        digest = hashlib.sha256(f'native:{native_session}:{digest}'.encode()).hexdigest()
+                    if claim_wake(project, target, message_id, digest,
                                   clock=clock) == "CLAIMED":
                         return {**found, "wake_class": cls}
-            if structured and wakes_session:
+            if structured and not native_session and clock() >= next_stall_scan:
+                next_stall_scan = clock() + STALL_SCAN_S
+                stalled = _stalled_wait(Path(project), tools, clock)
+                if stalled is not None:
+                    return stalled
+            if structured and wakes_session and not native_session:
                 sched_wake = _schedule_ready_wake(Path(project), tools, clock)
                 if sched_wake is not None:
                     return sched_wake

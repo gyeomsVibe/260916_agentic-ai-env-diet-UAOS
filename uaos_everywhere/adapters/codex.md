@@ -1,8 +1,8 @@
 ## Codex 역할 어댑터
 
-- UAOS-RSI 역할: 지휘자이자 최종 독립 판정자. 구현은 Ollama(`worker: local`) → Antigravity → Claude Code → `worker: apply`(U98-D) 순서로 맡기고, 계획은 `uaos card new` 틀로 연다(U130).
+- UAOS-RSI 역할: 지휘자이자 핵심 아키텍처·보안·불변식 최종 판정자(U257: $20 Plus 구독으로 아스트라 모델을 지속 운용하기 위해 진짜 Codex만 할 수 있는 핵심 키포인트에만 역량을 집중하고, 일반 업무 승인은 Claude Code↔Antigravity 교차 승인으로 위임하되 결과물의 최상 품질 기준을 절대 불변식으로 유지한다). 구현은 Ollama(`worker: local`) → Antigravity → Claude Code → `worker: apply`(U98-D) 순서로 맡기고, 계획은 `uaos card new` 틀로 연다(U130).
 - UAOS-RSI 예산: 가장 부족한 유료 한도라 계획과 판정에만 쓴다. 부족하면 동시성·보안·전역 규칙 변경의 판정에만 코드만 담은 패킷으로 쓴다(판정 1회 36~46k 토큰, 2026-09-29 실측).
 - Codex가 ACTIVE면 단일 계획·작업 순서·최종 판정을 소유한다. LIMITED/ABSENT 뒤 복귀하면 `uaos coord inbox`와 복귀 체크리스트를 재검토한 뒤 지휘를 재개한다.
 - 사용자에게 넘기는 일(`남은 일`)은 Safety의 사람 전용 목록(데이터 삭제·원격 push·배포·공개 게시·지출·계정·자격 증명·권한·시스템 설정)뿐이다. 그 밖의 일은 승인 없이 직접 끝내거나 작업자에게 맡긴다: 다른 도구나 사용자가 남긴 미커밋 변경이 정본 규칙과 충돌하면 `.work/backup_<날짜>/`에 복사한 뒤 되돌리고 `근거`에 적는다(U121, 2026-10-01 사용자 지시). 논스톱 연쇄(U146): 턴을 끝내기 전에 `uaos coord next --tool codex --claim`을 실행한다. NEXT면 계속하고, HANDOFF면 `coord deliver`로 넘긴다. 자동 관문(U146-B): 전역 `~/.codex/hooks.json`의 Stop 훅 `uaos coord stop-gate --tool codex --from-hook`이 내 몫 NEXT가 있으면 턴 종료를 한 번 `block`한다(LIMITED면 붙잡지 않는다).
 - Antigravity에 보낸 실제 변화 편지는 U120 자동 응답(헤드리스 한 턴, 실측 25,017토큰)이 답을 발신자 우편함으로 돌려준다. 실패·하루 상한·끄기(`UAOS_AGY_AUTO=0`)면 결과가 `UNREAD`이니 판정·실행은 `pilot review --reviewer agy`(또는 `pilot run --worker agy`)로 사람 없이 돌린다.
-- 작성자 보고가 아니라 diff·고정 인수·장부·원격 SHA로 승인한다. 병합·대기(U166): Codex는 2순위 병합자다. `uaos coord merge`가 Antigravity 실패 뒤 `codex exec`(workspace-write + 네트워크)로 `gh pr merge --match-head-commit` 한 줄을 맡긴다. 훅의 `ADOPTED`·`REROUTED` 줄이 Codex를 지목하면 같은 턴에 맡는다(`WAIT IS FAILURE` 줄은 제안이다).
+- 작성자 보고가 아니라 diff·고정 인수·장부·원격 SHA로 승인한다. 병합·대기(U166): Codex는 2순위 병합자다. `uaos coord merge`가 Antigravity 실패 뒤 `codex exec`(workspace-write + 네트워크)로 `gh pr merge --match-head-commit` 한 줄을 맡긴다. 훅의 `ADOPTED`·`REROUTED` 줄이 Codex를 지목하면 같은 턴에 맡는다(`WAIT IS FAILURE` 줄은 제안이다). 하루 브리핑(U213): UAOS 프로젝트에서 세션이 시작되면 훅이 `[UAOS-RSI 브리핑]` 4줄(버전·최근 병합, 일정 진행·막힘, 도구 출석, 다음 단계)을 0토큰으로 계산해 사용자 화면(`systemMessage`)에 한 번 띄운다. 사용자가 진행상황·버전·다음 계획을 물으면 `uaos coord today`를 실행해 그 4줄을 답 첫머리에 그대로 싣는다.

@@ -64,8 +64,10 @@ class ReminderPrefixTest(unittest.TestCase):
                 input=json.dumps(event).encode("utf-8"), capture_output=True, env=env, cwd=str(ROOT), timeout=60)
             out = run.stdout.decode("utf-8", "replace")
             self.assertEqual(run.returncode, 0, run.stderr.decode("utf-8", "replace"))
-            self.assertIn("set_session_title", out)
-            self.assertRegex(out, r"\[사용자 대화창구-\d{6}-1\]")
+            hook = json.loads(out)["hookSpecificOutput"]
+            self.assertEqual("UserPromptSubmit", hook["hookEventName"])
+            self.assertRegex(hook["sessionTitle"], r"\[\d{6}-1\]")
+            self.assertNotIn("set_session_title", out)  # obsolete model instruction must not be emitted
             record = json.loads((project / ".coord" / "presence" / "user_windows.json").read_text(encoding="utf-8"))
             self.assertEqual(record["claude"][0]["thread"], SESSION)
             desk = json.loads((project / ".coord" / "presence" / "user_desk_claude.json").read_text(encoding="utf-8"))

@@ -15,25 +15,71 @@ import sys
 GATED_PREFIX = "v7_harness/"
 LOCAL_AUTHORS = frozenset({"ollama", "local", "cascade"})  # U123: the free Ollama routes that must write the fix first
 REVIEWERS = ("agy", "codex")  # U123: independent reviewers; the conductor and the author never approve alone
+JUDGE_TOOL_NAMES = {"agy": "antigravity", "codex": "codex"}  # U200: same map as judge.JUDGE_TOOL (author names)
 FAILED_OUTCOMES = frozenset({"FAIL", "FAILED", "BLOCKED", "UNUSABLE", "REWORK", "REJECTED"})  # same set as delegation.py
 AUDIT_RE = re.compile(r"^Audit:\s*(relay_[0-9a-f]+)\s*$", re.MULTILINE)  # U123: the Antigravity audit reply id
 # U130 (agy audit relay_92fa8200): new runtime code under these prefixes needs a card whose `card audit` passes.
 CARD_GATED = ("v7_harness/", "uaos_everywhere/")
+NATIVE_JUDGES = {"agy": "agy", "antigravity": "agy", "codex": "codex"}  # U212: judge name -> reviewer key
 
 
-def _review_ok(task_dir: Path, bundle_id, ledger_rows) -> bool:
+def _native_records(reviews_dir, task_dir: Path) -> list:
+    """U212: native judge verdicts under the project's .coord/reviews/ for this run. Each must name this task,
+    start with APPROVE or PASS, come from an independent judge, record the run's real author (the `worker` file)
+    and match the run's identity.json hashes; a run without identity.json or worker file gets none (fail closed)."""
+    if reviews_dir is None or not Path(reviews_dir).is_dir():
+        return []
+    try:
+        identity = json.loads((task_dir / "identity.json").read_text(encoding="utf-8"))
+        author = (task_dir / "worker").read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return []
+    if not isinstance(identity, dict) or not author:
+        return []
+    found = []
+    for path in sorted(Path(reviews_dir).glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict) or record.get("task") != task_dir.name:
+            continue
+        reviewer = NATIVE_JUDGES.get(str(record.get("judge")))
+        if reviewer is None or not str(record.get("verdict") or "").startswith(("APPROVE", "PASS")):
+            continue
+        if record.get("independent") is False or record.get("author_worker") != author:
+            continue
+        if record.get("bundle_id") != identity.get("bundle_id"):
+            continue
+        if "source_hash" in record and record.get("source_hash") != identity.get("source_hash"):
+            continue
+        found.append((reviewer, record))
+    return found
+
+
+def _review_ok(task_dir: Path, bundle_id, ledger_rows, reviews_dir=None) -> bool:
     """U123: PASS by an independent reviewer for this exact bundle; a non-Ollama author also needs a failed Ollama
     run of the same card that really called the model (U122-F1: PROMPT_TOO_LARGE had input_tokens 0)."""
     card = task_dir.name.split("-")[0]
-    for reviewer in REVIEWERS:
+    # U200: a binding `pilot judge` APPROVE (judge_<reviewer>.json) on the same bundle counts like a review PASS.
+    receipts = [(reviewer, name, passing) for reviewer in REVIEWERS
+                for name, passing in ((f"review_{reviewer}.json", "PASS"), (f"judge_{reviewer}.json", "APPROVE"))]
+    records = []
+    for reviewer, name, passing in receipts:
         try:
-            record = json.loads((task_dir / f"review_{reviewer}.json").read_text(encoding="utf-8"))
+            record = json.loads((task_dir / name).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if not isinstance(record, dict) or record.get("verdict") != "PASS":
+        if isinstance(record, dict) and record.get("verdict") == passing:
+            records.append((reviewer, record))
+    records += _native_records(reviews_dir, task_dir)  # U212: native judge verdicts count under the same checks
+    for reviewer, record in records:
+        if record.get("error"):
             continue
         if not isinstance(bundle_id, str) or not bundle_id or record.get("bundle_id") != bundle_id:
             continue
+        if record.get("author_worker") in (reviewer, JUDGE_TOOL_NAMES.get(reviewer)):
+            continue  # the author never approves its own bundle
         if record.get("author_worker") in LOCAL_AUTHORS:
             return True
         for row in ledger_rows:
@@ -48,7 +94,7 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
-def applied_digests(pilot_dir: Path, ledger_rows=()) -> dict[str, set[str]]:
+def applied_digests(pilot_dir: Path, ledger_rows=(), reviews_dir=None) -> dict[str, set[str]]:
     pilot_dir = Path(pilot_dir)
     result: dict[str, set[str]] = {}
     runs_dir = pilot_dir / "runs"
@@ -67,7 +113,7 @@ def applied_digests(pilot_dir: Path, ledger_rows=()) -> dict[str, set[str]]:
             continue
         if not isinstance(summary, dict) or summary.get("promotion") != "APPLIED":
             continue
-        if not _review_ok(task_dir, summary.get("bundle_id"), ledger_rows):
+        if not _review_ok(task_dir, summary.get("bundle_id"), ledger_rows, reviews_dir):
             continue
         changed = summary.get("changed_files")
         if not isinstance(changed, list):
@@ -100,11 +146,11 @@ def parent_digests(paths: list[str]) -> dict[str, set[str]]:
 
 
 def check(staged: dict[str, bytes], message: str, pilot_dir: Path | list[Path],
-          parents: dict[str, set[str]] | None = None, ledger_rows=None) -> list[str]:
+          parents: dict[str, set[str]] | None = None, ledger_rows=None, reviews_dir=None) -> list[str]:
     # U123: the Calculator-Exempt line no longer skips this check; it let code bypass the audit/Ollama/review order.
     digests: dict[str, set[str]] = {path: set(found) for path, found in (parents or {}).items()}
     for directory in pilot_dir if isinstance(pilot_dir, list) else [pilot_dir]:
-        for path, found in applied_digests(directory, ledger_rows or []).items():
+        for path, found in applied_digests(directory, ledger_rows or [], reviews_dir).items():
             digests.setdefault(path, set()).update(found)
     violations: list[str] = []
     for path, content in staged.items():
@@ -133,7 +179,22 @@ def audit_errors(message: str, gated_paths: list[str], agy_auto_path: Path) -> l
             continue
         if isinstance(row, dict) and row.get("state") == "ANSWERED" and row.get("reply_id") == match.group(1):
             return []
+    if _native_agy_pass(Path(agy_auto_path).parent.parent, match.group(1)):
+        return []
     return [f"AUDIT_FIRST: {match.group(1)} is not an answered Antigravity reply"]
+
+
+def _native_agy_pass(mailbox: Path, message_id: str) -> bool:
+    # U235: a native Antigravity session's PASS verdict letter counts; reading only the auto-responder ledger deadlocked both tools.
+    for folder in ("ack", "inbox"):
+        try:
+            letter = json.loads((mailbox / folder / f"{message_id}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        payload = letter.get("payload") if isinstance(letter, dict) else None
+        if isinstance(payload, dict) and payload.get("actor") == "antigravity" and payload.get("verdict") == "PASS":
+            return True
+    return False
 
 
 def _current_branch() -> str:
@@ -204,7 +265,7 @@ def main(argv=None) -> int:
     except OSError:
         pass
     parents = parent_digests(list(staged))
-    violations = check(staged, message, pilot_dirs, parents, ledger_rows=rows)
+    violations = check(staged, message, pilot_dirs, parents, ledger_rows=rows, reviews_dir=desk / ".coord" / "reviews")
     new_code = [p for p, body in staged.items() if _digest(body) not in parents.get(p, set())]
     violations += audit_errors(message, new_code, desk / ".coord" / "mailbox" / "delivery" / "agy_auto.jsonl")
     card_paths = [p for p in staged_paths if p.endswith(".py") and p.startswith(CARD_GATED)]

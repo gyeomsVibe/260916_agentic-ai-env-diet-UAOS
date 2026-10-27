@@ -112,26 +112,19 @@ REPEAT_LIMIT = 8  # U109: one line this many times in a row is a loop (U109-S wr
 
 
 def _generate(model: str, prompt: str, timeout_s: int, *, fmt: dict | None = None, seed: int | None = None) -> tuple[str, dict[str, int]]:
-    """`fmt` is an Ollama structured-output JSON schema: the model can only emit JSON of that shape."""
-    request_body: dict = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "keep_alive": KEEP_ALIVE,
-        # 낮은 온도. 이 작업자는 창작이 아니라 지시받은 줄을 그대로 옮기는 손이다.
-        "options": {"temperature": 0.1, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "seed": SEED if seed is None else seed},
-    }
-    if fmt is not None:
-        request_body["format"] = fmt
-    payload = json.dumps(request_body).encode("utf-8")
-    request = urllib.request.Request(API, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout_s) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    usage = {
-        "input_tokens": int(body.get("prompt_eval_count") or 0),
-        "output_tokens": int(body.get("eval_count") or 0),
-    }
-    return str(body.get("response") or ""), usage
+    import hashlib
+    from v7_harness.invocation import tracked_call
+    from v7_harness.olla import _caller
+    caller = os.environ.get("UAOS_CALLER") or _caller()
+    with tracked_call(caller=caller, project=str(Path.cwd()),
+                      work_id=os.environ.get("UAOS_WORK_ID", "UNSCOPED"),
+                      purpose=os.environ.get("UAOS_PURPOSE", "local_generate"), model=model,
+                      input_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                      db=os.environ.get("UAOS_INVOCATION_DB")) as receipt:
+        text, usage = _generate_raw(model, prompt, timeout_s, fmt=fmt, seed=seed)
+        receipt.update(outcome="SUCCEEDED", error_class=None, input_tokens=usage.get("input_tokens"),
+                       output_tokens=usage.get("output_tokens"), provider="ollama")
+    return text, {key: int(value or 0) for key, value in usage.items()}
 
 
 def _target(workspace: Path, raw: str) -> tuple[str, Path]:
@@ -390,7 +383,7 @@ def fit_prompt(task: str, named: list[tuple[str, str]], limit: int) -> tuple[str
     lines = sum(len(found) for found in literals.values())
     return rules, prompt, estimated, (f"PROMPT_TOO_LARGE: ~{estimated} tokens > {limit}; no cut fits ({len(anchors)} "
                                       f"backticked names, {lines} SEARCH lines): name the functions to edit in "
-                                      "backticks, or dictate ===EDIT blocks"), None
+                                      "backticks, or re-cut into one-function slices of about 20 lines (U198)"), None
 
 
 def preflight(task: str, workspace: Path) -> str:
@@ -613,6 +606,29 @@ def _try_apply(text: str, workspace: Path, task: str) -> tuple[list[str], str]:
     except ValueError as exc:
         return [], str(exc)
     return (written, "") if written else ([], "no file written")
+
+
+
+
+def _generate_raw(model: str, prompt: str, timeout_s: int, *, fmt: dict | None = None, seed: int | None = None) -> tuple[str, dict[str, int | None]]:
+    """`fmt` is an Ollama structured-output JSON schema: the model can only emit JSON of that shape."""
+    from v7_harness.invocation import _integer
+    request_body: dict = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": KEEP_ALIVE,
+        # 낮은 온도. 이 작업자는 창작이 아니라 지시받은 줄을 그대로 옮기는 손이다.
+        "options": {"temperature": 0.1, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "seed": SEED if seed is None else seed},
+    }
+    if fmt is not None:
+        request_body["format"] = fmt
+    payload = json.dumps(request_body).encode("utf-8")
+    request = urllib.request.Request(API, data=payload, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout_s) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    usage = {"input_tokens": _integer(body.get("prompt_eval_count")), "output_tokens": _integer(body.get("eval_count"))}
+    return str(body.get("response") or ""), usage
 
 
 if __name__ == "__main__":

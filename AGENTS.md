@@ -1,6 +1,6 @@
 # Unified Codex–Antigravity Execution
 
-이 프로젝트의 모든 작업은 [`docs/19_unified-agent-orchestration-design.md`](docs/19_unified-agent-orchestration-design.md)를 단일 원본으로 따른다.
+이 프로젝트의 모든 작업은 [`docs/01_unified-agent-orchestration-design.md`](docs/01_unified-agent-orchestration-design.md)를 단일 원본으로 따른다.
 
 ## 고정 규칙
 
@@ -17,16 +17,16 @@
 - 사용자가 해야 할 일이 없으면 질문하지 않고 다음 `READY` 단계를 자동 진행한다. 목표·범위 변경과 명시적 승인 대상만 사용자에게 묻는다.
 - 삭제, 덮어쓰기, 배포, 푸시, 결제, 계정·권한·자격증명 변경은 사용자에게 그 행동별 명시적 승인을 받는다.
 - 구현·수정 작업은 Antigravity에 SQLite 경로로 위임한다: `python -m v7_harness.cli pilot run --task <ID> --source <dir> --prompt-file <md> --accept-cmd "<인수 테스트>" --work-dir .coord/pilot`
-- **계약 매뉴얼 위임(U34, 2026-09-25)**: Ollama·Antigravity 위임은 `pilot manual new`로 만든 ```contract 매뉴얼을 `pilot manual lint`로 통과시킨 뒤 `pilot run --manual <파일>`로 한다. 허용 범위 밖 변경·요청 밖 삭제·문법 오류는 자동 거부되고, 승인은 계약의 판정자만 한다. 코드는 명세로 Ollama·agy에 먼저; apply는 20줄 이하나 `apply_after`만(U98-D). 세부: `docs/46_standard-process-and-worker-harness.md`.
+- **계약 매뉴얼 위임(U34, 2026-09-25)**: Ollama·Antigravity 위임은 `pilot manual new`로 만든 ```contract 매뉴얼을 `pilot manual lint`로 통과시킨 뒤 `pilot run --manual <파일>`로 한다. 허용 범위 밖 변경·요청 밖 삭제·문법 오류는 자동 거부되고, 승인은 계약의 판정자만 한다. 코드는 명세로 Ollama·agy에 먼저; apply는 20줄 이하나 `apply_after`만(U98-D). 세부: `docs/37`.
 - **출석·음성사서함(U32b)**: 세션 시작: `python -m v7_harness.cli coord presence --tool <codex|claude|antigravity> --state ACTIVE`. `coord inbox` 읽고 처리 후 `coord ack --id <ID>`. 대기 중 `coord watch --target <자기 도구>` 백그라운드 실행(U57,0토큰; 새 편지 exit 0/시간초과 exit 3), 발신은 `coord deliver`. 사용자에게 전달·복사·승인 요청 금지.
 - 작업자는 `--worker agy`(원격, 계정 한도 소모)와 `--worker local`(이 PC의 Ollama)이다. 바꿀 내용을 프롬프트에 구체적으로 적을 수 있으면 `local`(기본 `qwen2.5-coder:7b`), 판단·설계·탐색은 `agy`다. 근거는 `docs/16` 벤치 v2: 갈린 축은 파일 크기가 아니라 지시의 모호함이었다. 원격이 `QUOTA`면 `local`로 1회 재시도하고 기록한다. 판정은 어느 쪽이든 같은 인수 게이트가 한다.
-- **계산기 원칙(U30; 사용자 2026-09-23)**: Ollama 유료 토큰0, 로컬 시간·전력 소모. 결정적 도구 먼저; 기계 구현: 고정 인수·제한 매뉴얼로 `pilot run --worker local`. 모호한 설계: 지휘자 구체화/예산 판단 후 Antigravity. `--worker auto` 원격 자동 승격 금지; 로컬 실패는 원격 재시도 자동 허가 아님. `.githooks/commit-msg`는 APPLIED pilot 결과가 아닌 `v7_harness/*.py` 변경을 막는다. 예외: 커밋 메시지 `Calculator-Exempt: <이유>` 줄뿐(`docs/19_unified-agent-orchestration-design.md` §16).
-- **올라마 = 생각 없는 전자계산기·3대 도구의 토큰절약도구(사용자 지정, 2026-09-23·24; U30 보정)**: 올라마는 스스로 계획·판정·승인하지 않는다. 지휘자는 구체성 80점 이상의 작업명령서(`docs/32_ollama_working_manual.md`)를 입력 해시·출력 형식·허용 경로·원문 인용·고정 인수와 함께 준다. 지킬 것은 넷이다.
+- **계산기 원칙(U30; 사용자 2026-09-23)**: Ollama 유료 토큰0, 로컬 시간·전력 소모. 결정적 도구 먼저; 기계 구현: 고정 인수·제한 매뉴얼로 `pilot run --worker local`. 모호한 설계: 지휘자 구체화/예산 판단 후 Antigravity. `--worker auto` 원격 자동 승격 금지; 로컬 실패는 원격 재시도 자동 허가 아님. `.githooks/commit-msg`는 APPLIED pilot 결과가 아닌 `v7_harness/*.py` 변경을 막는다. 예외: 커밋 메시지 `Calculator-Exempt: <이유>` 줄뿐(`docs/01` §16).
+- **올라마 = 생각 없는 전자계산기·3대 도구의 토큰절약도구(사용자 지정, 2026-09-23·24; U30 보정)**: 올라마는 스스로 계획·판정·승인하지 않는다. 지휘자는 구체성 80점 이상의 작업명령서(`docs/24`)를 입력 해시·출력 형식·허용 경로·원문 인용·고정 인수와 함께 준다. 지킬 것은 넷이다.
   - (1) 판정은 결정론적 인수 테스트와 원문 대조만 한다.
   - (2) 결정적 추출이 더 싸면 모델을 부르지 않는다. 좁은 요약·변환·반복 편집은 Ollama를 먼저 쓴다.
   - (3) 독립 검증 전에는 반영하지 않는다. 같은 원인으로 2회 실패하면 경로를 바꾼다.
   - (4) 세 도구 모두 호출 비용과 검증 비용을 비교하고 실패까지 기록한다. 무조건 부르거나 비용을 0원으로 단정하는 것도 결함이다.
-- **Ollama 유선 전화기(사용자 2026-09-24)**: 필요 시 지휘자가 걸어 즉시 받으며 통화료0원. 부재 메시지는 `.coord/mailbox/` 음성사서함에 보존(`docs/23`·`docs/32_ollama_working_manual.md`). Sentinel은 상태·잠금·로그를0원 감시하고 P1/사용자 승인 대상에만 지휘자를1회 깨운다. 세 도구의 유료 LLM 주기 폴링(cron)은 영구 금지.
+- **Ollama 유선 전화기(사용자 2026-09-24)**: 필요 시 지휘자가 걸어 즉시 받으며 통화료0원. 부재 메시지는 `.coord/mailbox/` 음성사서함에 보존(`docs/23`·`docs/24`). Sentinel은 상태·잠금·로그를0원 감시하고 P1/사용자 승인 대상에만 지휘자를1회 깨운다. 세 도구의 유료 LLM 주기 폴링(cron)은 영구 금지.
 - **Codex 활성 대화창 실시간 편입(U15 정본, 사용자 지정, 2026-09-24)**: 실시간 전달은 `coord notify`/`codex queue` 하나로 고정한다. Antigravity·Claude Code의 보고는 활성 대화창(`resolve_thread`)에 `[안티그래비티에서 온 대화]`·`[클로드에게서 온 대화]` 표식을 달고 배달된다. SQLite나 세션을 직접 생성하는 방식은 실시간 통신에 쓰지 않는다(`docs/tasks/U15-coordination-stream.md`).
 - **Codex 부재 중 대화창 발송 금지(사용자 강력 지정, 2026-09-24)**: Codex가 `LIMITED`·`ABSENT`이면 `codex queue`·`coord notify` 발송은 예외 없이 `CODEX_ABSENT`로 거부된다. 이때 작업 상황은 우편함(`.coord/mailbox/`)과 브리핑 파일에만 남긴다.
 
@@ -58,22 +58,21 @@
 
 ## 토큰예산 영구 운영 규칙 (U25, 2026-09-24)
 
-- 사용자 창구: 결과를 짧고 읽기 쉽게 보고; [학습 가이드](docs/26_UAOS_처음부터_이해하고_사용하는_학습가이드.md)는 과정·진단·한계를 충분히 설명한다. [4도구 운영 규칙](docs/25_AI_4도구_아이디어_조사와_위임전_매뉴얼_운영규칙.md)에 따라 출처 조사·실행 계약을 구체화하고 Antigravity·Ollama 호출 전 매뉴얼 파일을 발행해 실제 입력으로 전달.
+- 사용자 창구: 결과를 짧고 읽기 쉽게 보고; [학습 가이드](docs/UAOS_처음부터_이해하고_사용하는_학습가이드.md)는 과정·진단·한계를 충분히 설명한다. [4도구 운영 규칙](docs/AI_4도구_아이디어_조사와_위임전_매뉴얼_운영규칙.md)에 따라 출처 조사·실행 계약을 구체화하고 Antigravity·Ollama 호출 전 매뉴얼 파일을 발행해 실제 입력으로 전달.
 
-- 모든 작업은 `docs/35_token-budget-routing-policy.md`의 **계정별 전후 사용량·예측·판정 예약량·품질 관문**을 따른다. 실제 절감은 대조 측정 전 `UNMEASURED`다. Codex·Claude의 남은 퍼센트를 토큰 수로 환산하거나 오래된 3%/6% 기록을 재사용하지 않는다.
+- 모든 작업은 `docs/27_token-budget-routing-policy.md`의 **계정별 전후 사용량·예측·판정 예약량·품질 관문**을 따른다. 실제 절감은 대조 측정 전 `UNMEASURED`다. Codex·Claude의 남은 퍼센트를 토큰 수로 환산하거나 오래된 3%/6% 기록을 재사용하지 않는다.
 - 잔여율이 낮다는 이유만으로 Antigravity에 총괄을 넘기지 않는다. Codex가 부족하면 Claude 부지휘자에게 한 번 인계하고, 두 도구 모두 실제 제한·부재일 때만 기존 임시 Antigravity 대행 규칙을 발동한다. 작성자는 자기 변경의 유일한 검증자가 될 수 없다.
-- Codex·Claude·Antigravity는 좁고 기계적인 일을 Ollama 전화기로 우선 보내고, 호출자·로컬 토큰·벽시계·인수 결과를 같은 작업 ID로 남긴다. Ollama에게 설계·판정·승인을 맡기지 않는다. 세부 절차는 `docs/36_claude-budget-manual.md`, `docs/37_antigravity-budget-manual.md`, `docs/38_ollama-calculator-manual.md`를 따른다.
+- Codex·Claude·Antigravity는 좁고 기계적인 일을 Ollama 전화기로 우선 보내고, 호출자·로컬 토큰·벽시계·인수 결과를 같은 작업 ID로 남긴다. Ollama에게 설계·판정·승인을 맡기지 않는다. 세부 절차는 `docs/28_claude-budget-manual.md`, `docs/29_antigravity-budget-manual.md`, `docs/30_ollama-calculator-manual.md`를 따른다.
 - U23의 우편함 무손실·감시관 1회 기상 주장은 독립 반례가 해결될 때까지 인수 보류다. 새 정책은 U23의 전달 보증을 전제로 작동하지 않는다.
 
 ## 증거 관문형 RSI 및 사용량 장부 (U26, 2026-09-24)
 
-- `docs/39_evidence-gated-rsi-for-uaos.md`의 관찰→가설→고정 인수→작은 후보→대조→독립 판정 순서를 따른다. 자기 평가만으로 자기 규칙·코드·테스트를 승격하지 않는다.
+- `docs/31_evidence-gated-rsi-for-uaos.md`의 관찰→가설→고정 인수→작은 후보→대조→독립 판정 순서를 따른다. 자기 평가만으로 자기 규칙·코드·테스트를 승격하지 않는다.
 - Codex·Claude·Antigravity는 각 작업의 Ollama/원격 호출 사용량과 실패도 같은 `work_id`로 `.coord/usage/runs.jsonl`에 남긴다. 확인되지 않은 값은 `UNKNOWN`/`null`로 둔다. 원문 프롬프트·비밀은 남기지 않는다. pilot의 원본 감시 중에는 장부에 쓰지 않는다.
-- **RSI 명령(U36, B83 개정 2026-09-25)**: `rsi report`→`rsi propose`→시험→`rsi gate --candidate`(참고 증거). `rsi adopt`·`rsi rollback`은 항상 거부하고 아무것도 쓰지 않는다(`UNAUTHENTICATED_ACTOR`, 같은 계정의 이름표는 인증이 아님). 채택·되돌리기는 PLAN 카드와 검토된 커밋으로만. 관문은 장부로 전후를 다시 계산하고 평가기·장부 변경·자기 검증·기준 완화·다중 지표 회귀를 거부한다. 세부 docs/47_rsi-self-improvement-blind-spots-and-evidence-gate.md.
-- **Claude Code 정식 작업자(U38)**: `worker: claude` 매뉴얼은 `remote_budget_tokens`와 codex·user 판정자가 필수다. 모든 유료 작업자(agy·claude)는 예산 초과·미보고 시 BLOCKED이고 승인할 수 없다(B85). `pilot review --reviewer claude`는 참고 증거일 뿐 승인을 대신하지 않는다. 세부 docs/49_claude-code-in-the-uaos-pipeline-design.md.
-- **전 프로젝트 가동(U37)**: `python uaos_everywhere/install_uaos_everywhere.py --apply`가 세 도구 전역 규칙 문단·출석 훅·Claude 예약 도구 차단을 설치한다(미리보기 기본, 백업, `--check`, `--uninstall`). 새 프로젝트는 `coord init`. 세부 docs/48_uaos-everywhere-global-deployment-and-b77.md.
+- **RSI 명령(U36, B83 개정 2026-09-25)**: `rsi report`→`rsi propose`→시험→`rsi gate --candidate`(참고 증거). `rsi adopt`·`rsi rollback`은 항상 거부하고 아무것도 쓰지 않는다(`UNAUTHENTICATED_ACTOR`, 같은 계정의 이름표는 인증이 아님). 채택·되돌리기는 PLAN 카드와 검토된 커밋으로만. 관문은 장부로 전후를 다시 계산하고 평가기·장부 변경·자기 검증·기준 완화·다중 지표 회귀를 거부한다. 세부 docs/38.
+- **Claude Code 정식 작업자(U38)**: `worker: claude` 매뉴얼은 `remote_budget_tokens`와 codex·user 판정자가 필수다. 모든 유료 작업자(agy·claude)는 예산 초과·미보고 시 BLOCKED이고 승인할 수 없다(B85). `pilot review --reviewer claude`는 참고 증거일 뿐 승인을 대신하지 않는다. 세부 docs/40.
+- **전 프로젝트 가동(U37)**: `python uaos_everywhere/install_uaos_everywhere.py --apply`가 세 도구 전역 규칙 문단·출석 훅·Claude 예약 도구 차단을 설치한다(미리보기 기본, 백업, `--check`, `--uninstall`). 새 프로젝트는 `coord init`. 세부 docs/39.
 - **복귀 시 권한대행 인계 확인**: 한도·부재 후 다시 구동된 도구(Codex·Claude Code)는 구동과 동시에 `coord inbox`로 권한대행(Antigravity)의 인계 통지를 확인하고, `.coord/tasks/NEXT_MORNING_RESUME.md` 및 `.coord/codex_return_checklist.md`에 명시된 대행 구축 프로세스·프로젝트 검증 목록을 확인한 뒤 지휘·조율을 정상 재개한다.
 - 사용 기록은 개선 제안의 입력일 뿐 승인·판정 권한이 아니다. 10개 유효 표본마다 품질·재작업·토큰·시간을 비교하고, P1·품질 저하·3배 비용 회귀면 개선안을 채택하지 않는다. 자동 수집은 U27 검증 전까지 미구현이다.
 - U121: user gets only the Safety human list; do the rest unasked; copy to .work/backup_<date>/, then revert canon-conflicting edits.
-- 보고에는 기사, 깃허브 저장소 링크를 포함한 관련 근거데이터를 필수요소로 한다(사용자 지정, 2026-10-20 영구 고정). 1차 출처 링크가 없는 기획·보고·제안은 FAILED(반려) 처리한다.
-- 참조·벤치마킹 자료실 전역 규칙(U250, 2026-10-26 사용자 영구 지정): UAOS-RSI 운영체제에서 참조·분석·벤치마킹할 GitHub 샘플 및 외부 공개 저장소는 어느 도구·세션에서든 반드시 `D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library\<저장소명>` 경로에 독립 Git 프로젝트로 일괄 저장하고 `.work\library\README.md` 색인표(폴더·원본 URL·라이선스·커밋 SHA·파일 수)에 등록한다. 받은 외부 코드는 신뢰하지 않는 읽기 전용 자료로 격리(`.gitignore`의 `.work/`로 본 저장소 커밋 제외)하며, 해당 폴더 안에서 설치·빌드·스크립트 실행(`npm install`, `cargo build` 등)을 절대 수행하지 않는다.
+- **UAOS-RSI 근본 존재이유 및 Codex 아스트라 집중(U257, 2026-10-27)**: **"최대 성과를 목표로 3대 AI 도구(Antigravity, Claude Code, Codex)의 부족한 토큰예산을 절약하는 3대 AI도구 '병렬'-협업-운영시스템, 하지만 결과물의 최상의 품질기준이 근본 존재이유이다."** Codex $20 Plus 아스트라는 `CODEX_EXCLUSIVE_KEYPOINTS`에 집중하고 일반 승인은 최상 품질 관문(`author != judge`) 아래 Claude↔Antigravity가 교차 수행한다.

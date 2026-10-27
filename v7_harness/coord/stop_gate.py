@@ -29,6 +29,11 @@ MAX_BLOCKS = 1
 HOLD_DECISION = {"claude": "block", "codex": "block", "antigravity": "continue"}
 # R7: a tool whose desk says it has no budget left is not asked to start a new card.
 NO_BUDGET_STATES = ("LIMITED",)
+# U210: a letter counts as processed only once `coord ack` moves it out of the inbox. The inbox backlog that predates
+# this rule (1885 items on 2026-10-18) is not news, so only letters younger than one day hold a stop.
+LETTER_FRESH_S = 86400
+# Ids named in one hold reason; the rest are counted.
+LETTER_NAMES = 5
 
 
 def hook_session(payload: Any) -> str | None:
@@ -81,6 +86,67 @@ def progress_signature(project: Path) -> list:
     return [head, schedule_mtime, max(mtimes) if mtimes else None, len(mtimes)]
 
 
+def _foreign(root: Path, tool: str, session: str | None, body: dict) -> bool:
+    from v7_harness.coord import windows
+
+    window, card = body.get("native_receiver") or body.get("window"), body.get("card")
+    if not window and not card:
+        return False
+    if not session:
+        return False  # no session to compare: show the letter; the bound ACK guard keeps it from being erased
+    if window and window != session:
+        return True
+    if not card:
+        return False
+    try:
+        return windows.window_for(root, str(card), tool) != session
+    except (OSError, ValueError, TypeError, AttributeError):
+        return True
+
+
+def pending_letters(project: Path, tool: str, now: float | None = None, session: str | None = None) -> list[str]:
+    """U210: ids of fresh ACTIONABLE letters addressed to `tool` that are still in the inbox (not yet acked)."""
+    from v7_harness.coord import desk_delta
+
+    inbox = next_card.coord_root(Path(project)) / ".coord" / "mailbox" / "inbox"
+    moment = time.time() if now is None else now
+    found = []
+    for path in sorted(inbox.glob("*.json")) if inbox.is_dir() else []:
+        if path.name.startswith("evt_") or desk_delta.own_letter(path, tool):
+            continue
+        body = desk_delta._payload(path)
+        target = desk_delta.canonical(str(body.get("requested_target") or body.get("to") or ""))
+        try:
+            fresh = moment - path.stat().st_mtime <= LETTER_FRESH_S
+        except OSError:
+            fresh = False
+        if target == tool and body.get("wake_class") == "ACTIONABLE" and fresh and not _foreign(next_card.coord_root(Path(project)), tool, session, body):
+            found.append(path.stem)
+    return found
+
+
+def letter_hold(project: Path, tool: str, now: float | None = None, session: str | None = None) -> dict[str, Any] | None:
+    """U210: an unread letter is owed work even when the schedule names no card (relay_9f21437a receipt); each letter
+    holds once, so a letter left unacked never spins the gate."""
+    import hashlib
+
+    letters = pending_letters(project, tool, now=now, session=session)
+    scope = hashlib.sha256(session.encode("utf-8")).hexdigest()[:12] if session else "nosession"
+    guard = Path(project) / ".coord" / "presence" / f"stop_gate_{tool}_letters_{scope}.json"
+    try:
+        held = json.loads(guard.read_text(encoding="utf-8")).get("held", [])
+    except (OSError, ValueError, AttributeError):
+        held = []
+    new = [name for name in letters if name not in held]
+    if not new:
+        return None
+    _write_atomic(guard, {"held": letters})
+    more = f" (+{len(new) - LETTER_NAMES} more)" if len(new) > LETTER_NAMES else ""
+    return {"decision": HOLD_DECISION.get(tool, "block"),
+            "reason": f"Unread letter(s) for {tool}: {', '.join(new[:LETTER_NAMES])}{more}. Open each, act on it, "
+                      "deliver the result, then `coord ack --id <full id>`"}
+
+
 def _write_atomic(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
@@ -94,20 +160,12 @@ def gate(project: Path, tool: str, session: str | None = None, now: float | None
         return None  # U146a-R: no session id, no claim and no block (UNKNOWN is no ground for acting)
     from v7_harness.coord import presence
 
-    from v7_harness.coord import failover_closeout
-
-    try:
-        failover_closeout.replan_on_quota_limit(project, now=now)
-    except Exception:
-        pass
     if presence.read(project, tool, now=now).get("state") in NO_BUDGET_STATES:
         return None  # R7: no claim and no paid re-entry for a tool without budget
+    hold = letter_hold(project, tool, now=now, session=session)
+    if hold is not None:
+        return hold
     step = next_card.next_step(project, tool, claim=True, session=session, now=now)
-    if step.get("state") == "DONE":
-        try:
-            failover_closeout.finalize_schedule_closeout(project, actor_tool=tool, now=now)
-        except Exception:
-            pass
     if step.get("state") != "NEXT":
         return None
     card = step["card"]

@@ -363,7 +363,12 @@ def cmd_pilot_run(args: argparse.Namespace) -> int:
     usd_cap = str(contract.get("remote_budget_usd") or "") if contract else ""
 
     def _with_cap(command: list[str], worker: str) -> list[str]:
-        return [*command, "--max-budget-usd", usd_cap] if worker == "claude" and usd_cap else command
+        if worker != "claude":
+            return command
+        # U236a: `model_pin: exact` makes the worker fail closed unless the run used exactly the contract's model id.
+        if contract and str(contract.get("model_pin") or "") == "exact" and contract.get("model"):
+            command = [*command, "--require-model", str(contract["model"])]
+        return [*command, "--max-budget-usd", usd_cap] if usd_cap else command
 
     agy_cmd = _with_cap(agy_cmd, chosen)
 
@@ -565,6 +570,50 @@ def cmd_pilot_reconcile(args: argparse.Namespace) -> int:
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return 1
     print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+
+
+def cmd_coord_capacity(args: argparse.Namespace) -> int:
+    from .coord.capacity_planner import (
+        collect_capacity_snapshot,
+        refresh_capacity_zero_token,
+        render_compact_status_line,
+        render_html_dashboard,
+        render_terminal_dashboard,
+    )
+
+    project = Path(args.project)
+    html_out = Path(args.html) if args.html else None
+    if getattr(args, "debounce", 0.0) and float(args.debounce) > 0:
+        res = refresh_capacity_zero_token(project, min_interval_s=float(args.debounce), html_out=html_out)
+        if args.format == "head":
+            print(json.dumps(res["head"], ensure_ascii=False, separators=(",", ":")))
+            return 0
+        if args.format == "compact":
+            print(render_compact_status_line({"compact_head": res["head"]}))
+            return 0
+        if res.get("debounced"):
+            snap_file = project / ".coord" / "usage" / "capacity_snapshot.json"
+            if snap_file.is_file():
+                snap = json.loads(snap_file.read_text(encoding="utf-8"))
+            else:
+                snap = collect_capacity_snapshot(project)
+        else:
+            snap = collect_capacity_snapshot(project)
+    else:
+        snap = collect_capacity_snapshot(project)
+        if html_out:
+            render_html_dashboard(snap, html_out)
+    if args.format == "json":
+        print(json.dumps(snap, ensure_ascii=False, indent=2))
+    elif args.format == "head":
+        print(json.dumps(snap.get("compact_head"), ensure_ascii=False, separators=(",", ":")))
+    elif args.format == "compact":
+        print(render_compact_status_line(snap))
+    else:
+        print(render_terminal_dashboard(snap))
     return 0
 
 
@@ -911,10 +960,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_stall.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_stall.set_defaults(func=cmd_coord_stall)
 
-    p_coord_tp = p_coord_subs.add_parser("transplant-status", help="U251: Live status of OpenRig/ShowGN/REA transplanted modules")
-    p_coord_tp.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_tp.add_argument("--target", default="v7_harness/cli.py", help="Target path to test REA Tier-1/Tier-2 router")
-    p_coord_tp.set_defaults(func=cmd_coord_transplant_status)
+    p_coord_cap = p_coord_subs.add_parser(
+        "capacity",
+        help="U256/U265: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, compact head, and dashboard",
+    )
+    p_coord_cap.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_cap.add_argument("--format", choices=["json", "table", "head", "compact"], default="table")
+    p_coord_cap.add_argument("--debounce", type=float, default=0.0, help="Debounce interval in seconds for 0-paid-token refresh")
+    p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
+    p_coord_cap.set_defaults(func=cmd_coord_capacity)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1841,8 +1895,15 @@ def cmd_coord_presence(args: argparse.Namespace) -> int:
             if args.tool and args.state:
                 # U58: the hook payload names its session, so one session ending leaves the others at the desk.
                 # U134: a turn start clears a stale LIMITED/ABSENT lease; an ACTIVE beat sends queued letters.
+                is_turn_start = hook_turn_start(stdin_text) and not getattr(args, "post_tool", False)
                 mark(project, args.tool, args.state, ttl_s=args.ttl, session=hook_session(stdin_text),
-                     turn_start=hook_turn_start(stdin_text) and not getattr(args, "post_tool", False), dispatch=True)
+                     turn_start=is_turn_start, dispatch=True)
+                if is_turn_start:
+                    try:
+                        from .coord.capacity_planner import refresh_capacity_zero_token
+                        refresh_capacity_zero_token(project, min_interval_s=60.0)
+                    except Exception:  # noqa: BLE001
+                        pass
             presence = read_all(project)
             if say == "agy":
                 line = agy_line(project, presence, stdin_text)
@@ -2051,37 +2112,6 @@ def cmd_coord_stall(args: argparse.Namespace) -> int:
     return 1 if result.get("blocked") or result.get("error") else 0
 
 
-def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
-    """U251: Live operational check of OpenRig 3-tool seats, ShowGN 5-chip telemetry, REA 2-tier router, and .work/library."""
-    from .benchmark_logic_transplant import build_five_chip_telemetry_snapshot, select_rea_analysis_tier
-    from .coord import next_card, presence
-    from .library_store import CANONICAL_LIBRARY_ROOT, inspect_library_repo
-
-    root = next_card.coord_root(Path(args.project))
-    desk = presence.read_all(root)
-    states = {t: str((desk.get(t) or {}).get("state") or "ABSENT") for t in ("codex", "claude", "antigravity")}
-    sched_file = next_card.schedule_path(root)
-    try:
-        sched = json.loads(sched_file.read_text(encoding="utf-8"))
-        phases = sched.get("phases") or []
-    except Exception:
-        phases = []
-    telemetry = build_five_chip_telemetry_snapshot(
-        schedule_phases=phases,
-        presence_states=states,
-        changed_files=[],
-        active_watchers=["coord watch --target antigravity"],
-    )
-    rea_route = select_rea_analysis_tier(args.target)
-    libs = {}
-    for name in ("openrig", "AgentCodeGUI", "rea"):
-        p = CANONICAL_LIBRARY_ROOT / name
-        if p.is_dir():
-            libs[name] = inspect_library_repo(p)
-    print(json.dumps({"ok": True, "telemetry": telemetry, "rea_router": rea_route, "library": libs}, ensure_ascii=False))
-    return 0
-
-
 def cmd_coord_push_check(args: argparse.Namespace) -> int:
     """U146-A R2: deny-by-default push grant check."""
     from .coord.stop_gate import push_check
@@ -2126,6 +2156,7 @@ UAOS_GITIGNORE_LINES = (
     ".coord/pilot/",
     ".coord/stream/",
     ".coord/codex_brief.md",
+    ".coord/WAIT_STATUS.md",
     ".coord/mailbox/",
     ".coord/presence/",
     ".coord/usage/runs.jsonl",
@@ -2552,9 +2583,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 stream.reconfigure(encoding="utf-8")
             except (ValueError, OSError):
                 pass
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "invoke":
+        from .invocation import main as invocation_main
+        return invocation_main(arguments[1:])
+    if arguments and arguments[0] == "usage":
+        from .usage_accounting import main as usage_main
+        return usage_main(arguments[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "coord_subcommand", None) in _DESK_COMMANDS and getattr(args, "project", None):
+    if (getattr(args, "coord_subcommand", None) in _DESK_COMMANDS or getattr(args, "docs_cmd", None)) and getattr(args, "project", None):
         from .coord.hook_context import shared_desk
 
         desk = shared_desk(args.project)
@@ -2580,6 +2618,8 @@ def _add_docs_parsers(subparsers) -> None:
     p_new.add_argument("--slug", default=None, help="Custom filename slug")
     p_new.add_argument("--category", default="", help="Document category")
     p_new.add_argument("--tool", default="", help="Authoring tool name")
+    p_new.add_argument("--ext", default="md", help="File extension (md or html)")
+    p_new.add_argument("--from-file", dest="from_file", default=None, help="Copy body from existing file")
     p_new.set_defaults(func=cmd_docs_new)
     p_sync = subs.add_parser("sync", help="Synchronize docs/00_DOCUMENT_INDEX.md with all docs")
     p_sync.set_defaults(func=cmd_docs_sync)
@@ -2593,8 +2633,10 @@ def cmd_docs_new(args: argparse.Namespace) -> int:
     """Create a new auto-numbered document and register in docs/00_DOCUMENT_INDEX.md."""
     from .docs_manager import register_new_doc
     project = Path(args.project)
+    src = Path(args.from_file) if getattr(args, "from_file", None) else None
     path = register_new_doc(project, title=args.title, slug=args.slug,
-                            category=args.category, author_tool=args.tool)
+                            category=args.category, author_tool=args.tool,
+                            ext=getattr(args, "ext", "md"), source_file=src)
     rel = str(path.relative_to(project).as_posix())
     print(json.dumps({"ok": True, "created": rel, "path": str(path)}, ensure_ascii=False))
     return 0

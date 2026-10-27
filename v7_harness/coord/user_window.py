@@ -47,6 +47,12 @@ LOCK_RETRY_S = 0.02  # short sleep; claims are a few ms of file I/O
 LOCK_WAIT_S = 10.0  # a hook must not hang a session; 10 s is far beyond 8 parallel claims
 
 
+_META_BOILERPLATE = (
+    "대화창 제목", "자동변환", "출석체크", "마스터 계획 스케줄", "무승인 논스톱",
+    "승인은 구하지", "올라마 CLI", "Haiku 5.5", "티키타카 무승인",
+)
+
+
 def is_declaration(text) -> bool:
     text = typed_prompt(text)  # U176: the harness's own leading reminder is not what was typed
     if not is_human_prompt(text) or "대화창구" not in text or "[사용자 대화창구-" in text or TITLE_RE.search(text):
@@ -200,7 +206,15 @@ def rename_agy(conversation_id: str, title: str, **kwargs) -> bool:
 def _claude_sessions_root() -> Path:
     appdata = os.environ.get("APPDATA")  # Windows desktop app; macOS keeps the same folder under Application Support
     base = Path(appdata) / "Claude" if appdata else Path.home() / "Library" / "Application Support" / "Claude"
-    return base / "claude-code-sessions"
+    roaming = base / "claude-code-sessions"
+    if roaming.is_dir():
+        return roaming
+    localappdata = os.environ.get("LOCALAPPDATA")
+    if localappdata:
+        for candidate in sorted((Path(localappdata) / "Claude-Data").glob("claude_*/claude-code-sessions")):
+            if candidate.is_dir():
+                return candidate
+    return roaming
 
 
 def _claude_title(thread: str, *, root: Path | None = None, transcript=None) -> str | None:
@@ -491,18 +505,17 @@ def _claude_transcript_title(thread: str, transcript, *, tail: int = 4 << 20) ->
 
 
 def _topic_from_text(text) -> str | None:
-    """U237: a window's own sidebar topic is the first sentence of its declaration prompt that is not the declaration,
-    with URLs, paths and brackets removed, cut at a word to the topic limit. None when nothing valid remains.
-    U237E: the removal runs before the sentence split; splitting first left "com" from https://example.com and "md"
-    from C:/Work/report.md as topics."""
+    """U237/U266: a window's own sidebar topic is the first non-boilerplate sentence of its declaration prompt
+    that is not the declaration, with URLs, paths and brackets removed, cut at a word to the topic limit."""
     from .title_consensus import MAX_TOPIC_CHARS, valid_topic
     text = typed_prompt(text)
     if not isinstance(text, str):
         return None
     text = re.sub(r"https?://\S*|[A-Za-z]:[\\/]\S*|\S*[\\/]\S*|[\[\]]", " ", text)
     for sentence in re.split(r"[\n.!?。]+", text):
-        if _DECLARE_RE.search(sentence) and any(word in sentence for word in _DESIGNATION):
+        if (_DECLARE_RE.search(sentence) and any(word in sentence for word in _DESIGNATION)) or is_boilerplate_topic(sentence):
             continue
+        sentence = re.sub(r"^[\s#*>-]+", "", sentence)
         words = sentence.split()
         topic = ""
         for word in words:
@@ -510,7 +523,7 @@ def _topic_from_text(text) -> str | None:
                 break
             topic = f"{topic} {word}".strip()
         topic = topic or (words[0][:MAX_TOPIC_CHARS] if words else "")
-        if len(topic) >= 2 and valid_topic(topic):
+        if len(topic) >= 2 and valid_topic(topic) and not is_boilerplate_topic(topic):
             return topic
     return None
 
@@ -519,3 +532,10 @@ def _full_title(project: Path, entry, current: str | None) -> str | None:
     """U237: the full desired title (prefix plus this window's topic) by the native adapter's rule."""
     from .desk_title import _desired_title  # desk_title imports this module; a call-time import avoids the cycle
     return _desired_title(Path(project), entry, current) if isinstance(entry, dict) else None
+
+
+def is_boilerplate_topic(text: str | None) -> bool:
+    if not isinstance(text, str):
+        return True
+    cleaned = re.sub(r"^[\s#*>-]+", "", text).strip()
+    return not cleaned or any(w in cleaned for w in _META_BOILERPLATE) or cleaned in ("출석체크하고", "대화창 제목을 이제부터")

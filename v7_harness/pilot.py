@@ -336,11 +336,32 @@ def source_escape_paths(base: DeterministicManifest | None, source_dir: Path, ex
     return changed[:SOURCE_ESCAPE_LIST_LIMIT]
 
 
+def _abandon_orphan_summary(work_dir: Path, task_id: str) -> dict[str, Any]:
+    """U261: a failed summary with no open attempt (refused before the ledger row, e.g. SOURCE_DIVERGED) is abandoned.
+
+    Before this, reconcile answered NOTHING_TO_RECONCILE and the sentinel's NEEDS_RECONCILIATION alert never cleared.
+    """
+    from v7_harness.coord.sentinel import needs_reconciliation
+
+    summary_path = work_dir / "runs" / task_id / "summary.json"
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        summary = None
+    if not isinstance(summary, dict) or not needs_reconciliation(summary):
+        return {"state": "NOTHING_TO_RECONCILE", "reconciled_attempts": 0}
+    summary.update({"abandoned_from_error_class": summary.get("error_class"), "state": "ABANDONED",
+                    "error_class": "ABANDONED", "promotion": "BLOCKED", "acceptance_exit": None,
+                    "verdict_hint": "BLOCKED"})
+    _write_summary(summary_path, summary)
+    return {"state": "ABANDONED", "reconciled_attempts": 0}
+
+
 def reconcile_pilot(*, work_dir: Path, task_id: str) -> dict[str, Any]:
     work_dir = Path(work_dir)
     db_path = work_dir / "coord.sqlite3"
     if not db_path.exists():
-        return {"state": "NOTHING_TO_RECONCILE", "reconciled_attempts": 0}
+        return _abandon_orphan_summary(work_dir, task_id)
 
     core = BrokerCore(db_path)
     core.start()
@@ -352,7 +373,7 @@ def reconcile_pilot(*, work_dir: Path, task_id: str) -> dict[str, Any]:
             ).fetchall()
 
             if not target_attempts:
-                return {"state": "NOTHING_TO_RECONCILE", "reconciled_attempts": 0}
+                return _abandon_orphan_summary(work_dir, task_id)
 
             reconciled_count = len(target_attempts)
             for att_id, idem_key in target_attempts:
@@ -567,8 +588,6 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                         replayed_summary["error_detail"] = f"COST_GATE_NOT_WITHIN:{saved.get('cost_gate')}"
                         return replayed_summary
                     saved_bundle_id = saved.get("bundle_id")
-                    if saved.get("promotion") == "APPLIED" and config.approve_bundle_id == saved_bundle_id:
-                        return replayed_summary
                     if config.approve_bundle_id != saved_bundle_id:
                         replayed_summary["promotion"] = "APPROVAL_MISMATCH"
                         return replayed_summary
@@ -583,14 +602,26 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                         excludes=source_excludes,
                     )
                     replay_bundle = replay_workspace.create_patch_bundle()
-                    if replay_bundle.bundle_id != saved_bundle_id:
-                        replayed_summary["promotion"] = "APPROVAL_MISMATCH"
+                    # U216-R3: an applied bundle is checked against the working files, never trusted from the summary:
+                    # no diff = still applied (replay); the base again = re-apply; else SOURCE_DRIFTED, nothing written.
+                    if saved.get("promotion") == "APPLIED" and not replay_bundle.items:
                         return replayed_summary
+                    if replay_bundle.bundle_id != saved_bundle_id:
+                        # U218 (R5): a slice applied beside this one changes the tree, not this bundle's own paths.
+                        scoped, scope = _scoped_replay_bundle(runs_dir, saved_bundle_id, Path(config.source_dir), source_excludes)
+                        if scope == "APPLIED" and saved.get("promotion") == "APPLIED":
+                            return replayed_summary
+                        if scope != "APPLY":
+                            drifted = saved.get("promotion") == "APPLIED"
+                            replayed_summary["promotion"] = "SOURCE_DRIFTED" if drifted else "APPROVAL_MISMATCH"
+                            return replayed_summary
+                        else:
+                            replay_bundle = scoped
                     apply_promotion(
                         source_dir=Path(config.source_dir),
                         staging_dir=staging_dir,
                         patch_bundle=replay_bundle,
-                        approve_bundle_id=config.approve_bundle_id,
+                        approve_bundle_id=replay_bundle.bundle_id,
                         excludes=source_excludes,
                     )
                     replayed_summary["promotion"] = "APPLIED"
@@ -601,7 +632,7 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                             attempt_id=attempt_id,
                             runs_dir=runs_dir,
                             base_manifest_hash=replay_workspace.base_manifest_hash,
-                            bundle_id=replay_bundle.bundle_id,
+                            bundle_id=saved_bundle_id,
                             default_resource_id=f"res-{config.task_id}",
                         )
                     except RuntimeError as _chk_err:
@@ -735,6 +766,10 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
             bundle = workspace.create_patch_bundle()
             bundle_id = bundle.bundle_id
             changed_files = sorted(item.path for item in bundle.items)
+            try:  # U218: the bundle beside the summary, so a later approve checks only its own paths
+                (runs_dir / "bundle.json").write_text(json.dumps(bundle.to_dict(), sort_keys=True), encoding="utf-8")
+            except OSError:
+                pass
 
             try:
                 _record_checkpoint_and_identity(
@@ -1052,3 +1087,29 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
         return summary
     finally:
         core.close()
+
+
+def _scoped_replay_bundle(runs_dir: Path, saved_bundle_id: str, source_dir: Path, excludes: Any) -> tuple[PatchBundle | None, str]:
+    """U218 (R5): check only the paths the saved bundle changed, so a slice beside another applied slice applies."""
+
+    try:
+        loaded = PatchBundle.from_dict(json.loads((runs_dir / "bundle.json").read_text(encoding="utf-8")))
+        loaded.verify_integrity()
+    except (OSError, ValueError, KeyError, TypeError, IsolationError):
+        return None, "UNKNOWN"
+
+    if loaded.bundle_id != saved_bundle_id or not loaded.items:
+        return None, "UNKNOWN"
+
+    manifest = build_manifest(source_dir, excludes=excludes)
+    manifest_dict = {entry.path: entry.sha256 for entry in manifest.entries}
+
+    if all(manifest_dict.get(item.path) == item.target_sha256 for item in loaded.items):
+        return None, "APPLIED"
+
+    if any(manifest_dict.get(item.path) != item.base_sha256 for item in loaded.items):
+        return None, "DRIFTED"
+
+    from v7_harness.isolation.manifest import compute_bundle_id
+    rebased_id = compute_bundle_id(manifest.manifest_hash, loaded.target_manifest_hash, loaded.items, loaded.metadata)
+    return PatchBundle(bundle_id=rebased_id, base_manifest_hash=manifest.manifest_hash, target_manifest_hash=loaded.target_manifest_hash, items=loaded.items, metadata=loaded.metadata), "APPLY"
