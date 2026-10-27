@@ -238,9 +238,10 @@ def lint(text: str, project: Path) -> ManualReport:
     blocks = dictated_paths(text)
     if worker == "apply" and not blocks:
         report.errors.append("NO_BLOCKS_FOR_APPLY: worker apply needs ===FILE/===EDIT blocks in the manual")
-    from v7_harness.delegation import delegate_first_errors, local_first_errors
+    from v7_harness.delegation import delegate_first_errors, disjoint_parallel_errors, local_first_errors
     report.errors.extend(delegate_first_errors(text, contract, project))
     report.errors.extend(local_first_errors(contract, project))  # U106: Ollama first for code work
+    report.errors.extend(disjoint_parallel_errors(contract))  # U271: disjoint parallel & Haiku guard
     if blocks and allow:
         from v7_harness.isolation.errors import ScopeExpansionError
         from v7_harness.isolation.security import check_scope_confinement

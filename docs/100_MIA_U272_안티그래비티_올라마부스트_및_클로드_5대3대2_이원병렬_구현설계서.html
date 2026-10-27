@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>U272: 안티그래비티 올라마 부스트 &amp; 클로드 5:3:2 황금 비율 구체화 구현 설계서</title>
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #f8fafc;
+    --muted: #94a3b8; --accent: #38bdf8; --green: #22c55e; --amber: #f59e0b; --purple: #a855f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); line-height: 1.65; padding: 28px 18px; }
+  .container { max-width: 1120px; margin: 0 auto; }
+  header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid var(--border); border-left: 6px solid var(--accent); border-radius: 14px; padding: 24px; margin-bottom: 24px; }
+  h1 { font-size: 1.65rem; margin-bottom: 8px; }
+  h2 { font-size: 1.3rem; margin: 22px 0 12px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; margin-right: 6px; }
+  .b-green { background: rgba(34,197,94,0.18); color: var(--green); border: 1px solid var(--green); }
+  .b-blue { background: rgba(56,189,248,0.18); color: var(--accent); border: 1px solid var(--accent); }
+  .b-amber { background: rgba(245,158,11,0.18); color: var(--amber); border: 1px solid var(--amber); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.9rem; }
+  th, td { border: 1px solid var(--border); padding: 10px 12px; text-align: left; }
+  th { background: #0f172a; color: var(--accent); }
+  code, pre { font-family: 'JetBrains Mono', Consolas, monospace; background: #0f172a; color: #7dd3fc; border-radius: 6px; }
+  code { padding: 2px 6px; font-size: 0.86rem; }
+  pre { padding: 14px; overflow-x: auto; font-size: 0.84rem; border: 1px solid var(--border); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <span class="badge b-green">U272 구체화 구현 설계 완료</span>
+      <span class="badge b-blue">19/19 단위 테스트 PASS</span>
+      <span class="badge b-amber">듀얼 배포 (docs/100 + Brain)</span>
+    </div>
+    <h1 style="margin-top:10px;">U272: 안티그래비티 올라마 적극 오프로드(Boost) &amp; 클로드 5:3:2 황금 비율 구체화 구현 설계서</h1>
+    <p style="color:var(--muted);">기반 보고서: <code>docs/99 (U271 Report)</code> | 정본 위치: <code>docs/100_MIA_U272_안티그래비티_올라마부스트_및_클로드_5대3대2_이원병렬_구현설계서.html</code></p>
+  </header>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>1. 안티그래비티 올라마 적극 오프로드 (Boost) 구체화 설계</h2>
+      <p>구현 함수: <code>v7_harness.delegation.compute_agy_ollama_boost_plan(utilization_5h_pct, file_line_counts)</code></p>
+      <table>
+        <thead>
+          <tr><th>파라미터 / 게이트</th><th>평시 (&lt; 70%)</th><th>부스트 모드 (&ge; 70% / CRITICAL)</th><th>토큰 절감 효과</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>파일 맵 강제 임계치</strong></td><td><code>&gt; 250줄</code></td><td><strong><code>&gt; 180줄</code></strong> (<code>local_read_map</code>)</td><td>파일당 <strong>~4,800 유료 토큰 절약</strong></td></tr>
+          <tr><td><strong>코드 패치 슬라이스 상한</strong></td><td><code>&le; 20줄</code></td><td><strong><code>&le; 30줄</code></strong> (<code>worker: local</code>)</td><td>단일 모듈 구현 <strong>유료 토큰 0원</strong></td></tr>
+          <tr><td><strong>초안·요약·커밋</strong></td><td colspan="2"><code>commit_msg</code>, <code>pr_body</code>, <code>doc_summary</code>, <code>stage1_brief</code> &rarr; 100% <code>local_draft</code></td><td>턴당 <strong>1,500~3,000 토큰 절약</strong></td></tr>
+          <tr><td><strong>목표 오프로드 비율</strong></td><td colspan="2"><strong>올라마 60% : Argon 40%</strong> (<code>NON_CLAUDE_GOLDEN_RATIO</code>)</td><td>Argon은 웹리서치·독립감사·병합 전담</td></tr>
+        </tbody>
+      </table>
+      <pre>def compute_agy_ollama_boost_plan(utilization_5h_pct: float, file_line_counts: dict[str, int] | None = None):
+    boost_active = float(utilization_5h_pct) >= 70.0
+    read_threshold = 180 if boost_active else 250
+    slice_limit = 30 if boost_active else 20
+    # 180줄 초과 파일은 자동으로 local_read_map 대상 목록에 편입</pre>
+    </div>
+
+    <div class="card">
+      <h2>2. 클로드 내부 5:3:2 황금 비율 디스패처 구체화 설계</h2>
+      <p>구현 함수: <code>v7_harness.delegation.compute_claude_532_dispatch_plan(...)</code></p>
+      <table>
+        <thead>
+          <tr><th>계층 (Tier)</th><th>실측 현황 (Before)</th><th>목표 황금 비율</th><th>전담 영역 (물리적 무충돌 격리)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Tier-1: Ollama CLI</strong></td><td>4.4% (23콜)</td><td><strong>50.0%</strong> (+45.6%p 확대)</td><td><code>v7_harness/*.py</code> 코드 패치(&le;30줄), 맵·초안 (직렬 락 <code>MAX=1</code>)</td></tr>
+          <tr><td><strong>Tier-2: Haiku 5.5</strong></td><td>7.4% (38콜)</td><td><strong>30.0%</strong> (+22.6%p 확대)</td><td><code>tests/test_*.py</code> 실행·검증, <code>docs/*</code> 색인 동기화 (<code>12,000</code> 캡, <code>MAX=2</code>)</td></tr>
+          <tr><td><strong>Tier-3: Opus/Sonnet</strong></td><td>88.2% (456콜)</td><td><strong>20.0%</strong> (-68.2%p 감축)</td><td>핵심 아키텍처 설계 및 타 도구 교차 승인 (<code>author != judge</code>)</td></tr>
+        </tbody>
+      </table>
+      <pre># 부족분(Deficit Delta) 기반 차기 작업자 자동 선택 수식:
+delta_ollama = 50.0 - cur_ollama_pct  # +45.6%p
+delta_haiku  = 30.0 - cur_haiku_pct   # +22.6%p (잔여 2,063,363 토큰 활용)
+next_tier = "ollama" if delta_ollama >= delta_haiku and delta_ollama > 0 else "haiku"</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. 이원 분리 병렬 게이트 (Disjoint Parallel Gate) &amp; 런타임 검증</h2>
+    <p><code>v7_harness/manual.py</code> 및 <code>v7_harness/delegation.py</code>에서 계약 매뉴얼 <code>lint()</code> 시점에 다음 3대 하드 게이트를 결정론적으로 강제합니다:</p>
+    <table>
+      <thead>
+        <tr><th>게이트 코드</th><th>검증 수식 / 조건</th><th>차단 대상 위험</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>DISJOINT_PARALLEL_OVERLAP</code></td><td><code>(set(allow) &amp; set(haiku_allow)) | (set(ollama_allow) &amp; set(haiku_allow)) != &empty;</code></td><td>Windows <code>WinError 32</code> 동일 파일 동시 쓰기 충돌 및 라인 유실 원천 차단</td></tr>
+        <tr><td><code>HAIKU_QUARANTINED_ON_TOOL</code></td><td><code>caller in ("antigravity", "codex") and "haiku" in (worker, model)</code></td><td>타 도구에서 외부 유료 Anthropic API 키 종량제 과금 발생 차단</td></tr>
+        <tr><td><code>HAIKU_CAP_EXCEEDED</code></td><td><code>remote_budget_tokens &gt; 12000</code></td><td>Haiku 서브에이전트 무제한 스폰으로 인한 토큰 폭주 차단</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

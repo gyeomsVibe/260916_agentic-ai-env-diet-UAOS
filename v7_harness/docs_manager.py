@@ -324,3 +324,27 @@ def bootstrap_project_docs(project_root: Path) -> dict[str, object]:
     sync_doc_index(root)
     hub_path = ensure_docs_dir(root) / "00_DOCUMENT_HUB.html"
     return {"ok": True, "index_md": str(index_path), "hub_html": str(hub_path)}
+
+
+def deploy_artifact_to_docs(
+    project_root: Path,
+    artifact_path: Path,
+    title: str,
+    author_tool: str = "antigravity",
+) -> Path:
+    """U269 Dual Deployment: copy an artifact file to docs/ and register in 00_DOCUMENT_INDEX.md."""
+    src = Path(artifact_path)
+    if not src.is_file():
+        raise FileNotFoundError(f"Artifact not found: {artifact_path}")
+    ext = src.suffix.lstrip(".") or "md"
+    safe_slug = re.sub(r"[^\w\-\uac00-\ud7a3]", "_", title).strip("_")
+    safe_slug = re.sub(r"_+", "_", safe_slug)
+    return register_new_doc(
+        project_root=project_root,
+        title=title,
+        slug=safe_slug,
+        category="보고서",
+        author_tool=author_tool,
+        ext=ext,
+        source_file=src,
+    )

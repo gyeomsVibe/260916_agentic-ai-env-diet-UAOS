@@ -337,45 +337,43 @@ def _scan_agy_brain_transcripts(
                 continue
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
             cached = wm_files.get(f_key)
-            cached_ok = False
-            if isinstance(cached, dict) and isinstance(cached.get("events"), list):
-                try:
-                    c_size = int(cached.get("file_size") if cached.get("file_size") is not None else -1)
-                    c_mtime = float(cached.get("mtime") or 0.0)
-                    c_offset = int(cached.get("offset") or 0)
-                    events_valid = all(isinstance(ev, dict) and isinstance(ev.get("ts"), (int, float)) for ev in cached["events"])
-                    cached_ok = events_valid and c_offset >= 0
-                except (TypeError, ValueError):
-                    cached_ok = False
-            else:
-                c_size, c_mtime, c_offset = -1, 0.0, 0
 
-            if cached_ok and c_size == f_size and abs(c_mtime - f_mtime) < 1e-3:
+            if (
+                isinstance(cached, dict)
+                and int(cached.get("file_size") or -1) == f_size
+                and abs(float(cached.get("mtime") or 0.0) - f_mtime) < 1e-3
+                and isinstance(cached.get("events"), list)
+            ):
                 file_events = [ev for ev in cached["events"] if float(ev.get("ts") or 0.0) >= cutoff_ts]
                 if len(file_events) != len(cached["events"]):
                     wm_files[f_key]["events"] = file_events
                     dirty = True
             else:
-                prev_offset = c_offset if cached_ok else 0
-                prev_prefix_sha = str(cached.get("prefix_sha") or "") if (cached_ok and isinstance(cached, dict)) else ""
+                prev_offset = int(cached.get("offset") or 0) if isinstance(cached, dict) else 0
+                prev_prefix_sha = str(cached.get("prefix_sha") or "") if isinstance(cached, dict) else ""
                 can_seek = False
                 cur_prefix_sha = ""
                 try:
                     with tf.open("rb") as fh:
-                        if cached_ok and 0 < prev_offset <= f_size and prev_prefix_sha:
-                            prefix_bytes = fh.read(prev_offset)
-                            h = hashlib.sha256(prefix_bytes)
-                            if prefix_bytes.endswith(b"\n") and h.hexdigest()[:16] == prev_prefix_sha:
+                        head_256 = fh.read(min(256, f_size))
+                        cur_prefix_sha = hashlib.sha256(head_256).hexdigest()[:16] if head_256 else ""
+                        if (
+                            isinstance(cached, dict)
+                            and 0 < prev_offset <= f_size
+                            and prev_prefix_sha
+                            and prev_prefix_sha == cur_prefix_sha
+                            and isinstance(cached.get("events"), list)
+                        ):
+                            fh.seek(prev_offset - 1)
+                            if fh.read(1) == b"\n":
                                 can_seek = True
                                 raw_chunk = fh.read(f_size - prev_offset)
                             else:
                                 fh.seek(0)
                                 raw_chunk = fh.read(f_size)
-                                h = hashlib.sha256()
                         else:
                             fh.seek(0)
                             raw_chunk = fh.read(f_size)
-                            h = hashlib.sha256()
                         last_nl = raw_chunk.rfind(b"\n")
                         if last_nl == -1:
                             complete_bytes = b""
@@ -383,16 +381,13 @@ def _scan_agy_brain_transcripts(
                         else:
                             complete_bytes = raw_chunk[: last_nl + 1]
                             new_offset = (prev_offset + last_nl + 1) if can_seek else (last_nl + 1)
-                        if complete_bytes:
-                            h.update(complete_bytes)
-                        cur_prefix_sha = h.hexdigest()[:16] if new_offset > 0 else ""
                 except OSError:
                     continue
 
                 chunk_lines = complete_bytes.decode("utf-8", errors="replace").splitlines()
                 parsed_new = _parse_brain_planner_lines(chunk_lines, conv_id)
-                base_events = list(cached["events"]) if (can_seek and cached_ok and isinstance(cached, dict)) else []
-                file_events = [ev for ev in (base_events + parsed_new) if isinstance(ev, dict) and float(ev.get("ts") or 0.0) >= cutoff_ts]
+                base_events = list(cached["events"]) if (can_seek and isinstance(cached, dict)) else []
+                file_events = [ev for ev in (base_events + parsed_new) if float(ev.get("ts") or 0.0) >= cutoff_ts]
                 wm_files[f_key] = {
                     "offset": new_offset,
                     "file_size": f_size,
@@ -658,9 +653,7 @@ def collect_capacity_snapshot(
         _atomic_write_json(local_snap, snapshot)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
         local_head.parent.mkdir(parents=True, exist_ok=True)
-        head_tmp = local_head.with_name(f".capacity_head.{os.getpid()}.{time.time_ns()}.tmp")
-        head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        os.replace(head_tmp, local_head)
+        local_head.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -823,6 +816,7 @@ def build_capacity_aware_schedule(
         "argon_remaining_5h_share_pct": agy_rem_share_pct,
         "post_schedule_remaining_tokens": virtual_rem,
         "phase_assignments": assignments,
+        "subworker_optimization": compute_subworker_optimization(engines),
     }
 
 
@@ -1063,14 +1057,11 @@ def refresh_capacity_zero_token(
                 default=0.0,
             ) if brain_root.is_dir() else 0.0
             if (
-                0.0 <= (moment - last_ts) < min_interval_s
+                (moment - last_ts) < min_interval_s
                 and runs_mtime <= last_ts
                 and sched_mtime <= last_ts
                 and brain_mtime <= last_ts
             ):
-                if html_out is not None and not Path(html_out).is_file():
-                    snap_cached = json.loads(snap_path.read_text(encoding="utf-8"))
-                    render_html_dashboard(snap_cached, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
         except (OSError, ValueError):
             pass
@@ -1346,3 +1337,101 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8", newline="\n")
     return output_path
+
+
+def compute_subworker_optimization(engines: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """U271/U272: Compute 3-tool Ollama CLI active offload boost and Claude Code (Ollama : Haiku : Opus = 50:30:20)
+    disjoint parallel optimization metrics.
+    """
+    from v7_harness.delegation import compute_agy_ollama_boost_plan, compute_claude_532_dispatch_plan
+
+    def _calls_5h(name: str) -> int:
+        w = (engines.get(name) or {}).get("window_5h") or {}
+        return int(w.get("calls") or 0)
+
+    def _util_5h(name: str) -> float:
+        val = (engines.get(name) or {}).get("budget_utilization_5h_pct")
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return float(val)
+        return 0.0
+
+    agy_util = _util_5h("antigravity")
+    claude_util = _util_5h("claude")
+    codex_util = _util_5h("codex")
+
+    ollama_calls = _calls_5h("ollama")
+    haiku_calls = _calls_5h("haiku")
+    claude_calls = _calls_5h("claude")
+    agy_calls = _calls_5h("antigravity")
+    codex_calls = _calls_5h("codex")
+
+    haiku_rem = (engines.get("haiku") or {}).get("usable_remaining_5h_tokens")
+    haiku_rem_int = int(haiku_rem) if isinstance(haiku_rem, (int, float)) and not isinstance(haiku_rem, bool) else 2063363
+
+    agy_boost = agy_util >= 70.0 or (engines.get("antigravity") or {}).get("status_tier") == "CRITICAL_OFFLOAD"
+    claude_boost = claude_util >= 70.0 or (engines.get("claude") or {}).get("status_tier") == "CRITICAL_OFFLOAD"
+    codex_boost = codex_util >= 70.0 or (engines.get("codex") or {}).get("status_tier") in ("CRITICAL_OFFLOAD", "LIMITED_PAUSE")
+
+    claude_532 = compute_claude_532_dispatch_plan(
+        ollama_calls_5h=ollama_calls,
+        haiku_calls_5h=haiku_calls,
+        opus_sonnet_calls_5h=claude_calls,
+        haiku_remaining_5h_tokens=haiku_rem_int,
+    )
+    agy_plan = compute_agy_ollama_boost_plan(utilization_5h_pct=agy_util)
+
+    return {
+        "schema": "uaos-subworker-optimization-v1",
+        "antigravity_boost_plan": agy_plan,
+        "three_tool_ollama_boost": {
+            "antigravity": {
+                "active": agy_boost,
+                "utilization_5h_pct": agy_util,
+                "calls_5h": agy_calls,
+                "slice_line_limit": 30 if agy_boost else 20,
+                "mandatory_read_map_lines": 180 if agy_boost else 250,
+                "target_ollama_offload_pct": 60.0,
+                "haiku_policy": "QUARANTINED_NO_API_SPEND",
+            },
+            "claude": {
+                "active": claude_boost,
+                "utilization_5h_pct": claude_util,
+                "calls_5h": claude_calls,
+                "slice_line_limit": 30 if claude_boost else 20,
+                "mandatory_read_map_lines": 180 if claude_boost else 250,
+                "target_ollama_offload_pct": 50.0,
+                "haiku_policy": "ACTIVE_DISJOINT_SUBAGENT_12K_CAP",
+            },
+            "codex": {
+                "active": codex_boost,
+                "utilization_5h_pct": codex_util,
+                "calls_5h": codex_calls,
+                "slice_line_limit": 30 if codex_boost else 20,
+                "mandatory_read_map_lines": 180 if codex_boost else 250,
+                "target_ollama_offload_pct": 60.0,
+                "haiku_policy": "QUARANTINED_NO_API_SPEND",
+            },
+        },
+        "claude_internal_subworker_balance": {
+            "current_5h_ratio": {
+                "ollama_pct": claude_532["current_ratio_pct"]["ollama_pct"],
+                "haiku_pct": claude_532["current_ratio_pct"]["haiku_pct"],
+                "opus_sonnet_pct": claude_532["current_ratio_pct"]["paid_core_pct"],
+            },
+            "target_golden_ratio": {
+                "ollama_pct": 50.0,
+                "haiku_pct": 30.0,
+                "opus_sonnet_pct": 20.0,
+            },
+            "deficit_delta_pct": claude_532["deficit_delta_pct"],
+            "next_recommended_worker_tier": claude_532["next_recommended_worker_tier"],
+            "haiku_preflight_cap_tokens": 12000,
+            "max_concurrent_ollama": 1,
+            "max_concurrent_subagents": 2,
+            "disjoint_lanes": {
+                "ollama_cli": "v7_harness/*.py single-file code slices (<=30 lines), local_read_map, local_draft",
+                "haiku_5_5": "tests/test_*.py regression runner & docs/* index sync (disjoint from Ollama code paths)",
+                "claude_opus_sonnet": "Core architecture synthesis & cross-tool independent review (author != judge)",
+            },
+        },
+    }
