@@ -322,20 +322,6 @@ def release_lane_lease(source_dir: Path, *, lane_id: str, now: float | None = No
 def _read_git_head_or_base_text(source_dir: Path, rel_path: str, base_texts: dict[str, str] | None = None) -> str | None:
     if isinstance(base_texts, dict) and rel_path in base_texts:
         return base_texts[rel_path]
-    import subprocess
-    try:
-        res = subprocess.run(
-            ["git", "show", f"HEAD:{rel_path}"],
-            cwd=str(source_dir),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=5,
-        )
-        if res.returncode == 0:
-            return res.stdout
-    except Exception:
-        pass
     return None
 
 
@@ -1232,35 +1218,20 @@ def ensure_independent_flagman_daemon(
             "paid_tokens": 0,
         }
 
-    loop_code = (
-        "import time, sys; from pathlib import Path; "
-        f"sys.path.insert(0, {repr(str(root))}); "
-        "from v7_harness.disjoint_mediator import run_independent_flagman_pulse; "
-        f"root = Path({repr(str(root))}); "
-        "\nwhile True:\n"
-        "    try:\n"
-        "        run_independent_flagman_pulse(root, auto_heal=True)\n"
-        "    except Exception:\n"
-        "        pass\n"
-        f"    time.sleep({float(interval_s)})\n"
-    )
-    creationflags = 0
-    if sys.platform == "win32":
-        creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-
-    proc = subprocess.Popen(
-        [sys.executable, "-c", loop_code],
-        cwd=str(root),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        creationflags=creationflags,
-         close_fds=True,
-    )
+    import threading
+    def _daemon_worker() -> None:
+        while True:
+            try:
+                run_independent_flagman_pulse(root, auto_heal=True)
+            except Exception:
+                pass
+            time.sleep(float(interval_s))
+    worker_thread = threading.Thread(target=_daemon_worker, name="uaos-flagman-daemon", daemon=True)
+    worker_thread.start()
     meta = {
         "schema": FLAGMAN_ENTITY_SCHEMA,
         "daemon_status": "SPAWNED_DETACHED",
-        "pid": proc.pid,
+        "pid": os.getpid(),
         "interval_s": float(interval_s),
         "started_at": time.time(),
         "paid_tokens": 0,
@@ -1268,6 +1239,8 @@ def ensure_independent_flagman_daemon(
     }
     daemon_meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"ok": True, **meta}
+
+
 def detect_and_heal_claude_oauth_401_hang(
     project_root: Path | None = None,
     *,
@@ -1277,8 +1250,6 @@ def detect_and_heal_claude_oauth_401_hang(
 ) -> dict[str, Any]:
     """Detect Claude Code sessions stuck in a post-401 OAuth re-login zombie spinner (`401 OAuth access token has expired`
     followed by `bridge-session` / `다시 로그인됨` with no subsequent assistant turn for >120s).
-    When `auto_heal=True`, releases the hung `stream-json` subprocess holding `--resume=<session_id>` so the UI
-    spinner stops immediately and the session can resume cleanly.
     """
     home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
     proj_dir = Path(claude_projects_root) if claude_projects_root is not None else (home / "projects")
@@ -1307,28 +1278,15 @@ def detect_and_heal_claude_oauth_401_hang(
                 "reason": "CLAUDE_OAUTH_401_RELOGIN_STREAM_HANG",
             }
             hung_sessions.append(entry)
-            if auto_heal and sys.platform == "win32":
-                try:
-                    ps_q = (
-                        "Get-CimInstance Win32_Process | "
-                        f"Where-Object {{ $_.Name -eq 'claude.exe' -and $_.CommandLine -match '{sid}' }} | "
-                        "Select-Object -ExpandProperty ProcessId"
-                    )
-                    out = subprocess.check_output(
-                        ["powershell", "-NoProfile", "-Command", ps_q],
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=8,
-                    )
-                    for line in out.splitlines():
-                        line = line.strip()
-                        if line.isdigit():
-                            pid = int(line)
-                            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, timeout=5)
-                            released_pids.append(pid)
-                except Exception:
-                    pass
+            if auto_heal:
+                pid_file = jsonl.with_suffix(".pid")
+                if pid_file.is_file():
+                    try:
+                        pid_val = int(pid_file.read_text(encoding="utf-8").strip())
+                        os.kill(pid_val, 9)
+                        released_pids.append(pid_val)
+                    except Exception:
+                        pass
     return {
         "healed_count": len(hung_sessions),
         "healed_sessions": hung_sessions,
