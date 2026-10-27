@@ -12,6 +12,26 @@ import re
 from pathlib import Path
 from typing import Any
 
+
+def is_symlink_or_junction(path: Path) -> bool:
+    """True if path is a POSIX symlink, Windows junction, or reparse point."""
+    import os
+    try:
+        if path.is_symlink():
+            return True
+        if hasattr(path, "is_junction") and path.is_junction():
+            return True
+        if hasattr(os.path, "isjunction") and os.path.isjunction(path):
+            return True
+        st = path.lstat()
+        attrs = getattr(st, "st_file_attributes", 0)
+        if attrs and (attrs & 0x0400):
+            return True
+    except OSError:
+        return True
+    return False
+
+
 CANONICAL_LIBRARY_PATH_STR = (
     r"D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library"
 )
@@ -146,7 +166,7 @@ def inspect_library_repo(repo_dir: Path) -> dict[str, Any]:
             "path": str(repo_path),
         }
     git_dir = repo_path / ".git"
-    if not git_dir.exists() or git_dir.is_symlink():
+    if not git_dir.exists() or is_symlink_or_junction(git_dir) or git_dir.resolve() != (repo_path.resolve() / ".git"):
         return {
             "ok": False,
             "error": "NOT_A_GIT_REPO",
@@ -172,6 +192,16 @@ def inspect_library_repo(repo_dir: Path) -> dict[str, Any]:
     symlink_escaped = False
     for item in repo_path.rglob("*"):
         if ".git" in item.parts:
+            continue
+        if is_symlink_or_junction(item):
+            symlink_escaped = True
+            continue
+        try:
+            if not item.resolve().is_relative_to(repo_path.resolve()):
+                symlink_escaped = True
+                continue
+        except OSError:
+            symlink_escaped = True
             continue
         if item.is_symlink():
             try:

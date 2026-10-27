@@ -23,6 +23,26 @@ TS_EXPORT_RE = re.compile(
     re.MULTILINE,
 )
 RS_EXPORT_RE = re.compile(r"^pub(?:\([^)]+\))?\s+(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z0-9_]+)", re.MULTILINE)
+
+def is_symlink_or_junction(path: Path) -> bool:
+    """True if path is a POSIX symlink, Windows junction, or reparse point."""
+    import os
+    try:
+        if path.is_symlink():
+            return True
+        if hasattr(path, "is_junction") and path.is_junction():
+            return True
+        if hasattr(os.path, "isjunction") and os.path.isjunction(path):
+            return True
+        st = path.lstat()
+        attrs = getattr(st, "st_file_attributes", 0)
+        if attrs and (attrs & 0x0400):
+            return True
+    except OSError:
+        return True
+    return False
+
+
 BIN_URL_RE = re.compile(rb"https?://[A-Za-z0-9._/\-:?=&%]+")
 BIN_IDENT_RE = re.compile(rb"(?:src-tauri/[A-Za-z0-9._/\-]+|[a-z_]+::[a-z0-9_:]{4,64})")
 
@@ -62,14 +82,18 @@ def inspect_static_target(
         for p in sorted(target.rglob("*")):
             if ".git" in p.parts:
                 continue
-            if p.is_symlink():
+            is_esc = False
+            if is_symlink_or_junction(p):
+                is_esc = True
+            else:
                 try:
                     if not p.resolve().is_relative_to(root_resolved):
-                        failed_files.append({"file": p.name, "error": "SYMLINK_ESCAPE_BLOCKED"})
-                        continue
+                        is_esc = True
                 except OSError:
-                    failed_files.append({"file": p.name, "error": "BROKEN_SYMLINK"})
-                    continue
+                    is_esc = True
+            if is_esc:
+                failed_files.append({"file": p.relative_to(target).as_posix() if p != target else p.name, "error": "SYMLINK_OR_JUNCTION_ESCAPE"})
+                continue
             if p.is_file():
                 files.append(p)
 
@@ -170,45 +194,57 @@ def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
 
 def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
     """Inspect a SQLite DB using a disposable temporary snapshot so:
-    1. Filenames with `#` or `?` never break URI parsing or create stray files (`literal#fixture.sqlite`).
+    1. Filenames with `#` or `?` never break URI parsing or create stray files.
     2. WAL-mode databases never have `-shm` sidecars created in the source directory.
-    3. Combined SHA-256 hashes both main DB bytes and `-wal` bytes so WAL-only schema commits change the digest.
+    3. WAL file is copied to temp snapshot BEFORE hashing to eliminate hash/copy races.
     """
-    try:
-        main_bytes = db_path.read_bytes()
-    except OSError as exc:
-        return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": f"READ_ERROR: {exc}"}
-
-    if main_bytes and len(main_bytes) >= 16 and not main_bytes.startswith(b"SQLite format 3\x00"):
-        return {
-            "ok": False,
-            "mode": "STATIC_ONLY_SQLITE",
-            "target": str(db_path),
-            "error": "INVALID_SQLITE_HEADER",
-        }
-
     wal_path = Path(str(db_path) + "-wal")
     shm_path = Path(str(db_path) + "-shm")
-    h = hashlib.sha256(main_bytes)
-    if wal_path.is_file():
-        try:
-            wal_bytes = wal_path.read_bytes()
-            if wal_bytes:
-                h.update(b"|WAL|")
-                h.update(wal_bytes)
-        except OSError:
-            pass
-    digest = h.hexdigest()
 
     tables: list[dict[str, Any]] = []
     try:
         with tempfile.TemporaryDirectory(prefix="uaos_rea_sqlite_") as tmp_dir:
             snap_db = Path(tmp_dir) / "snapshot.sqlite"
-            snap_db.write_bytes(main_bytes)
+            snap_wal = Path(str(snap_db) + "-wal")
+            snap_shm = Path(str(snap_db) + "-shm")
+
+            try:
+                shutil.copy2(db_path, snap_db)
+            except OSError as exc:
+                return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": f"READ_ERROR: {exc}"}
+
+            main_bytes = snap_db.read_bytes()
+            if main_bytes and len(main_bytes) >= 16 and not main_bytes.startswith(b"SQLite format 3\x00"):
+                return {
+                    "ok": False,
+                    "mode": "STATIC_ONLY_SQLITE",
+                    "target": str(db_path),
+                    "error": "INVALID_SQLITE_HEADER",
+                }
+
             if wal_path.is_file():
-                shutil.copy2(wal_path, Path(str(snap_db) + "-wal"))
+                try:
+                    shutil.copy2(wal_path, snap_wal)
+                except OSError:
+                    pass
+
             if shm_path.is_file():
-                shutil.copy2(shm_path, Path(str(snap_db) + "-shm"))
+                try:
+                    shutil.copy2(shm_path, snap_shm)
+                except OSError:
+                    pass
+
+            h = hashlib.sha256(main_bytes)
+            if snap_wal.is_file():
+                try:
+                    wal_bytes = snap_wal.read_bytes()
+                    if wal_bytes:
+                        h.update(b"|WAL|")
+                        h.update(wal_bytes)
+                except OSError:
+                    pass
+            digest = h.hexdigest()
+
             uri = snap_db.resolve().as_uri() + "?mode=ro"
             conn = sqlite3.connect(uri, uri=True, timeout=3)
             try:
@@ -224,7 +260,7 @@ def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
             "ok": False,
             "mode": "STATIC_ONLY_SQLITE",
             "target": str(db_path),
-            "sha256": digest,
+            "sha256": digest if "digest" in locals() else "",
             "error": f"SQLITE_ERROR: {exc}",
         }
 

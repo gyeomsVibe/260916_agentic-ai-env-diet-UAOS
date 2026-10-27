@@ -158,7 +158,7 @@ def atomic_write_if_hash_matches(
 ) -> dict[str, Any]:
     """U276 (Transplanted from Cockpit Tools `config.rs:save_global_config_if_hash_matches`):
     Compare-and-swap atomic JSON writer with `.bak` backup before replacement.
-    Stages to a unique temp file first, then serializes check+backup+replace under a process-wide RLock.
+    Stages to a unique temp file first, then verifies fresh disk contents right before replacing.
     """
     import hashlib
     import sys
@@ -169,53 +169,69 @@ def atomic_write_if_hash_matches(
     stage_path = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.stage")
     try:
         _atomic_write_json(stage_path, data)
-        cas_lock = sys.__dict__.setdefault("_uaos_cas_lock", threading.RLock())
-        with cas_lock:
-            current_sha: str | None = None
-            raw_existing = b""
-            exists_now = target.is_file()
-            if exists_now:
-                try:
-                    raw_existing = target.read_bytes()
-                    current_sha = hashlib.sha256(raw_existing).hexdigest()
-                except OSError as exc:
-                    return {
-                        "ok": False,
-                        "error": f"CAS_READ_FAILED:{exc}",
-                        "expected_sha256": expected_sha256,
-                        "actual_sha256": None,
-                    }
-            if expected_sha256 is not None:
-                if not exists_now:
-                    return {
-                        "ok": False,
-                        "error": "CAS_TARGET_MISSING",
-                        "expected_sha256": expected_sha256,
-                        "actual_sha256": None,
-                    }
-                if current_sha != expected_sha256:
-                    return {
-                        "ok": False,
-                        "error": "CAS_HASH_MISMATCH",
-                        "expected_sha256": expected_sha256,
-                        "actual_sha256": current_sha,
-                    }
-            bak_path = target.with_name(target.name + ".bak")
-            if exists_now and raw_existing:
-                try:
-                    json.loads(raw_existing.decode("utf-8"))
-                    bak_path.write_bytes(raw_existing)
-                except (OSError, ValueError, UnicodeDecodeError):
-                    pass
-            os.replace(str(stage_path), str(target))
-            new_sha = hashlib.sha256(target.read_bytes()).hexdigest()
-            return {
-                "ok": True,
-                "path": target.as_posix(),
-                "previous_sha256": current_sha,
-                "new_sha256": new_sha,
-                "backup_path": str(bak_path),
-            }
+        # 1. Initial read for backup preparation
+        exists_initial = target.is_file()
+        raw_initial = b""
+        if exists_initial:
+            try:
+                raw_initial = target.read_bytes()
+            except OSError as exc:
+                return {
+                    "ok": False,
+                    "error": f"CAS_READ_FAILED:{exc}",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+
+        # 2. Fresh read right before committing CAS swap
+        exists_now = target.is_file()
+        current_sha: str | None = None
+        raw_existing = b""
+        if exists_now:
+            try:
+                raw_existing = target.read_bytes()
+                current_sha = hashlib.sha256(raw_existing).hexdigest()
+            except OSError as exc:
+                return {
+                    "ok": False,
+                    "error": f"CAS_READ_FAILED:{exc}",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+
+        if expected_sha256 is not None:
+            if not exists_now:
+                return {
+                    "ok": False,
+                    "error": "CAS_TARGET_MISSING",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+            if current_sha != expected_sha256:
+                return {
+                    "ok": False,
+                    "error": "CAS_HASH_MISMATCH",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": current_sha,
+                }
+
+        bak_path = target.with_name(target.name + ".bak")
+        if exists_now and raw_existing:
+            try:
+                json.loads(raw_existing.decode("utf-8"))
+                bak_path.write_bytes(raw_existing)
+            except (OSError, ValueError, UnicodeDecodeError):
+                pass
+
+        os.replace(str(stage_path), str(target))
+        new_sha = hashlib.sha256(target.read_bytes()).hexdigest()
+        return {
+            "ok": True,
+            "path": target.as_posix(),
+            "previous_sha256": current_sha,
+            "new_sha256": new_sha,
+            "backup_path": str(bak_path),
+        }
     finally:
         if stage_path.exists():
             try:
@@ -233,36 +249,38 @@ def parse_json_with_auto_restore(path: Path, default: Any = None) -> Any:
 
     target = Path(path)
     bak_path = target.with_name(target.name + ".bak")
-    cas_lock = sys.__dict__.setdefault("_uaos_cas_lock", threading.RLock())
-    with cas_lock:
-        if target.is_file():
-            try:
-                raw_bytes = target.read_bytes()
-                return json.loads(raw_bytes.decode("utf-8"))
-            except (OSError, ValueError, UnicodeDecodeError):
-                corrupt_bytes: bytes | None = raw_bytes if "raw_bytes" in locals() else None
-        else:
-            corrupt_bytes = None
-        if not bak_path.is_file():
-            return default
+    if target.is_file():
         try:
-            restored = json.loads(bak_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return default
+            raw_bytes = target.read_bytes()
+            return json.loads(raw_bytes.decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            corrupt_bytes: bytes | None = raw_bytes if "raw_bytes" in locals() else None
+    else:
+        corrupt_bytes = None
+
+    if not bak_path.is_file():
+        return default
+    try:
+        restored = json.loads(bak_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
 
     stage_restore = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.restore")
     try:
         _atomic_write_json(stage_restore, restored)
-        with cas_lock:
-            if target.is_file():
-                try:
-                    now_bytes = target.read_bytes()
-                    if corrupt_bytes is not None and now_bytes != corrupt_bytes:
-                        return json.loads(now_bytes.decode("utf-8"))
-                except (OSError, ValueError, UnicodeDecodeError):
-                    pass
-            os.replace(str(stage_restore), str(target))
-            return restored
+        if target.is_file():
+            try:
+                now_bytes = target.read_bytes()
+                if corrupt_bytes is None or now_bytes != corrupt_bytes:
+                    try:
+                        parsed_now = json.loads(now_bytes.decode("utf-8"))
+                        return parsed_now
+                    except (ValueError, UnicodeDecodeError):
+                        pass
+            except OSError:
+                pass
+        os.replace(str(stage_restore), str(target))
+        return restored
     finally:
         if stage_restore.exists():
             try:
@@ -1849,7 +1867,7 @@ def render_compact_status_line(snapshot: dict[str, Any]) -> str:
 def render_contextual_hud_widget(snapshot: dict[str, Any]) -> str:
     """Tier-2 Micro Contextual Heads-Up Display (HUD) Widget inspired by Cockpit Tools floating_card_window.rs.
     Designed for inline prompt/workspace context (<195 chars) with Quality Gate first (author != judge).
-    Fails closed to UNKNOWN(품질증거미확인) when schedule/conductor/telemetry evidence is unverified.
+    Fails closed to UNKNOWN(품질증거미확인) when quality_gate_verified is False or unverified.
     """
     head = snapshot.get("compact_head") or build_compact_capacity_head(snapshot)
     cards = head.get("cards_5h") or {}
@@ -1872,18 +1890,17 @@ def render_contextual_hud_widget(snapshot: dict[str, Any]) -> str:
     rem_cards = int(c1.get("remaining_non_auto", c1.get("remaining", 0)) or 0)
 
     blocked_cnt = int(c1.get("blocked") or 0)
-    total_cards = int(c1.get("total") or 0)
-    is_unverified = (
-        raw_cond in ("", "NONE", "UNKNOWN")
-        or (
-            total_cards == 0
-            and not bool(cockpit.get("available"))
-            and not bool(snapshot.get("quality_gate_verified"))
-        )
-    )
+    q_verified = snapshot.get("quality_gate_verified")
+
     if blocked_cnt > 0:
         q_state = f"점검필요(블로커{blocked_cnt}건)"
-    elif is_unverified:
+    elif q_verified is False:
+        q_state = "UNKNOWN(품질증거미확인)"
+    elif q_verified is True:
+        q_state = "PASS(독립검증·인수100%)"
+    elif raw_cond in ("", "NONE", "UNKNOWN"):
+        q_state = "UNKNOWN(품질증거미확인)"
+    elif int(c1.get("total") or 0) == 0 and not bool(cockpit.get("available")):
         q_state = "UNKNOWN(품질증거미확인)"
     else:
         q_state = "PASS(독립검증·인수100%)"

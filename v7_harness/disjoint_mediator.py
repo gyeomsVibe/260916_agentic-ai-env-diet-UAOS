@@ -1178,33 +1178,74 @@ def _is_flagman_pid_alive(pid: int) -> bool:
         return False
 
 
+def validate_daemon_caller_root(root: Path) -> Path:
+    p = Path(root).resolve()
+    if not p.is_dir():
+        raise ValueError(f"INVALID_ROOT: {root}")
+    return p
+
+
+def _is_claude_session_process(pid: int, sid: str) -> bool:
+    if pid <= 0 or pid == os.getpid():
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False
+            try:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = wintypes.DWORD(1024)
+                if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    exe_name = Path(buf.value).name.lower()
+                    if "claude" not in exe_name:
+                        return False
+            finally:
+                kernel32.CloseHandle(h)
+            return True
+        except Exception:
+            return False
+    else:
+        try:
+            cmd_file = Path(f"/proc/{pid}/cmdline")
+            if cmd_file.is_file():
+                cmd_raw = cmd_file.read_text(encoding="utf-8", errors="replace")
+                return "claude" in cmd_raw.lower()
+        except OSError:
+            pass
+    return False
+
+
 def ensure_independent_flagman_daemon(
     project_root: Path,
-    *,
-    interval_s: float = 30.0,
+    interval_s: float = 2.0,
     spawn_if_stopped: bool = True,
 ) -> dict[str, Any]:
-    """CRITIC/REDTEAM Step 3: Ensure the Independent Flagman Entity runs as a self-sustaining
-    OS-level background process (`.coord/presence/flagman_daemon.json`) at 0 paid tokens,
-    completely independent of whether Codex, Claude Code, or Antigravity is currently invoking a hook.
+    """Ensure the independent Flagman daemon process is running in the background.
+    Spawns an independent OS process (DETACHED_PROCESS on Windows) that survives caller termination.
     """
     import subprocess
-
-    root = Path(project_root).resolve()
-    daemon_meta_file = root / ".coord" / "presence" / "flagman_daemon.json"
+    root = validate_daemon_caller_root(project_root)
+    daemon_meta_file = root / ".coord" / "flagman_daemon.json"
     daemon_meta_file.parent.mkdir(parents=True, exist_ok=True)
-
     if daemon_meta_file.is_file():
         try:
-            dmeta = json.loads(daemon_meta_file.read_text(encoding="utf-8"))
-            pid = int(dmeta.get("pid") or 0)
-            if _is_flagman_pid_alive(pid):
+            meta = json.loads(daemon_meta_file.read_text(encoding="utf-8"))
+            pid = meta.get("pid")
+            if isinstance(pid, int) and _is_flagman_pid_alive(pid):
                 return {
                     "ok": True,
-                    "daemon_status": "ALREADY_RUNNING",
+                    "schema": FLAGMAN_ENTITY_SCHEMA,
+                    "daemon_status": "ALIVE",
                     "pid": pid,
-                    "interval_s": dmeta.get("interval_s", interval_s),
+                    "interval_s": float(meta.get("interval_s", interval_s)),
+                    "started_at": float(meta.get("started_at", time.time())),
                     "paid_tokens": 0,
+                    "local_gpu_tokens": 0,
                 }
         except (OSError, ValueError):
             pass
@@ -1212,26 +1253,42 @@ def ensure_independent_flagman_daemon(
     if not spawn_if_stopped:
         return {
             "ok": True,
+            "schema": FLAGMAN_ENTITY_SCHEMA,
             "daemon_status": "STOPPED_OBSERVED",
             "pid": None,
             "interval_s": interval_s,
             "paid_tokens": 0,
         }
 
-    import threading
-    def _daemon_worker() -> None:
-        while True:
-            try:
-                run_independent_flagman_pulse(root, auto_heal=True)
-            except Exception:
-                pass
-            time.sleep(float(interval_s))
-    worker_thread = threading.Thread(target=_daemon_worker, name="uaos-flagman-daemon", daemon=True)
-    worker_thread.start()
+    loop_code = (
+        "import time, sys; from pathlib import Path; "
+        f"sys.path.insert(0, {repr(str(root))}); "
+        "from v7_harness.disjoint_mediator import run_independent_flagman_pulse; "
+        f"root = Path({repr(str(root))}); "
+        "\nwhile True:\n"
+        "    try:\n"
+        "        run_independent_flagman_pulse(root, auto_heal=True)\n"
+        "    except Exception:\n"
+        "        pass\n"
+        f"    time.sleep({float(interval_s)})\n"
+    )
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", loop_code],
+        cwd=str(root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=creationflags,
+        close_fds=True,
+    )
     meta = {
         "schema": FLAGMAN_ENTITY_SCHEMA,
         "daemon_status": "SPAWNED_DETACHED",
-        "pid": os.getpid(),
+        "pid": proc.pid,
         "interval_s": float(interval_s),
         "started_at": time.time(),
         "paid_tokens": 0,
@@ -1250,6 +1307,7 @@ def detect_and_heal_claude_oauth_401_hang(
 ) -> dict[str, Any]:
     """Detect Claude Code sessions stuck in a post-401 OAuth re-login zombie spinner (`401 OAuth access token has expired`
     followed by `bridge-session` / `다시 로그인됨` with no subsequent assistant turn for >120s).
+    Only releases verified claude processes holding the session transcript.
     """
     home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
     proj_dir = Path(claude_projects_root) if claude_projects_root is not None else (home / "projects")
@@ -1283,8 +1341,9 @@ def detect_and_heal_claude_oauth_401_hang(
                 if pid_file.is_file():
                     try:
                         pid_val = int(pid_file.read_text(encoding="utf-8").strip())
-                        os.kill(pid_val, 9)
-                        released_pids.append(pid_val)
+                        if _is_claude_session_process(pid_val, sid):
+                            os.kill(pid_val, 9)
+                            released_pids.append(pid_val)
                     except Exception:
                         pass
     return {

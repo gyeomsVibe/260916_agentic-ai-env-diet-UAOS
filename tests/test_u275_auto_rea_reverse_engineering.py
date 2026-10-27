@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -198,6 +199,69 @@ class TestU275AutoReaReverseEngineering(unittest.TestCase):
                 "five_chip_telemetry": {"chips": {"1_todos_schedule": {"blocked": 0, "remaining": 0, "total": 0}}},
             })
             self.assertIn("UNKNOWN(품질증거미확인)", hud_unknown)
+
+
+
+    def test_r4_junction_escape_fails_source_complete(self) -> None:
+        import subprocess
+        from v7_harness.rea_bridge import inspect_static_target
+        with tempfile.TemporaryDirectory(prefix="test_junc_") as base_str:
+            base = Path(base_str)
+            root = base / "selected"
+            root.mkdir()
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "harmless.exe").write_bytes(b"MZ https://example.invalid/OUTSIDE_FIXTURE_ONLY")
+            p = subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(root / "linked"), str(outside)], capture_output=True, text=True)
+            if p.returncode == 0:
+                res_junction = inspect_static_target(root)
+                self.assertFalse(res_junction["source_complete"])
+                errors = [f.get("error") for f in res_junction.get("failed_files", [])]
+                self.assertIn("SYMLINK_OR_JUNCTION_ESCAPE", errors)
+
+    def test_r4_restore_interleaving_absent_and_corrupt(self) -> None:
+        import hashlib
+        from v7_harness.coord import capacity_planner as m
+        with tempfile.TemporaryDirectory(prefix="test_restore_") as base_str:
+            fixture = Path(base_str)
+            for initially_present in (True, False):
+                p_file = fixture / ("corrupt_restore.json" if initially_present else "absent_restore.json")
+                if initially_present:
+                    p_file.write_text("{corrupt", encoding="utf-8")
+                backup = p_file.with_name(p_file.name + ".bak")
+                backup.write_text('{"value":"old"}', encoding="utf-8")
+                staged, committed = threading.Event(), threading.Event()
+                real_atomic = m._atomic_write_json
+                def scheduled_stage(path, data):
+                    real_atomic(path, data)
+                    if threading.current_thread().name == "restorer":
+                        staged.set()
+                        if not committed.wait(15): raise RuntimeError("commit timed out")
+                m._atomic_write_json = scheduled_stage
+                restored = []
+                t = threading.Thread(name="restorer", target=lambda: restored.append(m.parse_json_with_auto_restore(p_file)))
+                t.start()
+                self.assertTrue(staged.wait(15))
+                expected = hashlib.sha256(p_file.read_bytes()).hexdigest() if initially_present else None
+                committed_result = m.atomic_write_if_hash_matches(p_file, {"value": "new"}, expected)
+                committed.set()
+                t.join(15)
+                m._atomic_write_json = real_atomic
+                final_val = json.loads(p_file.read_text())
+                backup_val = json.loads(backup.read_text())
+                self.assertEqual(final_val, {"value": "new"})
+                self.assertEqual(backup_val, {"value": "old"})
+
+    def test_r4_quality_unknown_hud(self) -> None:
+        from v7_harness.coord.capacity_planner import render_contextual_hud_widget
+        snap_unverified = {
+            "compact_head": {"conductor": "CODEX", "cards_5h": {}, "offload_pct": 0},
+            "five_chip_telemetry": {"chips": {"1_todos_schedule": {"total": 1, "remaining": 1, "blocked": 0}}},
+            "quality_gate_verified": False,
+            "cockpit_telemetry": {"available": False},
+        }
+        hud_out = render_contextual_hud_widget(snap_unverified)
+        self.assertIn("UNKNOWN(품질증거미확인)", hud_out)
 
 
 if __name__ == "__main__":
