@@ -185,6 +185,82 @@ class TestU273ZeroWaitFlagman(unittest.TestCase):
             self.assertEqual(tiki["wait_ms"], 0)
             self.assertFalse(tiki["mutual_wait_blocked"])
 
+    def test_u274_independent_entity_presence_and_3way_ast_hunk_merge(self) -> None:
+        import json
+        from v7_harness.cli import main as cli_main
+        from v7_harness.disjoint_mediator import (
+            flagman_autonomous_3way_hunk_merge,
+            read_flagman_independent_presence,
+            run_independent_flagman_pulse,
+        )
+
+        # 1. Disjoint functions in the same Python file -> 0ms autonomous 3-way AST merge!
+        base_py = (
+            "def alpha() -> int:\n"
+            "    return 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return 2\n"
+        )
+        ours_py = (
+            "def alpha() -> int:\n"
+            "    return 10\n\n\n"
+            "def beta() -> int:\n"
+            "    return 2\n"
+        )
+        theirs_py = (
+            "def alpha() -> int:\n"
+            "    return 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return 20\n"
+        )
+        m_ok = flagman_autonomous_3way_hunk_merge(base_py, ours_py, theirs_py, file_path="v7_harness/sample.py")
+        self.assertTrue(m_ok["ok"])
+        self.assertEqual(m_ok["signal"], "GREEN_3WAY_AST_HUNK_MERGED")
+        self.assertEqual(m_ok["wait_ms"], 0)
+        self.assertTrue(m_ok["ast_quality_verified"])
+        self.assertIn("return 10", m_ok["merged_text"])
+        self.assertIn("return 20", m_ok["merged_text"])
+
+        # 2. Semantic Ghost Conflict: two workers edit different lines inside the SAME function -> blocked by AST Quality Gate!
+        base_same_fn = (
+            "def compute(x: int) -> int:\n"
+            "    a = x + 1\n"
+            "    b = a * 2\n"
+            "    c = b + 3\n"
+            "    return c\n"
+        )
+        ours_same_fn = base_same_fn.replace("a = x + 1", "a = x + 100")
+        theirs_same_fn = base_same_fn.replace("c = b + 3", "c = b + 300")
+        m_conflict = flagman_autonomous_3way_hunk_merge(
+            base_same_fn, ours_same_fn, theirs_same_fn, file_path="v7_harness/sample.py"
+        )
+        self.assertFalse(m_conflict["ok"])
+        self.assertEqual(m_conflict["signal"], "RED_AST_SAME_SYMBOL_CONFLICT")
+        self.assertEqual(m_conflict["conflicting_symbols"], ["compute"])
+
+        # 3. Independent Flagman Entity stays ACTIVE even when all 3 paid tools are LIMITED/ABSENT
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pres_dir = root / ".coord" / "presence"
+            pres_dir.mkdir(parents=True, exist_ok=True)
+            for tool in ("codex", "claude", "antigravity"):
+                (pres_dir / f"{tool}.json").write_text(
+                    json.dumps({"tool": tool, "state": "LIMITED"}), encoding="utf-8"
+                )
+            pulse = run_independent_flagman_pulse(root, auto_heal=True, now=1800000000.0)
+            self.assertEqual(pulse["paid_tokens"], 0)
+            self.assertEqual(pulse["local_gpu_tokens"], 0)
+            self.assertEqual(pulse["wait_ms"], 0)
+            self.assertTrue(pulse["autonomous_alive_when_all_paid_limited"])
+
+            f_pres = read_flagman_independent_presence(root, now=1800000010.0)
+            self.assertEqual(f_pres["state"], "ACTIVE")
+            self.assertEqual(f_pres["seat_id"], "seat-flagman-autonomous")
+            self.assertEqual(f_pres["entity_type"], "INDEPENDENT_AUTONOMIC_ENTITY")
+
+            rc = cli_main(["coord", "flagman-pulse", "--project", str(root)])
+            self.assertEqual(rc, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

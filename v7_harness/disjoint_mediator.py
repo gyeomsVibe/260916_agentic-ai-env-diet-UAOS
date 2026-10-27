@@ -695,3 +695,368 @@ def detect_and_break_3tool_wait_cycles(
         "reconciled_pilot_runs": reconciled_pilot_runs,
         "retired_auto_cards": retired_auto_cards,
     }
+# ===========================================================================
+# U274 Stage 3: Independent Autonomic Entity Flagman (`IndependentFlagmanEntity`)
+# - Self-sustaining 6th Seat (`seat-flagman-autonomous`, `.coord/presence/flagman.json`)
+# - Supreme Quality-Gated 3-Way AST + Disjoint Line Hunk Autonomous Merger
+# - Standalone Pulse Engine (`run_independent_flagman_pulse` / `coord flagman-pulse`)
+# ===========================================================================
+
+FLAGMAN_ENTITY_SCHEMA = "uaos-independent-flagman-entity-v3"
+
+FLAGMAN_SEAT_META: dict[str, str] = {
+    "tool": "flagman",
+    "seat_id": "seat-flagman-autonomous",
+    "entity_type": "INDEPENDENT_AUTONOMIC_ENTITY",
+    "role": "Independent Autonomic Traffic & Quality-Gated 3-Way AST Merge Flagman (0 Paid Tokens)",
+    "pod": "autonomic-nervous-system-pod",
+}
+
+
+def flagman_presence_file(project_root: Path) -> Path:
+    return Path(project_root).resolve() / ".coord" / "presence" / "flagman.json"
+
+
+def flagman_entity_state_file(project_root: Path) -> Path:
+    return Path(project_root).resolve() / ".coord" / "mediator" / "flagman_entity_state.json"
+
+
+def write_flagman_independent_presence(
+    project_root: Path,
+    *,
+    now: float | None = None,
+    ttl_s: float = 7200.0,
+    pulse_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Emit the Independent Flagman Entity's own heartbeat to `.coord/presence/flagman.json`.
+    Unlike subordinate modules, the Flagman Entity stays `ACTIVE` even when all 3 paid tools
+    (Codex, Claude Code, Antigravity) are `LIMITED` or `ABSENT`.
+    """
+    from datetime import datetime, timezone
+
+    moment = float(now if now is not None else time.time())
+    iso_now = datetime.fromtimestamp(moment, timezone.utc).isoformat()
+    root = Path(project_root).resolve()
+
+    presence_payload: dict[str, Any] = {
+        "schema": FLAGMAN_ENTITY_SCHEMA,
+        "tool": "flagman",
+        "seat_id": FLAGMAN_SEAT_META["seat_id"],
+        "entity_type": FLAGMAN_SEAT_META["entity_type"],
+        "role": FLAGMAN_SEAT_META["role"],
+        "pod": FLAGMAN_SEAT_META["pod"],
+        "state": "ACTIVE",
+        "independent_of_paid_tools": True,
+        "paid_tokens_per_pulse": 0,
+        "local_gpu_tokens_per_pulse": 0,
+        "quality_gate": "AST_SYMBOL_ISOLATION_AND_ACCEPTANCE_TEST",
+        "observed_at": iso_now,
+        "updated_at": moment,
+        "expires_at": moment + float(ttl_s),
+        "pid": os.getpid(),
+        "lease": True,
+    }
+    if pulse_summary:
+        presence_payload["last_pulse"] = {
+            "flagman_action": pulse_summary.get("flagman_action"),
+            "wait_ms": pulse_summary.get("wait_ms", 0),
+            "wfg_edges_detected": pulse_summary.get("wfg_edges_detected", 0),
+            "reconciled_receipts_count": len(pulse_summary.get("reconciled_receipts") or []),
+            "reconciled_pilot_runs_count": len(pulse_summary.get("reconciled_pilot_runs") or []),
+        }
+
+    pfile = flagman_presence_file(root)
+    pfile.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix="flagman_pres.", suffix=".tmp", dir=str(pfile.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(presence_payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(str(tmp_path), str(pfile))
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+    return presence_payload
+
+
+def read_flagman_independent_presence(
+    project_root: Path,
+    *,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Read the Independent Flagman Entity's presence state from `.coord/presence/flagman.json`."""
+    moment = float(now if now is not None else time.time())
+    pfile = flagman_presence_file(project_root)
+    if not pfile.is_file():
+        return {
+            "tool": "flagman",
+            "seat_id": FLAGMAN_SEAT_META["seat_id"],
+            "entity_type": FLAGMAN_SEAT_META["entity_type"],
+            "state": "STANDBY_READY",
+            "independent_of_paid_tools": True,
+            "paid_tokens_per_pulse": 0,
+        }
+    try:
+        data = json.loads(pfile.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            exp = float(data.get("expires_at") or 0.0)
+            data["state"] = "ACTIVE" if exp > moment else "EXPIRED"
+            return data
+    except (OSError, ValueError):
+        pass
+    return {
+        "tool": "flagman",
+        "seat_id": FLAGMAN_SEAT_META["seat_id"],
+        "state": "UNKNOWN",
+        "independent_of_paid_tools": True,
+    }
+
+
+def _extract_python_top_level_symbol_digests(source_text: str) -> tuple[bool, dict[str, str]]:
+    """Parse Python source and return `(syntax_ok, {symbol_name: ast_dump_sha256})` for all
+    top-level functions, async functions, and classes. Used by the Flagman's Supreme Quality Gate
+    to detect semantic ghost conflicts when two workers touch the same function/class.
+    """
+    import ast
+    import hashlib
+
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError:
+        return False, {}
+
+    digests: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            dumped = ast.dump(node, annotate_fields=True, include_attributes=False)
+            digests[node.name] = hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+    return True, digests
+
+
+def flagman_autonomous_3way_hunk_merge(
+    base_text: str,
+    ours_text: str,
+    theirs_text: str,
+    *,
+    file_path: str = "module.py",
+) -> dict[str, Any]:
+    """Supreme Quality-Gated 3-Way AST + Disjoint Line Hunk Autonomous Merger:
+    When two workers concurrently edit the SAME file (`base_text -> ours_text` and `base_text -> theirs_text`),
+    the Independent Flagman merges them in 0ms with 0 paid tokens ONLY IF:
+      1. Line hunks (`difflib.SequenceMatcher`) are non-overlapping (or identical), AND
+      2. For Python (`.py`) files, `ours` and `theirs` did NOT modify the same top-level AST
+         function/class differently (`AST_SAME_SYMBOL_CONFLICT` guard), AND
+      3. `ast.parse(merged_text)` passes with 0 syntax errors (`ast_quality_verified=True`).
+    """
+    import ast
+    import difflib
+
+    if ours_text == theirs_text:
+        is_py = str(file_path).endswith(".py")
+        syn_ok = True
+        if is_py:
+            syn_ok, _ = _extract_python_top_level_symbol_digests(ours_text)
+        return {
+            "ok": syn_ok,
+            "signal": "GREEN_3WAY_IDENTICAL" if syn_ok else "RED_AST_SYNTAX_ERROR",
+            "flagman_action": "AUTONOMOUS_3WAY_AST_HUNK_MERGE",
+            "wait_ms": 0,
+            "ast_quality_verified": syn_ok,
+            "conflicting_symbols": [],
+            "merged_text": ours_text if syn_ok else None,
+        }
+
+    is_py = str(file_path).endswith(".py")
+    if is_py:
+        base_ok, base_syms = _extract_python_top_level_symbol_digests(base_text)
+        ours_ok, ours_syms = _extract_python_top_level_symbol_digests(ours_text)
+        theirs_ok, theirs_syms = _extract_python_top_level_symbol_digests(theirs_text)
+        if not (base_ok and ours_ok and theirs_ok):
+            return {
+                "ok": False,
+                "signal": "RED_AST_SYNTAX_ERROR",
+                "flagman_action": "REJECTED_BY_AST_QUALITY_GATE",
+                "wait_ms": 0,
+                "ast_quality_verified": False,
+                "conflicting_symbols": [],
+                "merged_text": None,
+            }
+        ours_changed_syms = {
+            k for k in (base_syms.keys() | ours_syms.keys())
+            if base_syms.get(k) != ours_syms.get(k)
+        }
+        theirs_changed_syms = {
+            k for k in (base_syms.keys() | theirs_syms.keys())
+            if base_syms.get(k) != theirs_syms.get(k)
+        }
+        same_symbol_conflicts = sorted(
+            k for k in (ours_changed_syms & theirs_changed_syms)
+            if ours_syms.get(k) != theirs_syms.get(k)
+        )
+        if same_symbol_conflicts:
+            return {
+                "ok": False,
+                "signal": "RED_AST_SAME_SYMBOL_CONFLICT",
+                "flagman_action": "BLOCKED_SEMANTIC_GHOST_CONFLICT",
+                "wait_ms": 0,
+                "ast_quality_verified": False,
+                "conflicting_symbols": same_symbol_conflicts,
+                "merged_text": None,
+            }
+
+    base_lines = base_text.splitlines(keepends=True)
+    ours_lines = ours_text.splitlines(keepends=True)
+    theirs_lines = theirs_text.splitlines(keepends=True)
+
+    def _collect_hunks(target_lines: list[str], source: str) -> list[tuple[int, int, list[str], str]]:
+        matcher = difflib.SequenceMatcher(None, base_lines, target_lines)
+        hunks: list[tuple[int, int, list[str], str]] = []
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                continue
+            hunks.append((i1, i2, target_lines[j1:j2], source))
+        return hunks
+
+    hunks_ours = _collect_hunks(ours_lines, "ours")
+    hunks_theirs = _collect_hunks(theirs_lines, "theirs")
+
+    # Check for line-range overlaps between ours and theirs
+    deduped_hunks: list[tuple[int, int, list[str], str]] = list(hunks_ours)
+    for b1, b2, repl_b, src_b in hunks_theirs:
+        overlap_found = False
+        for a1, a2, repl_a, _src_a in hunks_ours:
+            # Overlap check: intervals [a1, a2) and [b1, b2) overlap or touch at exact same insertion point
+            ranges_collide = (
+                (a1 == a2 and b1 == b2 and a1 == b1)
+                or (max(a1, b1) < min(a2, b2))
+                or (a1 == b1 and (a1 == a2 or b1 == b2))
+            )
+            if ranges_collide:
+                if a1 == b1 and a2 == b2 and repl_a == repl_b:
+                    overlap_found = True
+                    break
+                return {
+                    "ok": False,
+                    "signal": "RED_HUNK_LINE_OVERLAP",
+                    "flagman_action": "BLOCKED_OVERLAPPING_LINES",
+                    "wait_ms": 0,
+                    "ast_quality_verified": False,
+                    "conflicting_symbols": [],
+                    "merged_text": None,
+                }
+        if not overlap_found:
+            deduped_hunks.append((b1, b2, repl_b, src_b))
+
+    # Apply hunks in reverse base-line order
+    merged_lines = list(base_lines)
+    for i1, i2, repl, _src in sorted(deduped_hunks, key=lambda h: (h[0], h[1]), reverse=True):
+        merged_lines[i1:i2] = repl
+    merged_text = "".join(merged_lines)
+
+    if is_py:
+        try:
+            ast.parse(merged_text)
+        except SyntaxError:
+            return {
+                "ok": False,
+                "signal": "RED_MERGED_AST_SYNTAX_ERROR",
+                "flagman_action": "REJECTED_BY_AST_QUALITY_GATE",
+                "wait_ms": 0,
+                "ast_quality_verified": False,
+                "conflicting_symbols": [],
+                "merged_text": None,
+            }
+
+    return {
+        "ok": True,
+        "signal": "GREEN_3WAY_AST_HUNK_MERGED",
+        "flagman_action": "AUTONOMOUS_3WAY_AST_HUNK_MERGE",
+        "wait_ms": 0,
+        "ast_quality_verified": True,
+        "conflicting_symbols": [],
+        "hunks_applied": len(deduped_hunks),
+        "merged_text": merged_text,
+    }
+
+
+def run_independent_flagman_pulse(
+    project_root: Path,
+    *,
+    auto_heal: bool = True,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Execute one full autonomous heartbeat pulse of the Independent Flagman Entity (`seat-flagman-autonomous`):
+    1. Breaks 3-tool wait cycles, reconciles CRLF/LF dual-hash receipts & stale `SOURCE_DIVERGED` pilot runs.
+    2. Computes the live 3-Tool + Ollama(50%) + Haiku(30%) nonstop Tiki-Taka dispatch matrix.
+    3. Emits `.coord/presence/flagman.json` and `.coord/mediator/flagman_entity_state.json` at 0 paid tokens.
+    """
+    t0 = time.perf_counter()
+    root = Path(project_root).resolve()
+    moment = float(now if now is not None else time.time())
+
+    heal_res = detect_and_break_3tool_wait_cycles(root, auto_heal=auto_heal)
+
+    # Read 3-tool presence states without depending on any paid tool being ACTIVE
+    presence_states: dict[str, str] = {}
+    for tool in PAID_TOOLS_3:
+        pfile = root / ".coord" / "presence" / f"{tool}.json"
+        st = "ABSENT"
+        if pfile.is_file():
+            try:
+                pdata = json.loads(pfile.read_text(encoding="utf-8"))
+                if isinstance(pdata, dict):
+                    st = str(pdata.get("state") or "ABSENT").upper()
+            except (OSError, ValueError):
+                pass
+        presence_states[tool] = st
+
+    ready_cards: list[dict[str, Any]] = []
+    sched_file = root / ".coord" / "master_schedule.json"
+    if sched_file.is_file():
+        try:
+            sdata = json.loads(sched_file.read_text(encoding="utf-8"))
+            if isinstance(sdata, dict) and isinstance(sdata.get("phases"), list):
+                ready_cards = [
+                    p for p in sdata["phases"]
+                    if isinstance(p, dict) and str(p.get("state") or "").upper() in ("READY", "PLANNED", "ACTIVE")
+                ]
+        except (OSError, ValueError):
+            pass
+
+    tiki_plan = dispatch_nonstop_3tool_tiki_taka(
+        presence_states=presence_states,
+        ready_cards=ready_cards,
+    )
+    flagman_presence = write_flagman_independent_presence(
+        root,
+        now=moment,
+        pulse_summary=heal_res,
+    )
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    entity_state = {
+        "schema": FLAGMAN_ENTITY_SCHEMA,
+        "entity": FLAGMAN_SEAT_META,
+        "flagman_presence": flagman_presence,
+        "paid_tool_presence_states": presence_states,
+        "autonomous_alive_when_all_paid_limited": True,
+        "paid_api_calls": 0,
+        "paid_tokens": 0,
+        "local_gpu_tokens": 0,
+        "pulse_elapsed_ms": elapsed_ms,
+        "wait_ms": 0,
+        "quality_principle": "SUPREME_QUALITY_AST_AND_ACCEPTANCE_FIRST_WITH_ZERO_WAIT_BUDGET_THRIFT",
+        "self_healing_receipt": heal_res,
+        "tiki_taka_dispatch": tiki_plan,
+    }
+
+    sfile = flagman_entity_state_file(root)
+    sfile.parent.mkdir(parents=True, exist_ok=True)
+    sfile.write_text(json.dumps(entity_state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return entity_state

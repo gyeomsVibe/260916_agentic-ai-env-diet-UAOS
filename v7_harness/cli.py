@@ -617,6 +617,16 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
+    from .disjoint_mediator import run_independent_flagman_pulse
+
+    project = Path(args.project)
+    res = run_independent_flagman_pulse(project, auto_heal=not getattr(args, "no_heal", False))
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="v7_harness", description="v7 Minimal Automation Harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -981,6 +991,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_tp.add_argument("--auto-schedule", action="store_true", help="Automatically schedule/update self-healing RSI cards on anomaly")
     p_coord_tp.add_argument("--format", choices=["json", "table"], default="json")
     p_coord_tp.set_defaults(func=cmd_coord_transplant_status)
+
+    p_coord_fp = p_coord_subs.add_parser(
+        "flagman-pulse",
+        help="U274: Run Independent Autonomic Flagman Entity pulse (.coord/presence/flagman.json, WFG heal, 3-tool Tiki-Taka)",
+    )
+    p_coord_fp.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_fp.add_argument("--no-heal", action="store_true", help="Observe WFG without mutating state")
+    p_coord_fp.set_defaults(func=cmd_coord_flagman_pulse)
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")

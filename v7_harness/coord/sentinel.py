@@ -726,9 +726,9 @@ def run_sentinel_cycle(
         owner_res = f"{type(exc).__name__}: {exc}"[:200]
 
     try:
-        from ..disjoint_mediator import detect_and_break_3tool_wait_cycles
+        from ..disjoint_mediator import run_independent_flagman_pulse
 
-        flagman_3tool: Any = detect_and_break_3tool_wait_cycles(project_root, auto_heal=True)
+        flagman_3tool: Any = run_independent_flagman_pulse(project_root, auto_heal=True)["self_healing_receipt"]
     except Exception as exc:  # noqa: BLE001
         flagman_3tool = {"error": f"{type(exc).__name__}: {exc}"[:200]}
 
