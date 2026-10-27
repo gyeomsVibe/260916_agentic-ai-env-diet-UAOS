@@ -1268,3 +1268,70 @@ def ensure_independent_flagman_daemon(
     }
     daemon_meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"ok": True, **meta}
+def detect_and_heal_claude_oauth_401_hang(
+    project_root: Path | None = None,
+    *,
+    claude_projects_root: Path | None = None,
+    auto_heal: bool = True,
+    stale_after_s: float = 120.0,
+) -> dict[str, Any]:
+    """Detect Claude Code sessions stuck in a post-401 OAuth re-login zombie spinner (`401 OAuth access token has expired`
+    followed by `bridge-session` / `다시 로그인됨` with no subsequent assistant turn for >120s).
+    When `auto_heal=True`, releases the hung `stream-json` subprocess holding `--resume=<session_id>` so the UI
+    spinner stops immediately and the session can resume cleanly.
+    """
+    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    proj_dir = Path(claude_projects_root) if claude_projects_root is not None else (home / "projects")
+    hung_sessions: list[dict[str, Any]] = []
+    released_pids: list[int] = []
+    if not proj_dir.is_dir():
+        return {"healed_count": 0, "healed_sessions": [], "hung_sessions": [], "released_pids": []}
+
+    now = time.time()
+    for jsonl in proj_dir.glob("*/*.jsonl"):
+        try:
+            age_s = now - jsonl.stat().st_mtime
+            if age_s < stale_after_s or age_s > 86400:
+                continue
+            tail = jsonl.read_text(encoding="utf-8", errors="replace").splitlines()[-10:]
+        except OSError:
+            continue
+        tail_joined = "\n".join(tail)
+        if "OAuth access token has expired" in tail_joined and "bridge-session" in tail_joined:
+            sid = jsonl.stem
+            entry = {
+                "session_id": sid,
+                "transcript": jsonl.as_posix(),
+                "stale_age_s": round(age_s, 1),
+                "cause": "OAUTH_401_RELOGIN_STREAM_HANG",
+                "reason": "CLAUDE_OAUTH_401_RELOGIN_STREAM_HANG",
+            }
+            hung_sessions.append(entry)
+            if auto_heal and sys.platform == "win32":
+                try:
+                    ps_q = (
+                        "Get-CimInstance Win32_Process | "
+                        f"Where-Object {{ $_.Name -eq 'claude.exe' -and $_.CommandLine -match '{sid}' }} | "
+                        "Select-Object -ExpandProperty ProcessId"
+                    )
+                    out = subprocess.check_output(
+                        ["powershell", "-NoProfile", "-Command", ps_q],
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=8,
+                    )
+                    for line in out.splitlines():
+                        line = line.strip()
+                        if line.isdigit():
+                            pid = int(line)
+                            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, timeout=5)
+                            released_pids.append(pid)
+                except Exception:
+                    pass
+    return {
+        "healed_count": len(hung_sessions),
+        "healed_sessions": hung_sessions,
+        "hung_sessions": hung_sessions,
+        "released_pids": released_pids,
+    }
