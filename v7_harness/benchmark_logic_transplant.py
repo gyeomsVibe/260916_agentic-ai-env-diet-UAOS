@@ -887,9 +887,58 @@ def record_u251_operational_telemetry_and_schedule_rsi(
                         "observation_count": 1,
                     })
 
+            active_paid_set = {str(s.get("tool")) for s in active_seats if s.get("tool")}
+            reassigned_for_checklist: list[str] = []
+            if active_paid_set:
+                for ph in phases_list:
+                    if not isinstance(ph, dict) or str(ph.get("state") or "").upper() in terminal_states:
+                        continue
+                    cur_owner = str(ph.get("owner") or ph.get("owner_tool") or "").lower()
+                    if cur_owner and cur_owner not in active_paid_set:
+                        ph["previous_owner"] = cur_owner
+                        ph["owner"] = chosen_owner
+                        ph["owner_tool"] = chosen_owner
+                        if str(ph.get("reviewer") or "").lower() in ("", chosen_owner):
+                            ph["reviewer"] = chosen_judge
+                        reassigned_for_checklist.append(f"{ph.get('phase_id') or ph.get('id')} ({cur_owner}->{chosen_owner})")
+
+            deduped_phases: list[dict[str, Any]] = []
+            seen_pids: dict[str, int] = {}
+            for ph in phases_list:
+                if not isinstance(ph, dict):
+                    continue
+                pid = str(ph.get("phase_id") or ph.get("id") or "")
+                if pid and pid in seen_pids:
+                    deduped_phases[seen_pids[pid]] = ph
+                else:
+                    if pid:
+                        seen_pids[pid] = len(deduped_phases)
+                    deduped_phases.append(ph)
+            sched_data["phases"] = deduped_phases
+            phases_list = deduped_phases
+
             tmp_sched = sched_path.with_name(f".master_schedule.{os.getpid()}.{time.time_ns()}.tmp")
             tmp_sched.write_text(json.dumps(sched_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             os.replace(tmp_sched, sched_path)
+
+            if reassigned_for_checklist and "codex" not in active_paid_set:
+                chk_path = desk / ".coord" / "codex_return_checklist.md"
+                existing_chk = chk_path.read_text(encoding="utf-8") if chk_path.is_file() else "# Codex Return Checklist\n"
+                entry_line = f"- [U251-RSI Failover] Reassigned offline seats: {', '.join(reassigned_for_checklist)}\n"
+                if entry_line not in existing_chk:
+                    chk_path.write_text(existing_chk + entry_line, encoding="utf-8")
+
+            refreshed = collect_live_five_chip_telemetry(
+                desk,
+                target_path=target_path,
+                foreground_wait_s=foreground_wait_s,
+                is_background_watcher=is_background_watcher,
+                acting_tool=acting_tool,
+                mutate_schedule=False,
+            )
+            five_chip = refreshed.get("five_chip_telemetry") or five_chip
+            chips = five_chip.get("chips") or {}
+            c1 = chips.get("1_todos_schedule") or c1
 
     receipt = {
         "schema": "uaos.u251_operational_telemetry.v1",
