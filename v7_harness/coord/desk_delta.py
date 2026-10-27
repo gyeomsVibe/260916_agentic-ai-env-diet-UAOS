@@ -54,15 +54,27 @@ def _epoch(stamp) -> float | None:
     except ValueError:
         return None
 
+_PAYLOAD_CACHE: dict[tuple[str, int], dict] = {}
+
+
 def _payload(path: Path) -> dict:
     try:
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns)
+        cached = _PAYLOAD_CACHE.get(key)
+        if cached is not None:
+            return cached
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, ValueError):
         return {}
     if not isinstance(data, dict):
         return {}
     body = data.get("payload", data)
-    return body if isinstance(body, dict) else {}
+    res = body if isinstance(body, dict) else {}
+    if len(_PAYLOAD_CACHE) > 4096:
+        _PAYLOAD_CACHE.clear()
+    _PAYLOAD_CACHE[key] = res
+    return res
 
 def own_letter(path: Path, tool: str) -> bool:
     tool = canonical(tool)
@@ -90,7 +102,7 @@ def absence_items(root: Path, since: float, tool: str) -> list[str]:
     tool = canonical(tool)
     items: list[str] = []
     # Commits
-    args = ["log", "--all", "--no-merges", f"--since=@{int(since)}", "--format=%h %s"]
+    args = ["log", "HEAD", "--no-merges", f"--since=@{int(since)}", "--format=%h %s"]
     if tool in TRAILERS:
         args.extend(["--invert-grep", f"--grep={TRAILERS[tool]}"])
     for line in _git(root, *args):
@@ -235,16 +247,21 @@ def _replay_bound(project: Path, tool: str, session: str | None, letter: Path, m
 
 
 def _replay_letters(project: Path, tool: str, session: str | None) -> list[Path]:
+    if not session or tool not in TOOLS:
+        return []
     from .mailbox import _is_symlink_or_reparse
     inbox = project / ".coord" / "mailbox" / "inbox"
+    if not inbox.is_dir():
+        return []
     acked = inbox.parent / "ack"
+    acked_names = {p.name for p in acked.glob("*.json")} if acked.is_dir() else set()
     ordered = []
     memo: dict = {}
     for letter in inbox.glob("*.json"):
         try:
-            if not letter.is_file() or _is_symlink_or_reparse(letter) or own_letter(letter, tool):
+            if letter.name in acked_names or not letter.is_file() or _is_symlink_or_reparse(letter):
                 continue
-            if (acked / letter.name).exists() or not _replay_bound(project, tool, session, letter, memo):
+            if own_letter(letter, tool) or not _replay_bound(project, tool, session, letter, memo):
                 continue
             ordered.append((letter.stat().st_mtime_ns, letter.name, letter))
         except (OSError, ValueError):
@@ -307,16 +324,27 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
             if letter in replay and (letter == replay[0] or not _replay_urgent(letter)):
                 hidden += letter != replay[0]
                 continue
-            if not letter.is_file() or own_letter(letter, tool):
+            if not letter.is_file():
+                continue
+            mtime = _mtime(letter)
+            in_replay = letter in replay
+            in_unshown = letter.stem in unshown_before
+            if had_cursor and mtime <= since and not in_replay and not in_unshown:
+                if letter.stem in pending and not own_letter(letter, tool):
+                    from .stop_gate import _foreign
+                    if not _foreign(project, tool, session, _payload(letter)):
+                        recovered.append(letter)
+                continue
+            if own_letter(letter, tool):
                 continue
             from .stop_gate import _foreign
             if _foreign(project, tool, session, _payload(letter)):
                 continue
-            fresh = _mtime(letter) > since or (letter in replay and _replay_urgent(letter))
-            look = None if fresh or letter.stem in unshown_before else _first_look_addressed(letter, inbox, tool, now)
+            fresh = mtime > since or (in_replay and _replay_urgent(letter))
+            look = None if fresh or in_unshown else _first_look_addressed(letter, inbox, tool, now)
             fresh = fresh or (look == "fresh" and not had_cursor)
             hidden += look is not None and not fresh
-            if not fresh and letter.stem not in unshown_before:
+            if not fresh and not in_unshown:
                 # U141-A crash recovery: shown before (cursor written) but its receipt was never acked.
                 if had_cursor and letter.stem in pending:
                     recovered.append(letter)
