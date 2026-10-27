@@ -6,7 +6,7 @@ Advisory-only planner: `collect_capacity_snapshot` and `build_capacity_aware_sch
 `.coord/master_schedule.json`.
 
 Follows OpenTelemetry GenAI semantic conventions (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`) and
-UAOS-RSI `docs/35_token-budget-routing-policy.md`:
+UAOS-RSI `docs/27_token-budget-routing-policy.md`:
 - Measured token counts and provider quota percentages are kept in distinct fields and never converted into one another.
 - Caps in `tool_caps_5h` require a recorded measured source (`tool_caps_source`); without a recorded source,
   `usable_remaining_5h_tokens` is reported as `"UNKNOWN"` and the planner does not rank on unmeasured token caps.
@@ -51,6 +51,55 @@ DEFAULT_POLICY: dict[str, Any] = {
         "antigravity": None,
         "haiku": None,
         "ollama": None,
+    },
+    "tool_caps_7d": {
+        "codex": None,
+        "claude": None,
+        "antigravity": None,
+        "haiku": None,
+        "ollama": None,
+    },
+    "subscription_tiers": {
+        "codex": {
+            "plan_name": "ChatGPT Plus ($20/월) · GPT-5.4 Codex Astra",
+            "short_plan": "Plus $20 (Astra)",
+            "reference_cap_5h_tokens": 7000000,
+            "reference_cap_24h_tokens": 25000000,
+            "reference_cap_7d_tokens": 175000000,
+            "offload_policy": "핵심 키포인트(아키텍처·보안·최종판정) 집중 + 일반검수 위임(U257)",
+        },
+        "claude": {
+            "plan_name": "Claude Code 구독제 (Opus/Sonnet 20% + Haiku 30% + Ollama 50%)",
+            "short_plan": "Claude Sub (5:3:2)",
+            "reference_cap_5h_tokens": 15000000,
+            "reference_cap_24h_tokens": 45000000,
+            "reference_cap_7d_tokens": 180000000,
+            "offload_policy": "올라마 50% : Haiku 5.5 30% : Opus/Sonnet 20% 이원 분리 병렬(U271)",
+        },
+        "antigravity": {
+            "plan_name": "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon",
+            "short_plan": "AI Ultra 5x (Argon)",
+            "reference_cap_5h_tokens": 75000000,
+            "reference_cap_24h_tokens": 220000000,
+            "reference_cap_7d_tokens": 600000000,
+            "offload_policy": "5x 대용량 주력 실행·교차검증·1순위 자율병합 + 올라마 0토큰 선행",
+        },
+        "haiku": {
+            "plan_name": "Claude Haiku 5.5 경량 서브오케스트레이터 (건당 12K 상한)",
+            "short_plan": "Haiku 5.5 (30% 분담)",
+            "reference_cap_5h_tokens": 6000000,
+            "reference_cap_24h_tokens": 18000000,
+            "reference_cap_7d_tokens": 60000000,
+            "offload_policy": "tests/*·docs/* 물리 분리 병렬(DISJOINT_PARALLEL_OVERLAP)",
+        },
+        "ollama": {
+            "plan_name": "Ollama 로컬 0토큰 전자계산기 (qwen2.5-coder:7b)",
+            "short_plan": "로컬 0원 (50% 분담)",
+            "reference_cap_5h_tokens": None,
+            "reference_cap_24h_tokens": None,
+            "reference_cap_7d_tokens": None,
+            "offload_policy": "250줄+ 탐색(local_read_map)·초안(local_draft)·20~30줄 코드패치 0토큰",
+        },
     },
     "tool_caps_source": {
         "origin": "unmeasured_by_default",
@@ -169,7 +218,32 @@ def _scan_agy_auto(desk: Path) -> list[dict[str, Any]]:
                 d = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(d, dict) and int(d.get("tokens") or 0) > 0:
+            if not isinstance(d, dict):
+                continue
+            usage = d.get("usage")
+            if isinstance(usage, dict):
+                inp = int(usage.get("input_tokens") or 0)
+                cr = int(usage.get("cache_read_tokens") or 0)
+                cw = int(usage.get("cache_creation_input_tokens") or 0)
+                out_t = int(usage.get("output_tokens") or 0)
+                raw_tot = inp + cr + cw + out_t
+                if raw_tot <= 0:
+                    raw_tot = int(usage.get("total_tokens") or 0)
+                    inp = int(raw_tot * 0.85)
+                    out_t = max(0, raw_tot - inp)
+                if raw_tot > 0:
+                    rows.append({
+                        "engine": "antigravity",
+                        "ts": float(d.get("ts") or d.get("at") or 0.0),
+                        "work_id": str(d.get("card") or d.get("message_id") or "agy_auto"),
+                        "conv_id": str(d.get("conversation_id") or d.get("session") or ""),
+                        "uncached_input": inp,
+                        "cache_read": cr,
+                        "cache_write": cw,
+                        "output": out_t,
+                        "raw_total": raw_tot,
+                    })
+            elif int(d.get("tokens") or 0) > 0:
                 tok = int(d["tokens"])
                 rows.append({
                     "engine": "antigravity",
@@ -187,7 +261,35 @@ def _scan_agy_auto(desk: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _scan_sqlite_ledger(home: Path, cutoff_7d: float) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+def _auto_sync_usage_accounting(home: Path, now: float) -> None:
+    """Incrementally sync ~/.codex/sessions, ~/.claude/projects, and ~/.cache/olla into ledger.sqlite3 with 0 paid tokens."""
+    db_path = home / ".uaos" / "usage" / "ledger.sqlite3"
+    if not db_path.is_file():
+        return
+    if not ((home / ".codex" / "sessions").is_dir() or (home / ".claude" / "projects").is_dir()):
+        return
+    stamp_path = home / ".uaos" / "usage" / ".last_collect_stamp.json"
+    try:
+        if stamp_path.is_file():
+            st = json.loads(stamp_path.read_text(encoding="utf-8"))
+            if isinstance(st, dict) and 0.0 <= (now - float(st.get("ts") or 0.0)) < 60.0:
+                return
+        from v7_harness.usage_accounting import collect as collect_sqlite_ledger
+
+        collect_sqlite_ledger(home=home, db=db_path)
+        _atomic_write_json(stamp_path, {"ts": now})
+    except Exception:
+        pass
+
+
+def _scan_sqlite_ledger(
+    home: Path,
+    cutoff_7d: float,
+    *,
+    now: float | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    moment = float(now if now is not None else (cutoff_7d + WINDOW_7D_SECONDS))
+    _auto_sync_usage_accounting(home, moment)
     db_path = home / ".uaos" / "usage" / "ledger.sqlite3"
     events: list[dict[str, Any]] = []
     quotas: dict[str, dict[str, Any]] = {}
@@ -228,22 +330,48 @@ def _scan_sqlite_ledger(home: Path, cutoff_7d: float) -> tuple[list[dict[str, An
                     "output": out,
                     "raw_total": inp + cr + cw + out,
                 })
+            quotas_5h: dict[str, dict[str, Any]] = {}
+            quotas_7d: dict[str, dict[str, Any]] = {}
             for q in con.execute(
                 """SELECT provider, observed_at, used_percent, window_minutes, resets_at, origin
                    FROM quota_snapshots ORDER BY observed_at ASC"""
             ):
                 qd = dict(q)
                 prov = str(qd.get("provider") or "")
-                if prov:
-                    quotas[prov] = {
-                        "used_percent": float(qd["used_percent"]) if qd.get("used_percent") is not None else None,
-                        "remaining_percent": round(100.0 - float(qd["used_percent"]), 1)
-                        if qd.get("used_percent") is not None else None,
-                        "window_minutes": qd.get("window_minutes"),
-                        "resets_at": qd.get("resets_at"),
-                        "observed_at": qd.get("observed_at"),
-                        "origin": qd.get("origin"),
-                    }
+                if not prov:
+                    continue
+                obs_ts = _parse_ts({"observed_at": qd.get("observed_at")})
+                res_ts = _parse_ts({"resets_at": qd.get("resets_at")})
+                win_min = int(qd["window_minutes"]) if qd.get("window_minutes") is not None else 300
+                win_sec = max(WINDOW_5H_SECONDS, win_min * 60)
+                if obs_ts is not None and res_ts is None and (moment - obs_ts) > WINDOW_24H_SECONDS:
+                    continue
+                if obs_ts is not None and (moment - obs_ts) > WINDOW_7D_SECONDS:
+                    continue
+                raw_used_pct = float(qd["used_percent"]) if qd.get("used_percent") is not None else None
+                reset_elapsed = bool(res_ts is not None and res_ts <= moment)
+                eff_used_pct = 0.0 if reset_elapsed else raw_used_pct
+                eff_rem_pct = round(100.0 - eff_used_pct, 1) if eff_used_pct is not None else None
+                entry = {
+                    "used_percent": eff_used_pct,
+                    "remaining_percent": eff_rem_pct,
+                    "pre_reset_used_percent": raw_used_pct,
+                    "window_minutes": qd.get("window_minutes"),
+                    "resets_at": qd.get("resets_at"),
+                    "reset_in_seconds": max(0, int(res_ts - moment)) if (res_ts is not None and not reset_elapsed) else 0,
+                    "quota_reset_ready": reset_elapsed,
+                    "observed_at": qd.get("observed_at"),
+                    "origin": qd.get("origin"),
+                }
+                if win_min <= 360:
+                    quotas_5h[prov] = entry
+                else:
+                    quotas_7d[prov] = entry
+            for prov in set(quotas_5h) | set(quotas_7d):
+                primary = dict(quotas_5h.get(prov) or quotas_7d.get(prov) or {})
+                primary["window_5h_quota"] = quotas_5h.get(prov)
+                primary["window_7d_quota"] = quotas_7d.get(prov)
+                quotas[prov] = primary
         finally:
             con.close()
     except Exception:
@@ -500,7 +628,7 @@ def collect_capacity_snapshot(
                     return True
         return False
 
-    sq_events, quotas = _scan_sqlite_ledger(home_dir, cutoff_7d)
+    sq_events, quotas = _scan_sqlite_ledger(home_dir, cutoff_7d, now=moment)
     prior_after_ledger = list(events)
     for se in sq_events:
         if not _is_dup_event(se, prior_after_ledger):
@@ -571,46 +699,104 @@ def collect_capacity_snapshot(
         )
         q_snap = quotas.get(eng)
 
+        tier_meta = (policy.get("subscription_tiers") or {}).get(eng) or {}
+        cap_7d_cfg = (policy.get("tool_caps_7d") or {}).get(eng)
+        ref_cap_5h = int(cap_5h) if (cap_5h is not None and int(cap_5h) > 0) else tier_meta.get("reference_cap_5h_tokens")
+        ref_cap_24h = tier_meta.get("reference_cap_24h_tokens")
+        ref_cap_7d = int(cap_7d_cfg) if (cap_7d_cfg is not None and int(cap_7d_cfg) > 0) else tier_meta.get("reference_cap_7d_tokens")
+        q_5h = (q_snap or {}).get("window_5h_quota") if isinstance(q_snap, dict) else None
+        q_7d = (q_snap or {}).get("window_7d_quota") if isinstance(q_snap, dict) else None
+        quota_reset_ready = bool((q_snap or {}).get("quota_reset_ready")) if isinstance(q_snap, dict) else False
+
         has_cap_source = bool(policy.get("tool_caps_source") or policy.get("sources"))
+        active_burst_reserve = 0
         if cap_5h is not None and cap_5h > 0 and has_cap_source:
             used_eff = w5["effective_budget_tokens"]
             rem_tokens: int | str | None = max(0, int(cap_5h) - used_eff)
             util_pct = round(min(100.0, (used_eff / float(cap_5h)) * 100.0), 1)
-            if pres_state in ("LIMITED", "ABSENT"):
+            if pres_state in ("LIMITED", "ABSENT") and not quota_reset_ready:
                 usable_cards: int | str = 0
                 status_tier = "LIMITED_PAUSE"
             else:
-                usable_cards = int(rem_tokens // max(1, avg_card))
-                if util_pct >= float(policy.get("critical_threshold_pct", 90.0)):
-                    status_tier = "CRITICAL_OFFLOAD"
-                elif util_pct >= float(policy.get("offload_threshold_pct", 70.0)):
-                    status_tier = "THROTTLE_TO_LOCAL"
+                if int(rem_tokens) == 0:
+                    # Active session (or reset-elapsed session) exceeding soft 5h envelope enters THRIFT_OVERDRIVE reserve
+                    active_burst_reserve = max(avg_card * 3, int(cap_5h * 0.15))
+                    usable_cards = max(1, int(active_burst_reserve // max(1, avg_card)))
+                    status_tier = "THRIFT_OVERDRIVE"
                 else:
-                    status_tier = "HEALTHY"
+                    usable_cards = int(rem_tokens // max(1, avg_card))
+                    if util_pct >= float(policy.get("critical_threshold_pct", 90.0)):
+                        status_tier = "CRITICAL_OFFLOAD"
+                    elif util_pct >= float(policy.get("offload_threshold_pct", 70.0)):
+                        status_tier = "THROTTLE_TO_LOCAL"
+                    else:
+                        status_tier = "HEALTHY"
         elif eng in PAID_TOOLS:
             rem_tokens = "UNKNOWN"
             util_pct = 0.0
-            usable_cards = 0 if pres_state in ("LIMITED", "ABSENT") else "UNKNOWN"
-            status_tier = "LIMITED_PAUSE" if pres_state in ("LIMITED", "ABSENT") else "UNMEASURED_CAP"
+            usable_cards = 0 if (pres_state in ("LIMITED", "ABSENT") and not quota_reset_ready) else "UNKNOWN"
+            status_tier = "LIMITED_PAUSE" if (pres_state in ("LIMITED", "ABSENT") and not quota_reset_ready) else "UNMEASURED_CAP"
         else:
             rem_tokens = None
             util_pct = 0.0
             usable_cards = 999
             status_tier = "UNLIMITED_LOCAL"
 
+        sub_rem_5h = max(0, int(ref_cap_5h) - w5["effective_budget_tokens"]) if ref_cap_5h else None
+        sub_pct_5h = round(min(100.0, (w5["effective_budget_tokens"] / float(ref_cap_5h)) * 100.0), 1) if ref_cap_5h else 0.0
+        sub_rem_24h = max(0, int(ref_cap_24h) - w24["effective_budget_tokens"]) if ref_cap_24h else None
+        sub_pct_24h = round(min(100.0, (w24["effective_budget_tokens"] / float(ref_cap_24h)) * 100.0), 1) if ref_cap_24h else 0.0
+        sub_rem_7d = max(0, int(ref_cap_7d) - w7["effective_budget_tokens"]) if ref_cap_7d else None
+        sub_pct_7d = round(min(100.0, (w7["effective_budget_tokens"] / float(ref_cap_7d)) * 100.0), 1) if ref_cap_7d else 0.0
+
+        subscription_plan = {
+            "plan_name": str(tier_meta.get("plan_name") or policy["tool_roles"].get(eng, eng)),
+            "short_plan": str(tier_meta.get("short_plan") or eng),
+            "offload_policy": str(tier_meta.get("offload_policy") or ""),
+            "total_5h_tokens": ref_cap_5h,
+            "used_5h_effective_tokens": w5["effective_budget_tokens"],
+            "used_5h_raw_tokens": w5["raw_total_tokens"],
+            "remaining_5h_tokens": sub_rem_5h,
+            "utilization_5h_pct": sub_pct_5h,
+            "total_24h_tokens": ref_cap_24h,
+            "used_24h_effective_tokens": w24["effective_budget_tokens"],
+            "used_24h_raw_tokens": w24["raw_total_tokens"],
+            "remaining_24h_tokens": sub_rem_24h,
+            "utilization_24h_pct": sub_pct_24h,
+            "total_7d_tokens": ref_cap_7d,
+            "used_7d_effective_tokens": w7["effective_budget_tokens"],
+            "used_7d_raw_tokens": w7["raw_total_tokens"],
+            "remaining_7d_tokens": sub_rem_7d,
+            "utilization_7d_pct": sub_pct_7d,
+            "quota_5h_ui_pct": (q_5h or {}).get("used_percent") if isinstance(q_5h, dict) else (q_snap or {}).get("used_percent") if isinstance(q_snap, dict) else None,
+            "quota_7d_ui_pct": (q_7d or {}).get("used_percent") if isinstance(q_7d, dict) else None,
+            "resets_at_5h": (q_5h or {}).get("resets_at") if isinstance(q_5h, dict) else (q_snap or {}).get("resets_at") if isinstance(q_snap, dict) else None,
+            "resets_at_7d": (q_7d or {}).get("resets_at") if isinstance(q_7d, dict) else None,
+            "reset_in_seconds_5h": (q_5h or {}).get("reset_in_seconds") if isinstance(q_5h, dict) else (q_snap or {}).get("reset_in_seconds") if isinstance(q_snap, dict) else None,
+            "quota_reset_ready": quota_reset_ready,
+        }
+
         engines_summary[eng] = {
             "engine": eng,
             "role": policy["tool_roles"].get(eng, ""),
             "presence_state": pres_state,
+            "quota_reset_ready": quota_reset_ready,
             "status_tier": status_tier,
             "budget_cap_5h_tokens": cap_5h,
+            "budget_cap_7d_tokens": ref_cap_7d if (cap_5h is not None or cap_7d_cfg is not None) else None,
             "used_5h_effective_tokens": w5["effective_budget_tokens"],
             "used_5h_raw_tokens": w5["raw_total_tokens"],
             "usable_remaining_5h_tokens": rem_tokens,
+            "active_burst_reserve_tokens": active_burst_reserve,
             "budget_utilization_5h_pct": util_pct,
+            "used_7d_effective_tokens": w7["effective_budget_tokens"],
+            "used_7d_raw_tokens": w7["raw_total_tokens"],
+            "usable_remaining_7d_tokens": sub_rem_7d if (cap_5h is not None or cap_7d_cfg is not None) else ("UNKNOWN" if eng in PAID_TOOLS else None),
+            "budget_utilization_7d_pct": sub_pct_7d if (cap_5h is not None or cap_7d_cfg is not None) else 0.0,
             "avg_card_cost_tokens": avg_card,
             "usable_cards_capacity": usable_cards,
             "provider_quota_snapshot": q_snap,
+            "subscription_plan": subscription_plan,
             "window_5h": w5,
             "window_24h": w24,
             "window_7d": w7,
@@ -710,11 +896,21 @@ def build_capacity_aware_schedule(
             return int(raw_rem)
         return None
 
+    def _schedulable_rem(t: str) -> int:
+        info = engines.get(t) or {}
+        rem = _rem_int(t)
+        if rem is not None and rem > 0:
+            return rem
+        burst = int(info.get("active_burst_reserve_tokens") or 0)
+        return burst if burst > 0 else 0
+
     def _tool_score(t: str) -> tuple[int, int]:
         info = engines.get(t) or {}
-        active = 1 if info.get("presence_state") == "ACTIVE" and info.get("status_tier") != "LIMITED_PAUSE" else 0
-        rem = _rem_int(t)
-        return (active, rem if rem is not None else 0)
+        is_online = (
+            info.get("presence_state") == "ACTIVE" or bool(info.get("quota_reset_ready"))
+        ) and info.get("status_tier") != "LIMITED_PAUSE"
+        active = 1 if is_online else 0
+        return (active, _schedulable_rem(t))
 
     ranked_paid = sorted(PAID_TOOLS, key=_tool_score, reverse=True)
     recommended_conductor = next(
@@ -724,8 +920,9 @@ def build_capacity_aware_schedule(
 
     virtual_rem: dict[str, int] = {}
     for t in PAID_TOOLS:
-        r_val = _rem_int(t)
-        virtual_rem[t] = (r_val if r_val is not None else 0) if _tool_score(t)[0] == 1 else 0
+        virtual_rem[t] = _schedulable_rem(t) if _tool_score(t)[0] == 1 else 0
+
+    in_flight_load: dict[str, int] = {t: 0 for t in PAID_TOOLS}
 
     done_ids = {
         str(p.get("phase_id") or p.get("id") or "")
@@ -753,10 +950,15 @@ def build_capacity_aware_schedule(
                 chosen_judge = recorded_reviewer
             else:
                 candidates = [t for t in PAID_TOOLS if t != review_owner and virtual_rem.get(t, 0) > 0]
-                chosen_judge = max(candidates, key=lambda t: virtual_rem[t]) if candidates else "BLOCKED"
+                chosen_judge = (
+                    max(candidates, key=lambda t: virtual_rem[t] / (1.0 + in_flight_load[t] * 0.5))
+                    if candidates
+                    else "BLOCKED"
+                )
             review_cost = int(est_tokens * 0.35)
             if chosen_judge in virtual_rem:
                 virtual_rem[chosen_judge] = max(0, virtual_rem.get(chosen_judge, 0) - review_cost)
+                in_flight_load[chosen_judge] = in_flight_load.get(chosen_judge, 0) + 1
             assignments.append({
                 "phase_id": pid,
                 "state": state,
@@ -774,25 +976,50 @@ def build_capacity_aware_schedule(
             })
         elif state in ("READY", "ACTIVE", "PLANNED"):
             candidates = [t for t in PAID_TOOLS if virtual_rem.get(t, 0) > 0]
-            chosen_owner = max(candidates, key=lambda t: virtual_rem[t]) if candidates else recommended_conductor
+            is_keypoint = bool(p.get("codex_exclusive") or p.get("keypoint"))
+            if is_keypoint and "codex" in candidates:
+                chosen_owner = "codex"
+            elif candidates:
+                # Parallel load-balanced score: distributes multiple READY cards across all active tools proportionally
+                chosen_owner = max(
+                    candidates,
+                    key=lambda t: virtual_rem[t] / (1.0 + in_flight_load.get(t, 0) * 1.5),
+                )
+            else:
+                chosen_owner = recommended_conductor
             if recorded_reviewer in PAID_TOOLS and recorded_reviewer != chosen_owner and virtual_rem.get(recorded_reviewer, 0) > 0:
                 chosen_reviewer = recorded_reviewer
             else:
                 reviewer_cands = [t for t in PAID_TOOLS if t != chosen_owner and virtual_rem.get(t, 0) > 0]
-                chosen_reviewer = max(reviewer_cands, key=lambda t: virtual_rem[t]) if reviewer_cands else "BLOCKED"
-            paid_share = int(est_tokens * 0.4)
+                chosen_reviewer = (
+                    max(reviewer_cands, key=lambda t: virtual_rem[t] / (1.0 + in_flight_load.get(t, 0) * 0.5))
+                    if reviewer_cands
+                    else "BLOCKED"
+                )
+            owner_tier = str((engines.get(chosen_owner) or {}).get("status_tier") or "")
+            high_offload = owner_tier in ("CRITICAL_OFFLOAD", "THRIFT_OVERDRIVE", "THROTTLE_TO_LOCAL")
+            paid_share = int(est_tokens * (0.25 if high_offload else 0.4))
             sizing_action = "SPLIT_CARD" if paid_share > max(1, virtual_rem.get(chosen_owner, 0)) else "KEEP"
             virtual_rem[chosen_owner] = max(0, virtual_rem.get(chosen_owner, 0) - paid_share)
+            in_flight_load[chosen_owner] = in_flight_load.get(chosen_owner, 0) + 1
+            offload_spec = (
+                ["ollama:code_patch_30line_v7_harness", "haiku:disjoint_tests_docs_5_3_2"]
+                if high_offload
+                else ["ollama:stage1_draft_stage3_slice", "haiku:stage2_map_moderator"]
+            )
             assignments.append({
                 "phase_id": pid,
                 "state": state,
                 "deps_met": deps_met,
                 "assigned_owner": chosen_owner,
                 "assigned_reviewer": chosen_reviewer,
-                "local_offload": ["ollama:stage1_draft_stage3_slice", "haiku:stage2_map_moderator"],
+                "local_offload": offload_spec,
                 "estimated_paid_tokens": paid_share,
                 "sizing_action": sizing_action,
-                "reason": f"Capacity-weighted owner {chosen_owner} (rem {virtual_rem[chosen_owner]:,} tok) + 60% Ollama/Haiku offload",
+                "reason": (
+                    f"Parallel tiki-taka owner {chosen_owner} (rem {virtual_rem[chosen_owner]:,} tok, lane #{in_flight_load[chosen_owner]}) "
+                    f"+ {'75% 5:3:2 disjoint' if high_offload else '60%'} Ollama/Haiku offload"
+                ),
             })
 
     paid_used_5h = sum(int((engines.get(t) or {}).get("used_5h_effective_tokens") or 0) for t in PAID_TOOLS)
@@ -1138,6 +1365,30 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
             f"│ {eng.ljust(12)} │ {st} │ {bar_str.ljust(16)} │ {used:>12,} │ {rem_str} │ {card_str.ljust(8)} │{q_str}"
         )
     lines.append("└──────────────┴─────────┴──────────────────┴──────────────┴──────────────┴──────────┘")
+    lines.append("[구독요금제] [3대 도구 현재 구독 요금제 총량(5h/7d) 대비 실시간 사용·잔여·쿼터리셋 수치화]")
+    for eng in ("codex", "claude", "antigravity", "haiku", "ollama"):
+        info = engines.get(eng) or {}
+        sub = info.get("subscription_plan") or {}
+        pname = str(sub.get("short_plan") or eng)
+        t5 = sub.get("total_5h_tokens")
+        u5 = int(sub.get("used_5h_effective_tokens") or 0)
+        r5 = sub.get("remaining_5h_tokens")
+        p5 = float(sub.get("utilization_5h_pct") or 0.0)
+        t7 = sub.get("total_7d_tokens")
+        u7 = int(sub.get("used_7d_effective_tokens") or 0)
+        r7 = sub.get("remaining_7d_tokens")
+        p7 = float(sub.get("utilization_7d_pct") or 0.0)
+        q5 = sub.get("quota_5h_ui_pct")
+        q7 = sub.get("quota_7d_ui_pct")
+        rst = sub.get("resets_at_5h") or sub.get("resets_at_7d") or "-"
+        if t5 is None:
+            lines.append(f"  • {eng.upper()} [{pname}]: 5h 사용 {u5:,} tok (무제한 0원) | 7d 주간 {u7:,} tok (무제한 0원)")
+        else:
+            q_badge = f" | 계정쿼터(5h={q5 if q5 is not None else '-'}%, 7d={q7 if q7 is not None else '-'}%, 리셋={rst})"
+            lines.append(
+                f"  • {eng.upper()} [{pname}]: 5h {u5:,}/{int(t5):,} tok (잔여 {int(r5 or 0):,}, {p5:.1f}%) "
+                f"| 7d주간 {u7:,}/{int(t7 or 0):,} tok (잔여 {int(r7 or 0):,}, {p7:.1f}%){q_badge}"
+            )
     assigns = sched.get("phase_assignments") or []
     if assigns:
         lines.append("[스케줄] [용량 기반 마스터·협업 스케줄 자동 배정]")
@@ -1271,27 +1522,37 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         const rem = info.usable_remaining_5h_tokens;
         const cards = info.usable_cards_capacity;
         const q = info.provider_quota_snapshot;
+        const sub = info.subscription_plan || {{}};
         const qText = (q && q.used_percent !== null && q.used_percent !== undefined)
-          ? ` | 계정UI ${{q.used_percent}}%` : "";
+          ? ` | UI 5h:${{q.used_percent}}%` : "";
+        const q7Text = (sub.quota_7d_ui_pct !== null && sub.quota_7d_ui_pct !== undefined)
+          ? `·7d:${{sub.quota_7d_ui_pct}}%` : "";
+        const subTotal5h = sub.total_5h_tokens;
+        const subTotal7d = sub.total_7d_tokens;
+        const subPct7d = Number(sub.utilization_7d_pct || 0);
 
         const card = document.createElement("div");
         card.className = "border border-[var(--border)] rounded-lg p-2.5 flex flex-col justify-between space-y-1.5";
         card.innerHTML = `
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold">${{LABELS[eng] || eng}}</span>
-            <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">${{state}}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">${{state}}${{info.quota_reset_ready ? "·RESET" : ""}}</span>
+          </div>
+          <div class="text-[11px] text-[var(--muted-foreground)] font-medium">${{sub.plan_name || ""}}</div>
+          <div class="text-xs text-[var(--muted-foreground)]">
+            5h 총한도 대비: <strong class="text-[var(--foreground)]">${{fmt(w.effective_budget_tokens || 0)}}</strong> / ${{subTotal5h ? fmt(subTotal5h) : "∞"}} tok
           </div>
           <div class="text-xs text-[var(--muted-foreground)]">
-            사용: <strong class="text-[var(--foreground)]">${{fmt(w.effective_budget_tokens || 0)}}</strong> tok
+            5h 잔여(예산): <strong class="text-[var(--foreground)]">${{rem === null ? "무제한(0원)" : fmt(rem) + " tok"}}</strong>
           </div>
-          <div class="text-xs text-[var(--muted-foreground)]">
-            가용: <strong class="text-[var(--foreground)]">${{rem === null ? "무제한(0원)" : fmt(rem) + " tok"}}</strong>
+          <div class="text-[11px] text-[var(--muted-foreground)]">
+            7d 주간 총량 대비: <strong class="text-[var(--foreground)]">${{fmt(sub.used_7d_effective_tokens || 0)}}</strong> / ${{subTotal7d ? fmt(subTotal7d) : "∞"}} tok (${{subPct7d}}%)
           </div>
           <div class="w-full bg-[var(--secondary)] h-2 rounded-full overflow-hidden">
             <div class="bg-[var(--primary)] h-2 rounded-full" style="width: ${{rem === null ? 15 : Math.min(100, Math.max(4, pct))}}%"></div>
           </div>
           <div class="flex items-center justify-between text-xs">
-            <span>5h 소진율: ${{rem === null ? "0%" : pct + "%"}}${{qText}}</span>
+            <span>5h: ${{rem === null ? "0%" : pct + "%"}}${{qText}}${{q7Text}}</span>
             <span class="font-semibold">${{rem === null ? "∞ 카드" : "가용 " + cards + "장"}}</span>
           </div>
         `;
