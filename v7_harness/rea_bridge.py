@@ -24,6 +24,29 @@ TS_EXPORT_RE = re.compile(
 )
 RS_EXPORT_RE = re.compile(r"^pub(?:\([^)]+\))?\s+(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z0-9_]+)", re.MULTILINE)
 
+def has_symlink_or_junction_ancestor(path: Path, root: Path | None = None) -> bool:
+    """True if path or ANY ancestor up to filesystem root (or root) is a symlink,
+    Windows junction, or reparse point, or if path resolves outside root.
+    """
+    try:
+        if root is not None:
+            try:
+                if not path.resolve().is_relative_to(root.resolve()):
+                    return True
+            except OSError:
+                return True
+        check_p = path.absolute()
+        while check_p and check_p != check_p.parent:
+            if is_symlink_or_junction(check_p):
+                return True
+            if root is not None and check_p.resolve() == root.resolve():
+                break
+            check_p = check_p.parent
+    except OSError:
+        return True
+    return False
+
+
 def is_symlink_or_junction(path: Path) -> bool:
     """True if path is a POSIX symlink, Windows junction, or reparse point."""
     import os
@@ -104,6 +127,9 @@ def inspect_static_target(
     for f in files:
         ext = f.suffix.lower()
         rel_str = str(f.relative_to(target.parent if target.is_file() else target)).replace("\\", "/")
+        if has_symlink_or_junction_ancestor(f, root_resolved):
+            failed_files.append({"file": rel_str, "error": "SYMLINK_OR_JUNCTION_ESCAPE"})
+            continue
         if ext in SQLITE_EXTS:
             db_res = _inspect_sqlite_static(f)
             db_res["file"] = rel_str
@@ -169,8 +195,26 @@ def inspect_static_target(
 
 
 def _inspect_binary_static(bin_path: Path) -> dict[str, Any]:
-    """Extract deterministic static metadata, URLs, and module identifiers from a PE/ELF/WASM binary without executing it."""
-    raw = bin_path.read_bytes()
+    """Extract deterministic static metadata, URLs, and module identifiers from a PE/ELF/WASM binary without executing it.
+    Guarantees handle-bound confinement: if the file or ANY ancestor directory is a symlink, junction, or reparse point,
+    the read is rejected without consuming outside bytes.
+    """
+    if has_symlink_or_junction_ancestor(bin_path):
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": "SYMLINK_OR_JUNCTION_ESCAPE",
+        }
+    try:
+        raw = bin_path.read_bytes()
+    except OSError as exc:
+        return {
+            "ok": False,
+            "mode": "STATIC_ONLY_BINARY",
+            "target": str(bin_path),
+            "error": f"READ_ERROR: {exc}",
+        }
     digest = hashlib.sha256(raw).hexdigest()
     urls = sorted({m.decode("ascii", errors="ignore") for m in BIN_URL_RE.findall(raw)})[:100]
     idents = sorted({m.decode("ascii", errors="ignore") for m in BIN_IDENT_RE.findall(raw)})[:100]
@@ -198,6 +242,8 @@ def _inspect_sqlite_static(db_path: Path) -> dict[str, Any]:
     2. WAL-mode databases never have `-shm` sidecars created in the source directory.
     3. WAL file is copied to temp snapshot BEFORE hashing to eliminate hash/copy races.
     """
+    if has_symlink_or_junction_ancestor(db_path):
+        return {"ok": False, "mode": "STATIC_ONLY_SQLITE", "target": str(db_path), "error": "SYMLINK_OR_JUNCTION_ESCAPE"}
     wal_path = Path(str(db_path) + "-wal")
     shm_path = Path(str(db_path) + "-shm")
 

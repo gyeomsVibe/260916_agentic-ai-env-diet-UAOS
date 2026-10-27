@@ -264,5 +264,43 @@ class TestU275AutoReaReverseEngineering(unittest.TestCase):
         self.assertIn("UNKNOWN(품질증거미확인)", hud_out)
 
 
+
+    def test_r6_junction_swap_at_read_boundary(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+        from v7_harness.rea_bridge import inspect_static_target, _inspect_binary_static
+
+        with tempfile.TemporaryDirectory(prefix="test_junc_swap_") as base_str:
+            base = Path(base_str)
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "harmless.exe").write_bytes(b"MZ https://example.invalid/OUTSIDE_SENTINEL_ONLY")
+
+            race = base / "race"
+            payload = race / "payload"
+            payload.mkdir(parents=True, exist_ok=True)
+            (payload / "harmless.exe").write_bytes(b"MZ https://example.invalid/INSIDE_EXPECTED")
+
+            actual_binary = _inspect_binary_static
+            swapped = [False]
+
+            def boundary(p_target: Path) -> dict:
+                if p_target == payload / "harmless.exe" and not swapped[0]:
+                    parked = race / "original_parked"
+                    payload.rename(parked)
+                    p_cmd = subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(payload), str(outside)], capture_output=True, text=True)
+                    if p_cmd.returncode == 0:
+                        swapped[0] = True
+                return actual_binary(p_target)
+
+            with patch("v7_harness.rea_bridge._inspect_binary_static", side_effect=boundary):
+                res = inspect_static_target(race)
+
+            if swapped[0]:
+                self.assertFalse(res["source_complete"])
+                self.assertNotIn("url:https://example.invalid/OUTSIDE_SENTINEL_ONLY", [s["name"] for s in res["symbols"]])
+                self.assertIn("SYMLINK_OR_JUNCTION_ESCAPE", [f["error"] for f in res["failed_files"]])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -151,6 +151,55 @@ def _atomic_write_json(path: Path, data: Any) -> None:
                 pass
 
 
+from contextlib import contextmanager
+
+@contextmanager
+def _cas_file_lock(target: Path, timeout_s: float = 15.0):
+    """Interprocess lock guaranteeing atomic CAS check-backup-replace transaction."""
+    lock_file = target.with_name(f".{target.name}.cas_lock")
+    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o666)
+    deadline = time.monotonic() + timeout_s
+    locked = False
+    try:
+        while time.monotonic() < deadline:
+            if os.name == "nt":
+                import msvcrt
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    locked = True
+                    break
+                except OSError:
+                    time.sleep(0.005)
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                    break
+                except OSError:
+                    time.sleep(0.005)
+        if not locked:
+            raise TimeoutError("CAS_LOCK_TIMEOUT")
+        yield
+    finally:
+        if locked:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 def atomic_write_if_hash_matches(
     path: Path,
     data: Any,
@@ -215,23 +264,56 @@ def atomic_write_if_hash_matches(
                     "actual_sha256": current_sha,
                 }
 
-        bak_path = target.with_name(target.name + ".bak")
-        if exists_now and raw_existing:
-            try:
-                json.loads(raw_existing.decode("utf-8"))
-                bak_path.write_bytes(raw_existing)
-            except (OSError, ValueError, UnicodeDecodeError):
-                pass
+        # Interprocess atomic check-backup-replace transaction
+        with _cas_file_lock(target):
+            exists_final = target.is_file()
+            raw_final = b""
+            final_sha: str | None = None
+            if exists_final:
+                try:
+                    raw_final = target.read_bytes()
+                    final_sha = hashlib.sha256(raw_final).hexdigest()
+                except OSError as exc:
+                    return {
+                        "ok": False,
+                        "error": f"CAS_READ_FAILED:{exc}",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": None,
+                    }
 
-        os.replace(str(stage_path), str(target))
-        new_sha = hashlib.sha256(target.read_bytes()).hexdigest()
-        return {
-            "ok": True,
-            "path": target.as_posix(),
-            "previous_sha256": current_sha,
-            "new_sha256": new_sha,
-            "backup_path": str(bak_path),
-        }
+            if expected_sha256 is not None:
+                if not exists_final:
+                    return {
+                        "ok": False,
+                        "error": "CAS_TARGET_MISSING",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": None,
+                    }
+                if final_sha != expected_sha256:
+                    return {
+                        "ok": False,
+                        "error": "CAS_HASH_MISMATCH",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": final_sha,
+                    }
+
+            bak_path = target.with_name(target.name + ".bak")
+            if exists_final and raw_final:
+                try:
+                    json.loads(raw_final.decode("utf-8"))
+                    bak_path.write_bytes(raw_final)
+                except (OSError, ValueError, UnicodeDecodeError):
+                    pass
+
+            os.replace(str(stage_path), str(target))
+            new_sha = hashlib.sha256(target.read_bytes()).hexdigest()
+            return {
+                "ok": True,
+                "path": target.as_posix(),
+                "previous_sha256": final_sha,
+                "new_sha256": new_sha,
+                "backup_path": str(bak_path),
+            }
     finally:
         if stage_path.exists():
             try:
