@@ -1630,11 +1630,14 @@ def refresh_capacity_zero_token(
                 default=0.0,
             ) if brain_root.is_dir() else 0.0
             if (
-                (moment - last_ts) < min_interval_s
+                0.0 <= (moment - last_ts) < min_interval_s
                 and runs_mtime <= last_ts
                 and sched_mtime <= last_ts
                 and brain_mtime <= last_ts
             ):
+                if html_out is not None and not Path(html_out).is_file():
+                    snap_data = json.loads(snap_path.read_text(encoding="utf-8"))
+                    render_html_dashboard(snap_data, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
         except (OSError, ValueError):
             pass

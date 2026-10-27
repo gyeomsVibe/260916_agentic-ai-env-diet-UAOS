@@ -181,7 +181,7 @@ def disjoint_parallel_errors(contract: dict[str, Any]) -> list[str]:
             f"{caller} must use 0-token Ollama + native subscription engine"
         )
 
-    if is_haiku_55:
+    if "haiku" in worker or (is_haiku_55 and caller):
         try:
             budget = int(contract.get("remote_budget_tokens") or 0)
         except ValueError:
