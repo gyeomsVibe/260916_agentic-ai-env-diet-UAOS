@@ -136,9 +136,10 @@ def check_ledger_reconciliation(pilot_dir: Path) -> list[str]:
 
 
 def check_all_pilot_dirs(project_root: Path) -> list[str]:
-    from ..pilot_dirs import discover
+    from ..pilot_dirs import live
 
-    return sorted({task for pilot_dir in discover(project_root) for task in check_ledger_reconciliation(pilot_dir)})
+    # U262: repo copies under .work/ carry historical summaries; only live pilot dirs raise NEEDS_RECONCILIATION.
+    return sorted({task for pilot_dir in live(project_root) for task in check_ledger_reconciliation(pilot_dir)})
 
 
 def triage_failure(error_log: str, staging: Path | None = None) -> dict[str, Any]:
