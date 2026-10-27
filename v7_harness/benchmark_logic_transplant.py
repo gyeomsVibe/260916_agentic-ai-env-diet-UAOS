@@ -435,3 +435,458 @@ def select_rea_analysis_tier(
             "by default while Tier-2 binary decompiler MCP schemas stay dormant (saving ~14,000 tokens/call)."
         ),
     }
+
+
+U251_OPERATIONAL_TELEMETRY_LEDGER = Path(".coord") / "usage" / "u251_operational_telemetry.jsonl"
+PAID_TOOLS = ("codex", "claude", "antigravity")
+
+
+def _collect_real_live_watchers(desk: Path) -> list[str]:
+    """Check actual running background watcher daemons (watch_<tool>.json PID, .coord/watch/*, sentinel loop.pid)."""
+    from v7_harness.coord import watch as watch_mod
+
+    watchers: list[str] = []
+    desk_path = Path(desk)
+    coord_dir = desk_path / ".coord"
+    watch_dir = coord_dir / "watch"
+    if watch_dir.is_dir():
+        for wf in sorted(watch_dir.iterdir()):
+            if wf.suffix in (".json", ".pid", ".lock"):
+                watchers.append(f"coord watch ({wf.stem})")
+    for s_pid in (coord_dir / "sentinel" / "loop.pid", desk_path / ".work" / "sentinel" / "loop.pid"):
+        if s_pid.is_file():
+            label = "sentinel.loop (0-token daemon)"
+            if label not in watchers:
+                watchers.append(label)
+    for tool in PAID_TOOLS:
+        try:
+            if watch_mod.watcher_live(desk_path, tool):
+                label = f"coord watch --target {tool}"
+                if label not in watchers:
+                    watchers.append(label)
+        except Exception:
+            pass
+    return watchers
+
+
+def collect_live_five_chip_telemetry(
+    project_root: Path,
+    *,
+    target_path: str = "v7_harness/cli.py",
+    foreground_wait_s: float = 0.0,
+    is_background_watcher: bool = False,
+    acting_tool: str = "antigravity",
+    mutate_schedule: bool = False,
+    force_reverse_engineering: bool = False,
+) -> dict[str, Any]:
+    """U269: Collect live Show GN 5-Chip Telemetry + OpenRig Seat Continuity + REA 2-Tier Routing from project state."""
+    import json
+    import time
+    from datetime import datetime, timezone
+
+    from v7_harness.coord.capacity_planner import (
+        _collect_active_watchers,
+        _collect_git_diff_chip,
+        collect_capacity_snapshot,
+        extract_wait_transparency,
+    )
+    from v7_harness.coord.presence import read_all
+
+    desk = Path(project_root)
+    sched_path = desk / ".coord" / "master_schedule.json"
+    phases: list[dict[str, Any]] = []
+    if sched_path.is_file():
+        try:
+            raw = json.loads(sched_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("phases"), list):
+                phases = [dict(p) for p in raw["phases"] if isinstance(p, dict)]
+        except (OSError, ValueError):
+            phases = []
+
+    snap_path = desk / ".coord" / "usage" / "capacity_snapshot.json"
+    snap: dict[str, Any] = {}
+    if snap_path.is_file():
+        try:
+            loaded = json.loads(snap_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and isinstance(loaded.get("engines"), dict):
+                snap = loaded
+        except (OSError, ValueError):
+            snap = {}
+    if not snap:
+        try:
+            home_arg = None if (desk / ".git").exists() else desk
+            snap = collect_capacity_snapshot(desk, home=home_arg, persist=False)
+        except Exception:
+            snap = {}
+
+    engines_summary = snap.get("engines") if isinstance(snap.get("engines"), dict) else {}
+    presence_map = read_all(desk)
+    presence_states: dict[str, str] = {}
+    reset_times: dict[str, str] = {}
+    for tool in PAID_TOOLS:
+        rec = presence_map.get(tool) if isinstance(presence_map, dict) else {}
+        st = str((rec or {}).get("state") or (engines_summary.get(tool) or {}).get("presence_state") or "ABSENT").upper()
+        presence_states[tool] = st
+        q_snap = (engines_summary.get(tool) or {}).get("provider_quota_snapshot") or {}
+        if isinstance(q_snap, dict) and q_snap.get("resets_at"):
+            reset_times[tool] = str(q_snap["resets_at"])
+        elif isinstance(rec, dict) and isinstance(rec.get("expires_at"), (int, float)):
+            reset_times[tool] = datetime.fromtimestamp(float(rec["expires_at"]), timezone.utc).isoformat()
+        else:
+            reset_times[tool] = "NONE"
+
+    wait_trans = extract_wait_transparency(desk)
+    five_chip = build_five_chip_telemetry_snapshot(
+        schedule_phases=phases,
+        presence_states=presence_states,
+        changed_files=_collect_git_diff_chip(desk),
+        active_watchers=_collect_real_live_watchers(desk),
+        quota_reset_times=reset_times,
+        foreground_wait_s=foreground_wait_s,
+        is_background_watcher=is_background_watcher,
+        acting_tool=acting_tool,
+        mutate_schedule=mutate_schedule,
+        include_haiku=True,
+        engines_summary=engines_summary,
+        wait_transparency=wait_trans,
+    )
+    rea_tier = select_rea_analysis_tier(target_path, force_reverse_engineering=force_reverse_engineering)
+    return {
+        "schema": "uaos.u251_live_bundle.v1",
+        "five_chip_telemetry": five_chip,
+        "rea_tier_routing": rea_tier,
+    }
+
+
+def diagnose_u251_operational_anomalies(
+    five_chip: dict[str, Any],
+    rea_tier: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """U269: Evaluate deterministic self-healing rules across OpenRig, Show GN (5-Chip), and REA operational state."""
+    chips = (five_chip or {}).get("chips") or {}
+    c1 = chips.get("1_todos_schedule") or {}
+    c2 = chips.get("2_three_tool_seats") or {}
+    c3 = chips.get("3_background_watchers") or {}
+
+    anomalies: list[dict[str, Any]] = []
+
+    remaining = int(c1.get("remaining") or 0)
+    watcher_count = int(c3.get("watcher_count") or 0)
+    if remaining > 0 and watcher_count == 0:
+        anomalies.append({
+            "anomaly_code": "NO_LIVE_WATCHER_WHILE_WAITING",
+            "severity": "P1",
+            "benchmark_engine": "Show_GN_AgentCodeGUI",
+            "title": "[U251-RSI 자가수정] 백그라운드 감시자(Watcher) 누락 자동 재가동 및 훅 복구",
+            "observed": f"remaining_phases={remaining}, watcher_count={watcher_count}",
+            "remediation_action": (
+                "Re-arm zero-paid-token background watcher (coord watch / sentinel loop) and verify "
+                "Stop/PostToolUse hook wake persistence so waiting phases never stall silently."
+            ),
+            "target_files": ["v7_harness/coord/watch.py", "v7_harness/coord/sentinel.py"],
+            "accept_cmd": "python -m unittest tests.test_u251_benchmark_logic_transplant tests.test_u269_u251_rsi_operational_evolution",
+        })
+
+    seat_mode = str(c2.get("mode") or "THREE_TOOL_NORMAL")
+    if seat_mode in ("TWO_TOOL_CONTINUITY", "SOLE_SURVIVOR_AUTONOMOUS", "ALL_PAID_TOOLS_LIMITED"):
+        anomalies.append({
+            "anomaly_code": "FAILOVER_DEGRADED_MODE",
+            "severity": "P2" if seat_mode == "TWO_TOOL_CONTINUITY" else "P1",
+            "benchmark_engine": "OpenRig",
+            "title": f"[U251-RSI 자가수정] OpenRig 좌석 우회({seat_mode}) 재배정 및 복귀 인계 검증",
+            "observed": f"mode={seat_mode}, active_paid_tools={c2.get('active_paid_tools')}",
+            "remediation_action": (
+                "Reassign READY/ACTIVE/REVIEW cards owned by LIMITED/ABSENT tools to highest-capacity ACTIVE "
+                "paid tool (Google AI Ultra 5x / Claude Code) and maintain codex_return_checklist.md."
+            ),
+            "target_files": ["v7_harness/benchmark_logic_transplant.py", "v7_harness/coord/capacity_planner.py"],
+            "accept_cmd": "python -m unittest tests.test_u251_benchmark_logic_transplant tests.test_u269_u251_rsi_operational_evolution",
+        })
+
+    deferred_reviews = c2.get("deferred_sole_survivor_reviews") or []
+    if isinstance(deferred_reviews, list) and len(deferred_reviews) > 0:
+        anomalies.append({
+            "anomaly_code": "SOLE_SURVIVOR_REVIEW_BACKLOG",
+            "severity": "P2",
+            "benchmark_engine": "OpenRig",
+            "title": f"[U251-RSI 자가수정] 단일 생존자 자율 수행 카드({len(deferred_reviews)}건) 교차 사후 감사",
+            "observed": f"deferred_sole_survivor_reviews={deferred_reviews}",
+            "remediation_action": (
+                "Execute mandatory independent peer post-audit on cards completed under SOLE_SURVIVOR_AUTONOMOUS "
+                "mode as soon as a peer tool returns ACTIVE."
+            ),
+            "target_files": ["v7_harness/benchmark_logic_transplant.py", "v7_harness/coord/merge_route.py"],
+            "accept_cmd": "python -m unittest tests.test_u251_benchmark_logic_transplant tests.test_u269_u251_rsi_operational_evolution",
+        })
+
+    wait_decision = c3.get("wait_decision") or {}
+    fg_wait = float(wait_decision.get("foreground_wait_s") or 0.0)
+    if wait_decision.get("action") == "PREEMPT_AND_CLAIM" or (
+        wait_decision.get("action") == "READ_ONLY_WAIT_OBSERVED" and fg_wait > FOREGROUND_WAIT_LIMIT_S
+    ):
+        anomalies.append({
+            "anomaly_code": "FOREGROUND_WAIT_PREEMPTED",
+            "severity": "P2",
+            "benchmark_engine": "Show_GN_AgentCodeGUI",
+            "title": "[U251-RSI 자가수정] 5초 초과 전면 대기 선점 차단 및 차순위 카드 자동 착수",
+            "observed": f"foreground_wait_s={wait_decision.get('foreground_wait_s')}, limit={FOREGROUND_WAIT_LIMIT_S}s",
+            "remediation_action": (
+                "Preempt foreground wait exceeding 5.0s, delegate peer wait to 0-token background watcher, "
+                "and immediately claim next dependency-ready phase."
+            ),
+            "target_files": ["v7_harness/benchmark_logic_transplant.py", "v7_harness/coord/stop_gate.py"],
+            "accept_cmd": "python -m unittest tests.test_u251_benchmark_logic_transplant tests.test_u269_u251_rsi_operational_evolution",
+        })
+
+    seats = c2.get("seats") or []
+    throttled_tools = [
+        str(s.get("tool"))
+        for s in seats
+        if isinstance(s, dict)
+        and s.get("tool") in PAID_TOOLS
+        and (
+            s.get("status_tier") in ("CRITICAL_OFFLOAD", "LIMITED_PAUSE")
+            or (s.get("state") == "ACTIVE" and s.get("usable_remaining_5h_tokens") == 0)
+        )
+    ]
+    if throttled_tools:
+        anomalies.append({
+            "anomaly_code": "QUOTA_CRITICAL_THROTTLE",
+            "severity": "P1",
+            "benchmark_engine": "OpenRig_ShowGN_Hybrid",
+            "title": f"[U251-RSI 자가수정] 유료 도구 쿼터 임계 도달({','.join(throttled_tools)}) 오프로딩 및 자가 라우팅",
+            "observed": f"throttled_tools={throttled_tools}",
+            "remediation_action": (
+                "Enforce 60%+ Ollama/Haiku local offloading and route paid execution to highest remaining "
+                "capacity seat (Antigravity Google AI Ultra 5x · Gemini 4 Argon / active peer)."
+            ),
+            "target_files": ["v7_harness/coord/capacity_planner.py", "v7_harness/benchmark_logic_transplant.py"],
+            "accept_cmd": "python -m unittest tests.test_u256_capacity_planner_and_dashboard tests.test_u269_u251_rsi_operational_evolution",
+        })
+
+    return anomalies
+
+
+def record_u251_operational_telemetry_and_schedule_rsi(
+    project_root: Path,
+    *,
+    live_bundle: dict[str, Any] | None = None,
+    target_path: str = "v7_harness/cli.py",
+    foreground_wait_s: float = 0.0,
+    is_background_watcher: bool = False,
+    acting_tool: str = "antigravity",
+    auto_schedule: bool = True,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """U269: Record U251 operational telemetry receipt to `.coord/usage/u251_operational_telemetry.jsonl`
+    and atomically schedule/update idempotent self-healing RSI evolution cards in `.coord/master_schedule.json`.
+    """
+    import json
+    import os
+    import time
+    from datetime import datetime, timezone
+
+    from v7_harness import rsi as rsi_mod
+    from v7_harness.coord.stream import _exclusive
+
+    desk = Path(project_root)
+    ts = float(now if now is not None else time.time())
+    iso_ts = datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+    bundle = live_bundle or collect_live_five_chip_telemetry(
+        desk,
+        target_path=target_path,
+        foreground_wait_s=foreground_wait_s,
+        is_background_watcher=is_background_watcher,
+        acting_tool=acting_tool,
+        mutate_schedule=False,
+    )
+    five_chip = bundle.get("five_chip_telemetry") or {}
+    rea_tier = bundle.get("rea_tier_routing") or {}
+    anomalies = diagnose_u251_operational_anomalies(five_chip, rea_tier)
+
+    rsi_proposals: list[dict[str, Any]] = []
+    try:
+        rsi_policy = rsi_mod.load_policy(desk)
+        rsi_analysis = rsi_mod.analyze(rsi_mod.load_rows(desk), rsi_policy)
+        prop_list = rsi_mod.propose(rsi_analysis, rsi_policy)
+        seen_causes: set[str] = set()
+        for p in prop_list:
+            if isinstance(p, dict) and p.get("cause") and p.get("recurring"):
+                cause = str(p["cause"])
+                if cause in seen_causes:
+                    continue
+                seen_causes.add(cause)
+                rsi_proposals.append({
+                    "anomaly_code": f"LEDGER_{cause}",
+                    "severity": "P2",
+                    "benchmark_engine": "UAOS_RSI_Ledger",
+                    "title": f"[U251-RSI 자가수정] 원장 반복 실패({cause} {p.get('count', 0)}회) 계약·라우팅 자동 보정",
+                    "observed": f"cause={cause}, count={p.get('count')}, worker={p.get('worker')}",
+                    "remediation_action": str(p.get("action") or "Apply deterministic RSI remedy"),
+                    "target_files": [".coord/rsi/policy.json", "docs/46_standard-process-and-worker-harness.md"],
+                    "accept_cmd": "python -m unittest tests.test_u269_u251_rsi_operational_evolution",
+                })
+    except Exception:
+        rsi_proposals = []
+
+    all_findings = anomalies + rsi_proposals
+
+    chips = five_chip.get("chips") or {}
+    c1 = chips.get("1_todos_schedule") or {}
+    c2 = chips.get("2_three_tool_seats") or {}
+    c3 = chips.get("3_background_watchers") or {}
+    c4 = chips.get("4_changed_files_diff") or {}
+
+    seats = [s for s in (c2.get("seats") or []) if isinstance(s, dict) and s.get("tool") in PAID_TOOLS]
+    active_seats = [s for s in seats if s.get("state") == "ACTIVE"]
+
+    def _seat_rem(s: dict[str, Any]) -> int:
+        v = s.get("usable_remaining_5h_tokens")
+        return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+
+    if active_seats:
+        chosen_owner = str(max(active_seats, key=_seat_rem).get("tool") or acting_tool)
+    else:
+        chosen_owner = acting_tool if acting_tool in PAID_TOOLS else "antigravity"
+
+    peer_candidates = [
+        str(s.get("tool"))
+        for s in active_seats
+        if str(s.get("tool")) != chosen_owner
+    ]
+    if not peer_candidates:
+        peer_candidates = [t for t in ("claude", "antigravity", "codex") if t != chosen_owner]
+    chosen_judge = peer_candidates[0]
+
+    scheduled_cards: list[dict[str, Any]] = []
+    quiet_lock = (desk / ".work" / "QUIET_LOCK").is_file()
+
+    if auto_schedule and all_findings and not quiet_lock:
+        sched_path = desk / ".coord" / "master_schedule.json"
+        sched_path.parent.mkdir(parents=True, exist_ok=True)
+        with _exclusive(sched_path.with_suffix(".lock")):
+            sched_data: dict[str, Any] = {"topic": "5칩계기판·U251-RSI진화", "phases": []}
+            if sched_path.is_file():
+                try:
+                    loaded_s = json.loads(sched_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded_s, dict):
+                        sched_data = loaded_s
+                except (OSError, ValueError):
+                    pass
+            phases_list = sched_data.get("phases")
+            if not isinstance(phases_list, list):
+                phases_list = []
+                sched_data["phases"] = phases_list
+
+            terminal_states = {"DONE", "DONE_SCOPED", "DONE_ELSEWHERE", "RETIRED", "SUPERSEDED", "MERGED"}
+            for item in all_findings:
+                code = str(item["anomaly_code"])
+                card_id = f"RSI-U251-AUTO-{code}"
+                existing = next(
+                    (
+                        p for p in phases_list
+                        if isinstance(p, dict)
+                        and str(p.get("phase_id") or p.get("id") or "") == card_id
+                        and str(p.get("state") or "").upper() not in terminal_states
+                    ),
+                    None,
+                )
+                if existing is not None:
+                    spec = existing.get("self_healing_spec")
+                    if not isinstance(spec, dict):
+                        spec = {}
+                    obs_count = int(spec.get("observation_count") or 1) + 1
+                    spec.update({
+                        "anomaly_code": code,
+                        "severity": item["severity"],
+                        "benchmark_engine": item["benchmark_engine"],
+                        "remediation_action": item["remediation_action"],
+                        "target_files": item["target_files"],
+                        "accept_cmd": item["accept_cmd"],
+                        "observation_count": obs_count,
+                        "last_observed_at": iso_ts,
+                        "auto_evolve": True,
+                    })
+                    existing["self_healing_spec"] = spec
+                    if not existing.get("title"):
+                        existing["title"] = item["title"]
+                    if existing.get("reviewer") == existing.get("owner") or not existing.get("reviewer"):
+                        existing["reviewer"] = chosen_judge if existing.get("owner") == chosen_owner else chosen_owner
+                    scheduled_cards.append({
+                        "phase_id": card_id,
+                        "action": "UPDATED_EXISTING",
+                        "owner": existing.get("owner"),
+                        "reviewer": existing.get("reviewer"),
+                        "observation_count": obs_count,
+                    })
+                else:
+                    new_phase = {
+                        "phase_id": card_id,
+                        "title": item["title"],
+                        "state": "READY",
+                        "owner": chosen_owner,
+                        "reviewer": chosen_judge,
+                        "depends_on": [],
+                        "self_healing_spec": {
+                            "anomaly_code": code,
+                            "severity": item["severity"],
+                            "benchmark_engine": item["benchmark_engine"],
+                            "remediation_action": item["remediation_action"],
+                            "target_files": item["target_files"],
+                            "accept_cmd": item["accept_cmd"],
+                            "observation_count": 1,
+                            "first_observed_at": iso_ts,
+                            "last_observed_at": iso_ts,
+                            "auto_evolve": True,
+                        },
+                    }
+                    phases_list.append(new_phase)
+                    scheduled_cards.append({
+                        "phase_id": card_id,
+                        "action": "CREATED_READY",
+                        "owner": chosen_owner,
+                        "reviewer": chosen_judge,
+                        "observation_count": 1,
+                    })
+
+            tmp_sched = sched_path.with_name(f".master_schedule.{os.getpid()}.{time.time_ns()}.tmp")
+            tmp_sched.write_text(json.dumps(sched_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(tmp_sched, sched_path)
+
+    receipt = {
+        "schema": "uaos.u251_operational_telemetry.v1",
+        "ts": ts,
+        "observed_at": iso_ts,
+        "chip_summary": {
+            "remaining_phases": int(c1.get("remaining") or 0),
+            "seat_mode": str(c2.get("mode") or "UNKNOWN"),
+            "conductor": str(c2.get("conductor") or "UNKNOWN"),
+            "watcher_count": int(c3.get("watcher_count") or 0),
+            "wait_action": str((c3.get("wait_decision") or {}).get("action") or "UNKNOWN"),
+            "changed_file_count": int(c4.get("file_count") or 0),
+            "rea_selected_tier": str(rea_tier.get("selected_tier") or "UNKNOWN"),
+        },
+        "anomalies_detected": [a["anomaly_code"] for a in anomalies],
+        "rsi_ledger_causes": [p["anomaly_code"] for p in rsi_proposals],
+        "scheduled_self_healing_cards": scheduled_cards,
+    }
+
+    if not quiet_lock:
+        ledger_path = desk / U251_OPERATIONAL_TELEMETRY_LEDGER
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        with _exclusive(ledger_path.with_suffix(".lock")):
+            with ledger_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+
+    return {
+        "schema": "uaos.u251_rsi_evolution_report.v1",
+        "ok": True,
+        "observed_at": iso_ts,
+        "five_chip_telemetry": five_chip,
+        "rea_tier_routing": rea_tier,
+        "anomalies": anomalies,
+        "rsi_ledger_proposals": rsi_proposals,
+        "scheduled_self_healing_cards": scheduled_cards,
+        "ledger_path": str(U251_OPERATIONAL_TELEMETRY_LEDGER.as_posix()),
+    }
