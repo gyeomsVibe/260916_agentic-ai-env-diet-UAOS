@@ -77,3 +77,4 @@
 - U121: user gets only the Safety human list; do the rest unasked; copy to .work/backup_<date>/, then revert canon-conflicting edits.
 - **UAOS-RSI 근본 존재이유 및 Codex 아스트라 집중(U257, 2026-10-27)**: **"최대 성과를 목표로 3대 AI 도구(Antigravity, Claude Code, Codex)의 부족한 토큰예산을 절약하는 3대 AI도구 '병렬'-협업-운영시스템, 하지만 결과물의 최상의 품질기준이 근본 존재이유이다."** Codex $20 Plus 아스트라는 `CODEX_EXCLUSIVE_KEYPOINTS`에 집중하고 일반 승인은 최상 품질 관문(`author != judge`) 아래 Claude↔Antigravity가 교차 수행한다.
 - **사용자 보고(U267·U271)**: 결론 먼저 5줄·600자, 하위 목록 금지. 상태 줄 `- <핵심 제목> (<ID, PR>): <상태> → <다음>`(ID 단독 금지)은 이번 턴 변경분만; 파일·출처는 PR 본문.
+- 참조·벤치마킹 자료실(U250): 외부 저장소는 `.work/library/<저장소명>`에 읽기 전용 격리 보관·색인한다.

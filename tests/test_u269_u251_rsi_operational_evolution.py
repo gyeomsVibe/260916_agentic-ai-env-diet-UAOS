@@ -181,5 +181,57 @@ class TestU269U251RsiOperationalEvolution(unittest.TestCase):
             self.assertEqual(rc_tbl, 0)
 
 
+    def test_4_failover_reassignment_checklist_and_post_schedule_chip1_refresh(self) -> None:
+        """When codex is LIMITED and claude+antigravity are ACTIVE, auto_schedule reassigns offline-owned phases,
+        updates .coord/codex_return_checklist.md, deduplicates duplicate phase_ids, and refreshes Chip 1 remaining count."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_project(tmp)
+            now = 1800000500.0
+            for tool, state in (("codex", "LIMITED"), ("claude", "ACTIVE"), ("antigravity", "ACTIVE")):
+                (root / ".coord" / "presence" / f"{tool}.json").write_text(
+                    json.dumps(
+                        {
+                            "tool": tool,
+                            "state": state,
+                            "observed_at": "2026-10-27T06:00:00+00:00",
+                            "expires_at": now + 7200,
+                            "lease": True,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            (root / ".coord" / "master_schedule.json").write_text(
+                json.dumps(
+                    {
+                        "topic": "5칩계기판·U251-RSI진화",
+                        "phases": [
+                            {"phase_id": "U275", "title": "Codex offline card", "state": "READY", "owner": "codex"},
+                            {"phase_id": "DUP-DONE", "title": "dup1", "state": "DONE_ELSEWHERE", "owner": "claude"},
+                            {"phase_id": "DUP-DONE", "title": "dup2", "state": "DONE_ELSEWHERE", "owner": "antigravity"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            res = record_u251_operational_telemetry_and_schedule_rsi(
+                root,
+                acting_tool="antigravity",
+                auto_schedule=True,
+                now=now,
+            )
+            c1 = res["five_chip_telemetry"]["chips"]["1_todos_schedule"]
+            self.assertGreaterEqual(c1["remaining"], 2)
+            self.assertFalse(c1["all_done"])
+            sched = json.loads((root / ".coord" / "master_schedule.json").read_text(encoding="utf-8"))
+            pids = [p["phase_id"] for p in sched["phases"]]
+            self.assertEqual(pids.count("DUP-DONE"), 1)
+            u275 = next(p for p in sched["phases"] if p["phase_id"] == "U275")
+            self.assertIn(u275["owner"], ("claude", "antigravity"))
+            self.assertEqual(u275["previous_owner"], "codex")
+            self.assertNotEqual(u275["owner"], u275["reviewer"])
+            chk = (root / ".coord" / "codex_return_checklist.md").read_text(encoding="utf-8")
+            self.assertIn("U275 (codex->", chk)
+
+
 if __name__ == "__main__":
     unittest.main()

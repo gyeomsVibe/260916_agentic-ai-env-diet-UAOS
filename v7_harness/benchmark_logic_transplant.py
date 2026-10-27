@@ -86,6 +86,11 @@ THREE_TOOL_DEFAULT_ROLES: dict[str, dict[str, str]] = {
         "role": "Zero-Paid-Token Local Calculator (qwen2.5-coder:7b)",
         "pod": "local-calculator-pod",
     },
+    "flagman": {
+        "seat_id": "seat-flagman-autonomous",
+        "role": "Independent Autonomic Traffic & 3-Way AST Merge Flagman (0 Paid Tokens)",
+        "pod": "autonomic-nervous-system-pod",
+    },
 }
 
 TIER2_BINARY_EXTENSIONS = frozenset(
@@ -401,10 +406,27 @@ def select_rea_analysis_tier(
     """REA transplant: decide between Tier 1 (Always-On Default) and Tier 2 (On-Demand RE Bridge)."""
     raw = (target_path_or_desc or "").strip()
     lower = raw.lower().replace("\\", "/")
-    ext = Path(raw).suffix.lower()
+    target_p = Path(raw)
+    ext = target_p.suffix.lower()
 
-    is_library_target = "/.work/library/" in lower or lower.startswith(".work/library/")
+    is_library_target = (
+        "/.work/library/" in lower
+        or lower.startswith(".work/library/")
+        or "/.antigravity_cockpit" in lower
+        or "cockpit tools" in lower
+        or "program files" in lower
+    )
     is_binary_or_capture = ext in TIER2_BINARY_EXTENSIONS
+    if not is_binary_or_capture and not is_library_target and target_p.is_dir():
+        try:
+            for idx, child in enumerate(target_p.iterdir()):
+                if idx >= 40:
+                    break
+                if child.suffix.lower() in TIER2_BINARY_EXTENSIONS:
+                    is_binary_or_capture = True
+                    break
+        except OSError:
+            pass
     activate_tier2 = bool(force_reverse_engineering or is_library_target or is_binary_or_capture)
 
     tier1_modules = [
@@ -558,6 +580,17 @@ def collect_live_five_chip_telemetry(
         wait_transparency=wait_trans,
     )
     rea_tier = select_rea_analysis_tier(target_path, force_reverse_engineering=force_reverse_engineering)
+    if rea_tier.get("tier2_on_demand_active"):
+        from v7_harness.rea_bridge import execute_auto_reverse_engineering_pipeline
+
+        cand_target = Path(target_path)
+        if not cand_target.is_absolute():
+            cand_target = desk / cand_target
+        if cand_target.exists():
+            rea_tier["auto_executed_result"] = execute_auto_reverse_engineering_pipeline(
+                project_root=desk,
+                target_path=cand_target,
+            )
     return {
         "schema": "uaos.u251_live_bundle.v1",
         "five_chip_telemetry": five_chip,
@@ -887,9 +920,58 @@ def record_u251_operational_telemetry_and_schedule_rsi(
                         "observation_count": 1,
                     })
 
+            active_paid_set = {str(s.get("tool")) for s in active_seats if s.get("tool")}
+            reassigned_for_checklist: list[str] = []
+            if active_paid_set:
+                for ph in phases_list:
+                    if not isinstance(ph, dict) or str(ph.get("state") or "").upper() in terminal_states:
+                        continue
+                    cur_owner = str(ph.get("owner") or ph.get("owner_tool") or "").lower()
+                    if cur_owner and cur_owner not in active_paid_set:
+                        ph["previous_owner"] = cur_owner
+                        ph["owner"] = chosen_owner
+                        ph["owner_tool"] = chosen_owner
+                        if str(ph.get("reviewer") or "").lower() in ("", chosen_owner):
+                            ph["reviewer"] = chosen_judge
+                        reassigned_for_checklist.append(f"{ph.get('phase_id') or ph.get('id')} ({cur_owner}->{chosen_owner})")
+
+            deduped_phases: list[dict[str, Any]] = []
+            seen_pids: dict[str, int] = {}
+            for ph in phases_list:
+                if not isinstance(ph, dict):
+                    continue
+                pid = str(ph.get("phase_id") or ph.get("id") or "")
+                if pid and pid in seen_pids:
+                    deduped_phases[seen_pids[pid]] = ph
+                else:
+                    if pid:
+                        seen_pids[pid] = len(deduped_phases)
+                    deduped_phases.append(ph)
+            sched_data["phases"] = deduped_phases
+            phases_list = deduped_phases
+
             tmp_sched = sched_path.with_name(f".master_schedule.{os.getpid()}.{time.time_ns()}.tmp")
             tmp_sched.write_text(json.dumps(sched_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             os.replace(tmp_sched, sched_path)
+
+            if reassigned_for_checklist and "codex" not in active_paid_set:
+                chk_path = desk / ".coord" / "codex_return_checklist.md"
+                existing_chk = chk_path.read_text(encoding="utf-8") if chk_path.is_file() else "# Codex Return Checklist\n"
+                entry_line = f"- [U251-RSI Failover] Reassigned offline seats: {', '.join(reassigned_for_checklist)}\n"
+                if entry_line not in existing_chk:
+                    chk_path.write_text(existing_chk + entry_line, encoding="utf-8")
+
+            refreshed = collect_live_five_chip_telemetry(
+                desk,
+                target_path=target_path,
+                foreground_wait_s=foreground_wait_s,
+                is_background_watcher=is_background_watcher,
+                acting_tool=acting_tool,
+                mutate_schedule=False,
+            )
+            five_chip = refreshed.get("five_chip_telemetry") or five_chip
+            chips = five_chip.get("chips") or {}
+            c1 = chips.get("1_todos_schedule") or c1
 
     receipt = {
         "schema": "uaos.u251_operational_telemetry.v1",

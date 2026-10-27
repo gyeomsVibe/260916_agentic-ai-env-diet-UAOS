@@ -185,6 +185,197 @@ class TestU273ZeroWaitFlagman(unittest.TestCase):
             self.assertEqual(tiki["wait_ms"], 0)
             self.assertFalse(tiki["mutual_wait_blocked"])
 
+    def test_u274_independent_entity_presence_and_3way_ast_hunk_merge(self) -> None:
+        import json
+        from v7_harness.cli import main as cli_main
+        from v7_harness.disjoint_mediator import (
+            flagman_autonomous_3way_hunk_merge,
+            read_flagman_independent_presence,
+            run_independent_flagman_pulse,
+        )
+
+        # 1. Disjoint functions in the same Python file -> 0ms autonomous 3-way AST merge!
+        base_py = (
+            "def alpha() -> int:\n"
+            "    return 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return 2\n"
+        )
+        ours_py = (
+            "def alpha() -> int:\n"
+            "    return 10\n\n\n"
+            "def beta() -> int:\n"
+            "    return 2\n"
+        )
+        theirs_py = (
+            "def alpha() -> int:\n"
+            "    return 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return 20\n"
+        )
+        m_ok = flagman_autonomous_3way_hunk_merge(base_py, ours_py, theirs_py, file_path="v7_harness/sample.py")
+        self.assertTrue(m_ok["ok"])
+        self.assertEqual(m_ok["signal"], "GREEN_3WAY_AST_HUNK_MERGED")
+        self.assertEqual(m_ok["wait_ms"], 0)
+        self.assertTrue(m_ok["ast_quality_verified"])
+        self.assertIn("return 10", m_ok["merged_text"])
+        self.assertIn("return 20", m_ok["merged_text"])
+
+        # 2. Semantic Ghost Conflict: two workers edit different lines inside the SAME function -> blocked by AST Quality Gate!
+        base_same_fn = (
+            "def compute(x: int) -> int:\n"
+            "    a = x + 1\n"
+            "    b = a * 2\n"
+            "    c = b + 3\n"
+            "    return c\n"
+        )
+        ours_same_fn = base_same_fn.replace("a = x + 1", "a = x + 100")
+        theirs_same_fn = base_same_fn.replace("c = b + 3", "c = b + 300")
+        m_conflict = flagman_autonomous_3way_hunk_merge(
+            base_same_fn, ours_same_fn, theirs_same_fn, file_path="v7_harness/sample.py"
+        )
+        self.assertFalse(m_conflict["ok"])
+        self.assertEqual(m_conflict["signal"], "RED_AST_SAME_SYMBOL_CONFLICT")
+        self.assertEqual(m_conflict["conflicting_symbols"], ["compute"])
+
+        # 3. Independent Flagman Entity stays ACTIVE even when all 3 paid tools are LIMITED/ABSENT
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pres_dir = root / ".coord" / "presence"
+            pres_dir.mkdir(parents=True, exist_ok=True)
+            for tool in ("codex", "claude", "antigravity"):
+                (pres_dir / f"{tool}.json").write_text(
+                    json.dumps({"tool": tool, "state": "LIMITED"}), encoding="utf-8"
+                )
+            pulse = run_independent_flagman_pulse(root, auto_heal=True, now=1800000000.0)
+            self.assertEqual(pulse["paid_tokens"], 0)
+            self.assertEqual(pulse["local_gpu_tokens"], 0)
+            self.assertEqual(pulse["wait_ms"], 0)
+            self.assertTrue(pulse["autonomous_alive_when_all_paid_limited"])
+
+            f_pres = read_flagman_independent_presence(root, now=1800000010.0)
+            self.assertEqual(f_pres["state"], "ACTIVE")
+            self.assertEqual(f_pres["seat_id"], "seat-flagman-autonomous")
+            self.assertEqual(f_pres["entity_type"], "INDEPENDENT_AUTONOMIC_ENTITY")
+
+            rc = cli_main(["coord", "flagman-pulse", "--project", str(root)])
+            self.assertEqual(rc, 0)
+
+    def test_u275_critic_redteam_staging_3way_merge_and_call_arity_gate(self) -> None:
+        from v7_harness.disjoint_mediator import (
+            ensure_independent_flagman_daemon,
+            evaluate_scoped_divergence,
+            flagman_autonomous_3way_hunk_merge,
+        )
+
+        # 1. Step 2 Red-Team Gate: Worker A adds required arg `y` to `alpha(x, y)` while Worker B calls `alpha(1)`
+        base_code = (
+            "def alpha(x: int) -> int:\n"
+            "    return x + 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return alpha(1)\n"
+        )
+        ours_code = (
+            "def alpha(x: int, y: int) -> int:\n"
+            "    return x + y\n\n\n"
+            "def beta() -> int:\n"
+            "    return alpha(1)\n"
+        )
+        theirs_code = (
+            "def alpha(x: int) -> int:\n"
+            "    return x + 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return alpha(1) * 2\n"
+        )
+        res_arity = flagman_autonomous_3way_hunk_merge(
+            base_code, ours_code, theirs_code, file_path="v7_harness/mod.py"
+        )
+        self.assertFalse(res_arity["ok"])
+        self.assertEqual(res_arity["signal"], "RED_AST_CALL_ARITY_MISMATCH")
+        self.assertEqual(res_arity["conflicting_symbols"], ["alpha(arity<2)"])
+
+        # 2. Step 1 End-to-End Staging 3-Way AST Merge inside evaluate_scoped_divergence
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            stg = Path(tmp) / "stg"
+            (src / "v7_harness").mkdir(parents=True)
+            (stg / "v7_harness").mkdir(parents=True)
+
+            base_mod = (
+                "def fn_one() -> int:\n"
+                "    return 1\n\n\n"
+                "def fn_two() -> int:\n"
+                "    return 2\n"
+            )
+            (src / "v7_harness" / "rsi.py").write_text(base_mod, encoding="utf-8")
+            base_manifest = build_manifest(src)
+
+            # Worker A (staging) edits fn_one; Worker B (source) concurrently edits fn_two in the SAME file!
+            (stg / "v7_harness" / "rsi.py").write_text(
+                base_mod.replace("return 1", "return 100"), encoding="utf-8"
+            )
+            (src / "v7_harness" / "rsi.py").write_text(
+                base_mod.replace("return 2", "return 200"), encoding="utf-8"
+            )
+
+            target_manifest = build_manifest(stg)
+            bundle = create_patch_bundle(
+                base_manifest=base_manifest,
+                target_manifest=target_manifest,
+                base_dir=src,
+                target_dir=stg,
+            )
+
+            med = evaluate_scoped_divergence(
+                base_manifest=base_manifest,
+                source_dir=src,
+                excludes=[],
+                pilot_allowed_scopes=["v7_harness/rsi.py"],
+                bundle=bundle,
+                staging_dir=stg,
+                base_texts={"v7_harness/rsi.py": base_mod},
+            )
+            self.assertEqual(med["signal"], "GREEN_3WAY_AST_HUNK_MERGED")
+            self.assertEqual(med["flagman_action"], "AUTONOMOUS_3WAY_AST_HUNK_MERGE")
+            self.assertEqual(med["ast_merged_paths"], ["v7_harness/rsi.py"])
+            merged_stg = (stg / "v7_harness" / "rsi.py").read_text(encoding="utf-8")
+            self.assertIn("return 100", merged_stg)
+            self.assertIn("return 200", merged_stg)
+
+            # 3. Step 3 Daemon check (observe mode without spawning in unit test temp dir)
+            d_obs = ensure_independent_flagman_daemon(src, spawn_if_stopped=False)
+            self.assertTrue(d_obs["ok"])
+            self.assertEqual(d_obs["paid_tokens"], 0)
+
+
+
+    def test_detect_and_heal_claude_oauth_401_hang(self) -> None:
+        """Verify Flagman detects 401 OAuth expired + bridge-session zombie hang in Claude jsonl."""
+        from v7_harness.disjoint_mediator import detect_and_heal_claude_oauth_401_hang
+        import json, os, time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proj_dir = root / ".claude" / "projects" / "test-proj"
+            proj_dir.mkdir(parents=True, exist_ok=True)
+            sess_file = proj_dir / "80c0f8e3-f0ee-4565-8a4d-b054da5a0946.jsonl"
+            lines = [
+                json.dumps({"type": "assistant", "error": "authentication_error", "message": {"content": [{"type": "text", "text": "401 OAuth access token has expired. Re-authenticate to continue."}]}}),
+                json.dumps({"type": "bridge-session", "sessionUrl": "https://claude.ai/code/session_01"}),
+            ]
+            sess_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            old_time = time.time() - 300.0
+            os.utime(sess_file, (old_time, old_time))
+
+            res = detect_and_heal_claude_oauth_401_hang(
+                root,
+                claude_projects_root=root / ".claude" / "projects",
+                auto_heal=False,
+            )
+            self.assertEqual(res["healed_count"], 1)
+            self.assertEqual(res["healed_sessions"][0]["session_id"], "80c0f8e3-f0ee-4565-8a4d-b054da5a0946")
+            self.assertEqual(res["healed_sessions"][0]["reason"], "CLAUDE_OAUTH_401_RELOGIN_STREAM_HANG")
+
 
 if __name__ == "__main__":
     unittest.main()
