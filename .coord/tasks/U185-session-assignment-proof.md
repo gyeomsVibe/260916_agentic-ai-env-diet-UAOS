@@ -1,0 +1,19 @@
+# U185-S1 — assigned-session refusal, maintained bounded proof
+
+Status: RED reproduced, isolated implementation-plan review pending; no deployment Go.
+Receipt: renewed human no-wait report, Claude native contract review and wrong U183 claim held by 7fe8c052. Never delete/transfer that existing claim or writer here.
+
+MIA0 evidence: https://docs.python.org/3/library/os.html#os.replace documents replacement; atomic replacement is not an assignment lock. Installed next_card.py SHA8ce245f03bda05a5b2e609bdf08a93d6087b74bdffecbca668a33b586a225b67 ignores owner_session both before NEXT and under its existing claim lock.
+MIA1/2 frame: reject wrong/missing assigned session, permit matching session, continue another eligible card; installed five fixed tests reproduce four failures, exit1. Non-goals: native identity authentication, full schedule CAS, U183 lease/boot, routing restoration, runtime/global installation, permissions, push or ownership transfer.
+MIA3 alternatives: metadata alone is cheap but demonstrably ineffective; prefilter alone avoids ordinary wrong-session NEXT but races; prefilter plus current assignment check under the existing claim lock gives bounded refusal without new lock ownership. A schedule writer that ignores this lock remains outside the claimed concurrency guarantee.
+MIA4 independent review: Feynman bounded180s/80000 including cache, no source edits; missing/over-cap metrics cannot confer deployment acceptance.
+MIA5/6 fixed acceptance: own .work/U185_session_accept.py SHAf7032e7a14a6125a7bc349ee0e341db4ec3837b6cfcabd626a49bd6e567e88df. Do not edit after delegation. Read-only installed source is the baseline; fresh isolated candidate must preserve nested project handling and existing live-claim refusal. Contract lint required before local pilot.
+MIA7 route: Ollama first, narrow fixed-input operation in isolated next_card.py; non-author check plus unchanged regression tests, Codex independent final judge. No production apply on plan alone.
+MIA8: freeze all fixtures/manual before pilot; source-watch owner lease; no ancestor writes during pilot.
+MIA9/10: local U185-S1 added an unused helper, fixed5 remained4FAIL; REWORK, no promotion. Exact <=20line calculator U185-S1A then passed frozen5 and independent8 (includes malformed/missing/duplicate/state/tool changes and live holder preservation), exit0. Unchanged existing ownership/real parallel lock/hook regressions74 passed20.735s, exit0, after supplying missing test-copy assets; the initial incomplete copy had5 missing-file errors and is not a passing run. Acceptance was not weakened.
+
+Exact candidate SHAe0cef1768e9e8293f8bcc4279cb68e6bf4147e6e177f9b38108cbad5c974ef90, bundle08b99057ac44244783dca75ee5220cc17918fe3656bca16a271ce961136b41af. Antigravity actual pilot review ec6f938f-bab9-4b85-9c1c-999d5a5e6d04 returned PASS with no counterexamples; cache0, reported33930/80000,68/180s. Codex checked exact diff and independently reran fixed counterexamples. Official APPLIED is confined to .work/U185-session-source; installed runtime is unchanged. No native authentication, complete CAS, boot repair or overall UAOS completion is claimed.
+
+Next internal step: fresh latest-main release checkout, preserve U182, add frozen acceptance as maintained coverage, rerun relevant/full acceptance and exact release review. Do not ship the old U180 checkout or transfer U183 ownership. Release preparation uses a separate checkout because old own next_card changes and unrelated writers must remain intact.
+
+Adjacent independent review disposition: Claude relay763f4300 claims native receiver63aad9cf but138385/80000 and >180s, missing expected artifact at canonical path; reference only. Antigravity relaye60835f actual00160595 differs from requestedd34eb74b; MISMATCH_HALT, no receiver acceptance. Both already ACKed by prior handling; do not repeat paid review or treat ACK as Go.

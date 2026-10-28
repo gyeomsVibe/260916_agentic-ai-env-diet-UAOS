@@ -1,0 +1,11 @@
+{
+  "wake": "wake_508644fce6721c3ca3b2a6fb",
+  "new_steps": [
+    "U239B-RELEASE"
+  ],
+  "disposition": "ACK_ONLY_NEW_HOLD_ALREADY_HANDLED",
+  "evidence": ".coord/results/U239B-CODEX-REWORK-261026.json",
+  "receiver": "Claude session busy; corrective verdict durably stored, not ACKed",
+  "runtime": "0.3.0-f4723bc9dd46",
+  "no_rerun": true
+}

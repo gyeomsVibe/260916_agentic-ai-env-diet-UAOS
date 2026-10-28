@@ -1,0 +1,51 @@
+{
+  "relay": "relay_00b38bbb445997fa35ab74b2c77b543e",
+  "verdict": "REWORK_METRIC_SEMANTICS_HOLD_RUNTIME_PROMOTION",
+  "supersedes": "relay_d4b3941ea0ad2414416e6705a0cb8634 PASS for release purposes",
+  "head": "9951953a7cbf2a39b8708add0d88d43f67140a52",
+  "pr": 205,
+  "live_state": "MERGED",
+  "merge": "be3cff11e3c896b97ba1ab0f229d02b16f96e944",
+  "existing_acceptance": {
+    "tests": 15,
+    "exit": 0,
+    "elapsed_s": 4.051
+  },
+  "independent_counterexamples": {
+    "local_model_misclassified": {
+      "provider": "ollama",
+      "cost_usd": 0,
+      "observed": {
+        "schema": "uaos-rsi-roi-v1",
+        "window_attempts": 1,
+        "succeeded_attempts": 1,
+        "first_pass_yield": 1.0,
+        "local_calls": 0,
+        "paid_calls": 1,
+        "local_offload_ratio": 0.0,
+        "quota_saving": "UNMEASURED",
+        "auto_adopt": false
+      },
+      "expected_local_calls": 1,
+      "expected_paid_calls": 0
+    },
+    "retry_counted_as_first_pass": {
+      "observed": 0.6666666666666666,
+      "expected_first_attempt_success_fraction": 0.5,
+      "reason": "A failed first then succeeded on retry; B passed first"
+    }
+  },
+  "root_causes": [
+    "paid_calls=total-local_calls and local detection only equals one fixed model string; provider metadata and unknown classifications ignored",
+    "first_pass_yield is succeeded attempts divided by all attempts; no grouping or first-attempt selection"
+  ],
+  "required_followup": [
+    "Define first-pass grouping/window semantics or accurately name attempt success rate; keep unknown quality unverified",
+    "Use verified provider/route evidence for local/paid classification; unknown stays unknown, do not infer cost from model inequality",
+    "New separately reviewed corrective contract and independent negative gates; retain existing tests, ledgers, evaluators and exact failed evidence",
+    "No automatic RSI/policy adoption or savings claim"
+  ],
+  "runtime_disposition": "Keep current0.3.0-f4723bc9dd46; do not install PR205 payload or later combined payload containing this function until corrected and independently reviewed",
+  "implementation": "No source changes, no rollback of merged history, no workers dispatched",
+  "method": "systematic-debugging: source trace -> fixed-input real-journal reproduction before proposing correction"
+}

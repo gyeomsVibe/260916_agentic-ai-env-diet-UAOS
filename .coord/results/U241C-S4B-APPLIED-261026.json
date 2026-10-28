@@ -1,0 +1,14 @@
+{
+  "peer_full_log": ".work/u242/s4b_d1_full.log",
+  "independent_tests": 50,
+  "verdict": "APPLIED_SOURCE_ONLY",
+  "peer_skipped": 7,
+  "next": "Claude aggregate source closeout; no runtime reinstall before independent admission",
+  "peer_full_tests": 2636,
+  "runtime": "0.3.0-fe627cf17102",
+  "work_id": "U241C-S4B",
+  "bundle": "85000313307f45d7df88db8baf90edba53fa1464a7a25851481c8bbfa3c69f7e",
+  "source_sha256": "c428116fcb8971b9046a88a74b0ee872471e2d34e488923092b6dfa542a5dbe8",
+  "independent_exit": 0,
+  "runtime_hold": true
+}

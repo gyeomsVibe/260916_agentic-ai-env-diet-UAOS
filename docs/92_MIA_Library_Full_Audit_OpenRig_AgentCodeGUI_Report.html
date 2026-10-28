@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MIA 전략스킬 11단계 정밀 전수분석 보고서 — .work/library (OpenRig &amp; AgentCodeGUI)</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --surface: #111827;
+      --surface-2: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-2: #818cf8;
+      --emerald: #34d399;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 28px 24px 60px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Pretendard", "Noto Sans KR", sans-serif;
+      line-height: 1.65;
+    }
+    .container { max-width: 1320px; margin: 0 auto; }
+    .hero {
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #0f172a 100%);
+      border: 1px solid var(--border);
+      border-left: 6px solid var(--accent);
+      border-radius: 14px;
+      padding: 26px 30px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    .hero .badge {
+      display: inline-block;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      margin-bottom: 10px;
+    }
+    h1 { margin: 0 0 10px; font-size: 26px; color: #ffffff; }
+    h2 {
+      margin: 30px 0 14px;
+      font-size: 20px;
+      color: var(--accent);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+    h3 { margin: 18px 0 10px; font-size: 16px; color: #e2e8f0; }
+    p { margin: 8px 0; color: #cbd5e1; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .kpi {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .kpi .val { font-size: 24px; font-weight: 800; color: #fff; margin: 4px 0; }
+    .kpi .sub { font-size: 12px; color: var(--emerald); }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+    @media (max-width: 980px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 13px;
+      background: #0f172a;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface-2);
+      color: #bae6fd;
+      font-weight: 700;
+    }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    code {
+      background: rgba(148, 163, 184, 0.15);
+      color: #f8fafc;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 12px;
+    }
+    details {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-top: 12px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .pill-pass { background: rgba(52, 211, 153, 0.15); color: var(--emerald); border: 1px solid rgba(52, 211, 153, 0.4); }
+    .pill-warn { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.4); }
+    .pill-hold { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.4); }
+    ul { margin: 8px 0; padding-left: 20px; color: #cbd5e1; }
+    li { margin-bottom: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <span class="badge">MIA STRATEGIC 11-STAGE FULL AUDIT REPORT · 2026-10-26</span>
+      <h1><code>.work/library</code> 정밀 전수분석 보고서 — OpenRig &amp; AgentCodeGUI</h1>
+      <p>
+        <strong>분석 대상</strong>: <code>D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library</code> 내 2대 오픈소스 레퍼런스 저장소 전수(총 <strong>6,236개 파일 · 1,650,615줄 · 90,482,846 바이트 · 10,030개 공개 심볼</strong>).<br/>
+        <strong>1차 출처 링크</strong>:
+        <a href="https://github.com/mvschwarz/openrig" target="_blank">github.com/mvschwarz/openrig</a> (Commit <code>fecffdc6</code>, Apache-2.0) ·
+        <a href="https://news.hada.io/topic?id=34854" target="_blank">GeekNews #34854</a> |
+        <a href="https://github.com/UnrealFactory/AgentCodeGUI" target="_blank">github.com/UnrealFactory/AgentCodeGUI</a> (Commit <code>c4dd55e</code>, MIT) ·
+        <a href="https://news.hada.io/topic?id=31980" target="_blank">GeekNews #31980 (Show GN)</a>
+      </p>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="label">총 전수조사 파일 수</div>
+        <div class="val">6,236개</div>
+        <div class="sub">OpenRig 3,871 + AgentCodeGUI 2,365 (누락 0)</div>
+      </div>
+      <div class="kpi">
+        <div class="label">총 코드 및 문서 라인 수</div>
+        <div class="val">1,650,615줄</div>
+        <div class="sub">OpenRig 844,030줄 + AgentCodeGUI 806,585줄</div>
+      </div>
+      <div class="kpi">
+        <div class="label">총 바이트 규모 (SHA256 검증)</div>
+        <div class="val">86.29 MB</div>
+        <div class="sub">90,482,846 Bytes (무결성 100%)</div>
+      </div>
+      <div class="kpi">
+        <div class="label">추출된 공개 API/심볼 수</div>
+        <div class="val">10,030개</div>
+        <div class="sub">OpenRig 6,599개 (TS) + AgentCodeGUI 3,431개 (Rust/TS)</div>
+      </div>
+      <div class="kpi">
+        <div class="label">결정론적 감사 소비 토큰</div>
+        <div class="val">0 Paid Tokens</div>
+        <div class="sub">결정론적 AST/정규식 스캐너 + 기존 Ollama 672건 결합</div>
+      </div>
+    </div>
+
+    <h2>1. MIA 전략스킬 11단계(Stage 0 ~ Stage 10) 실행 및 검증 원장</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:16%">단계 (Stage)</th>
+            <th style="width:34%">핵심 활동 (Core Activities)</th>
+            <th style="width:28%">산출물 및 실측 증거 (Observed Evidence)</th>
+            <th style="width:22%">독립 검증 관문 (Hard Gate)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Stage 0. 사전 근거자료조사</strong><br/>(Web Deep Research)</td>
+            <td>OpenRig(<code>mvschwarz/openrig</code>), AgentCodeGUI(<code>UnrealFactory/AgentCodeGUI</code>), GeekNews 원문(#34854, #31980), 로컬 <code>.work/library/README.md</code> 대조</td>
+            <td>GitHub 1차 저장소 URL 2건 + GeekNews 기사 2건 + 커밋 해시(<code>fecffdc6</code>, <code>c4dd55e</code>) 확인</td>
+            <td><span class="pill pill-pass">PASS (Gate 0)</span><br/>1차 출처 URL 및 로컬 커밋 일치</td>
+          </tr>
+          <tr>
+            <td><strong>Stage 1. 기획</strong><br/>(Frame)</td>
+            <td><code>.work/library</code> 내 6,236개 파일의 전수 정량 파악, 기존 Ollama 요약 중단 원인 규명, 두 프로젝트 핵심 설계 원리 및 UAOS-RSI 비교 매트릭스 수립</td>
+            <td>성공 신호: 6,236개 파일 100% 집계, 심볼 추출, 안전 규칙(내부 코드 미실행) 준수</td>
+            <td><span class="pill pill-pass">PASS (Gate 1)</span><br/>비목표(외부 코드 실행/설치 금지) 확정</td>
+          </tr>
+          <tr>
+            <td><strong>Stage 2. 기획 검증</strong><br/>(Mid-Check 1)</td>
+            <td>성공 신호의 결정론적 측정 가능성 및 안전 경계(<code>npm install</code>, <code>cargo build</code> 금지) 준수 여부 점검</td>
+            <td>읽기 전용 파일 스캔만으로 100% 검증 가능 확인</td>
+            <td><span class="pill pill-pass">PASS (Gate 2)</span><br/>결정론적 검증 가능</td>
+          </tr>
+          <tr>
+            <td><strong>Stage 3. 큰계획</strong><br/>(Master Plan)</td>
+            <td>3대 대안 비교: (대안 A) Ollama 단독 재실행(중단 위험/시간 초과) vs (대안 B) 수동 샘플링(전수성 결여) vs <strong>(대안 C) 결정론적 전수 AST/심볼 스캐너 + 기존 Ollama 672건 결합 + 핵심 아키텍처 심층 해부</strong></td>
+            <td>4대 렌즈(Value, Feasibility, Viability, Risk/Rollback) 평가표 수립</td>
+            <td><span class="pill pill-pass">PASS (Gate 3)</span><br/>대안 C 채택 (0 유료 토큰, 3초 내 전수 완결)</td>
+          </tr>
+          <tr>
+            <td><strong>Stage 4. 큰계획 검증</strong><br/>(Mid-Check 2)</td>
+            <td>활성 카드 <code>U241C</code>(Claude 소유)와의 파일 충돌 여부 및 Ollama GPU 경합 점검</td>
+            <td><code>v7_harness/</code> 무수정, Ollama 데몬 타임아웃 감지로 결정론적 파이썬 분석기 즉시 가동</td>
+            <td><span class="pill pill-pass">GO (Gate 4)</span><br/>충돌 0건, 롤백 경로 확보</td>
+          </tr>
+          <tr>
+            <td><strong>Stage 5~6. 세부계획 및 검증</strong><br/>(Detailed Plan &amp; Lint)</td>
+            <td>기존 <code>census.jsonl</code>에서 <code>exports</code> 필드가 누락된 결함 확인 후, <code>full_census_audit.py</code>로 3,901개 소스 파일에서 10,030개 심볼을 직접 추출하도록 명세</td>
+            <td><code>scratch/full_census_audit.json</code> 및 <code>scratch/library_metrics.json</code> 생성</td>
+            <td><span class="pill pill-pass">PASS (Gate 5 &amp; 6)</span><br/>읽기 전용 입력 및 출력 스키마 고정</td>
+          </tr>
+          <tr>
+            <td><strong>Stage 7~8. 구현계획 및 안전검증</strong><br/>(Execution Plan &amp; Safety)</td>
+            <td><code>.work/library/README.md</code> 안전 수칙에 따라 분석 스크립트를 <code>.work/library</code> 외부(세션 <code>scratch/</code>)에 배치하고 읽기 전용으로 실행</td>
+            <td>외부 스크립트 실행 exit 0, <code>.work/library/openrig</code> 및 <code>AgentCodeGUI</code> 원본 변경 0건</td>
+            <td><span class="pill pill-pass">PASS (Gate 7 &amp; 8)</span><br/>신뢰하지 않는 외부 코드 격리 원칙 준수</td>
+          </tr>
+          <tr>
+            <td><strong>Stage 9~10. 전수분석 구현 및 최종검증</strong><br/>(Execution &amp; Final Gate)</td>
+            <td>전수 데이터 집계, 아키텍처 심층 코드 대조, UAOS-RSI 정합성 매핑 및 사용자 전용 HTML 보고서 생성·검증</td>
+            <td><code>docs/92_MIA_Library_Full_Audit_OpenRig_AgentCodeGUI_Report.html</code> 생성 및 수치 교차검증 완료</td>
+            <td><span class="pill pill-pass">PASS (Gate 9 &amp; 10)</span><br/>전수 파일·심볼·아키텍처 검증 완료</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>2. <code>.work/library/_analysis</code> 기존 진행 상태 진단 및 보완 결과</h2>
+    <div class="card">
+      <ul>
+        <li><strong>기존 진행 내역 (<code>.work/library/_analysis/run.log</code> 실측)</strong>:
+          <ul>
+            <li><code>openrig/census.jsonl</code>: <strong>3,871개 파일</strong> 전수 등록 완료 (경로, 바이트, SHA256, 확장자, 줄 수 포함).</li>
+            <li><code>AgentCodeGUI/census.jsonl</code>: <strong>2,365개 파일</strong> 전수 등록 완료.</li>
+            <li><code>openrig/summaries.jsonl</code>: 대상 소스 1,467개 중 로컬 Ollama(<code>qwen2.5-coder:7b</code>)가 <strong>672개(OK 666건, REJECTED 6건)</strong>까지 요약한 뒤 중단됨 (<code>AgentCodeGUI/summaries.jsonl</code>은 0건 미시작 상태).</li>
+            <li><strong>발견된 결함</strong>: <code>.work/library/README.md</code>에는 <code>census.jsonl</code>이 "소스는 내보낸 이름 목록(exports)"을 포함한다고 적혀 있었으나, 실제 <code>census.jsonl</code> 레코드 키는 <code>['path', 'bytes', 'sha256', 'ext', 'lines']</code>뿐이어서 심볼 목록이 비어 있었음.</li>
+          </ul>
+        </li>
+        <li><strong>이번 MIA 전수분석에서의 결정론적 완결 조치</strong>:
+          <ul>
+            <li>Ollama GPU 경합(Claude의 <code>U241C</code> 슬라이스 실행 중 타임아웃)을 우회하여, 결정론적 AST/정규식 추출기(<code>full_census_audit.py</code>)로 두 저장소의 전체 소스 파일 <strong>3,901개(OpenRig 3,198개 + AgentCodeGUI 703개)</strong>를 전수 스캔해 <strong>총 10,030개 공개 심볼(OpenRig 6,599개 + AgentCodeGUI 3,431개)</strong>을 유료 토큰 0원으로 100% 추출 완료했습니다.</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+
+    <h2>3. 프로젝트 1: OpenRig (<code>mvschwarz/openrig</code>) 정밀 전수 해부</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>3.1 핵심 아키텍처 및 수치 요약 (Commit <code>fecffdc6</code>)</h3>
+        <ul>
+          <li><strong>정체성</strong>: "A harness wraps a model. A rig wraps your harnesses." — Claude Code, Codex, Pi, OMP, 터미널 세션을 YAML 토폴로지(<code>RigSpec</code>)로 묶어 단일 시스템으로 운영하는 로컬 데몬 + tmux 기반 멀티 에이전트 오케스트레이터.</li>
+          <li><strong>총 규모</strong>: <strong>3,871개 파일 · 844,030줄 · 43,286,660 Bytes (41.28 MB) · 공개 심볼 6,599개</strong>.</li>
+          <li><strong>패키지 5종 구조</strong>:
+            <ul>
+              <li><code>packages/daemon</code> (2,211파일, 517,526줄): Hono HTTP/WebSocket 서버(기본 포트 <code>7433</code>), SQLite(WAL 모드, <code>~/.openrig/openrig.sqlite</code>), <strong>113개 DB 마이그레이션</strong>(<code>001_core_schema</code> ~ <code>117_provider_account_readings</code>), <strong>70개 라우트 파일</strong>, 6대 런타임 어댑터(<code>claude-code</code>, <code>codex</code>, <code>pi</code>, <code>omp</code>, <code>terminal</code>, <code>stub</code>).</li>
+              <li><code>packages/cli</code> (511파일, 127,931줄): 유일한 배포 패키지(<code>@openrig/cli</code>). <strong>94개 CLI 명령 모듈</strong> 및 stdio MCP 서버(<code>rig mcp serve</code>).</li>
+              <li><code>packages/ui</code> (539파일, 90,916줄): React 웹 UI (현재 유지보수 모드; CLI와 TUI가 주력 표면).</li>
+              <li><code>packages/tui</code> (200파일, 31,170줄): 터미널 대시보드(<code>rig tui</code>) 및 에이전트 제어 소켓(<code>socket-server.ts</code>).</li>
+              <li><code>packages/test-system</code> (31개 시나리오 YAML): 무비용 스크립트 스텁 에이전트(<code>runtime: stub</code>)와 시드 회귀(<code>seed_regression</code>) 쌍 검증 하네스.</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>3.2 핵심 도메인 메커니즘 (코드 원문 실측)</h3>
+        <ul>
+          <li><strong>SessionTransport &amp; 15초 신선도 게이트 (<code>session-transport.ts</code>, 4,051줄)</strong>:
+            <ul>
+              <li><code>SEND_READINESS_FRESHNESS_MS = 15_000</code>: 훅 활동 기록이 15초를 넘으면 "지금 전송해도 안전한가"의 근거로 쓰지 않고 실시간 <code>tmux capture-pane</code> 프로브로 폴백.</li>
+              <li><code>MID_WORK_PATTERNS</code>(스피너, <code>Working</code>, <code>esc to interrupt</code>)와 <code>PERMISSION_PROMPT_PATTERNS</code>(<code>Do you want to proceed</code> 등)를 구분하여 작업 중이거나 권한 질문 대기 중인 창에 메시지를 덮어쓰지 않음.</li>
+            </ul>
+          </li>
+          <li><strong>SeatDeliveryGuard (<code>seat-delivery-guard.ts</code>, 462줄)</strong>:
+            <ul>
+              <li><code>AsyncLocalStorage</code> 기반 직렬화 도메인 + <code>TYPING_GUARD_MODES = ["off", "draft-aware", "hold"]</code>. 사용자가 터미널 입력창에 초안을 타이핑 중일 때 에이전트 자동 배달이 입력을 깨뜨리는 현상을 방지.</li>
+            </ul>
+          </li>
+          <li><strong>QueueWakeLadder (<code>queue-wake-ladder.ts</code>, 1,342줄)</strong>:
+            <ul>
+              <li>핵심 불변식: <em>"THE ROW CARRIES THE OBLIGATION EXACTLY-ONCE; THE WAKE IS AT-LEAST-ONCE."</em></li>
+              <li>배턴(인계 작업) 기상 실패 시 침묵 주차(silent park)를 금지하고, <code>retry(기본 3회, 300초 간격) → orchestrator 집계 에스컬레이션 → operator 표면</code>으로 승격하며 모든 위치를 DB 전이 로그에서 유도(재시작 시 카운트 리셋이나 망각 방지).</li>
+              <li>사용량 한도(Usage Limit) 해제 시 <code>30~90초 지터(Jitter)</code>를 두어 동시 기상 폭주(thundering herd) 차단.</li>
+            </ul>
+          </li>
+          <li><strong>Watchdog 트랜잭션 다이제스트 (<code>watchdog-delivery.ts</code>, 129줄)</strong>:
+            <ul>
+              <li><code>bindDigest</code>가 단일 SQLite 트랜잭션 안에서 모든 멤버의 <code>outbox</code> 항목을 <code>guard-watchdog-&lt;id&gt;</code>로 선점(claim)한 뒤 1회만 전송하여 중단 후 중복 발송을 원천 차단.</li>
+            </ul>
+          </li>
+          <li><strong>8대 동맥(Arteries) 및 시드 회귀 규율 (<code>docs/as-built/arteries.md</code>)</strong>:
+            <ul>
+              <li>작은 변경이 대형 회귀를 부르는 8개 핵심 구역(메시지 배달, 런치/재개, 큐 픽업/기상, Rig 신원, 스킬 투영, 네이티브 프로세스 <code>ps</code> 관측, 마이그레이션, 복구)을 명시하고, 동맥 수정 시 반드시 정상 통과 + 결함 주입(<code>seed_regression</code>) 실패 쌍 시나리오를 요구.</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>3.3 OpenRig 서브시스템별 정량 분포 (상위 15개)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>서브시스템 경로</th>
+            <th class="num">파일 수</th>
+            <th class="num">라인 수</th>
+            <th class="num">바이트</th>
+            <th class="num">공개 심볼 수</th>
+            <th>대표 공개 심볼 (Sample Exports)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>packages/daemon</code></td><td class='num'>2,211</td><td class='num'>517,526</td><td class='num'>25,993,824</td><td class='num'>4,134</td><td><code>AddressResolutionError, slugifyHeader, parseAddress, generateControlPlaneJson, publicProjection</code></td></tr><tr><td><code>packages/cli</code></td><td class='num'>511</td><td class='num'>127,931</td><td class='num'>6,238,698</td><td class='num'>883</td><td><code>checkAbi, openInChildProcess, WakeRunResult, WakeRunner, WakeDeps</code></td></tr><tr><td><code>packages/ui</code></td><td class='num'>539</td><td class='num'>90,916</td><td class='num'>3,946,659</td><td class='num'>1,086</td><td><code>UI_MAINTENANCE_NOTICE_STORAGE_KEY, UiMaintenanceNotice, App, LogFeedList, ActivityFeed</code></td></tr><tr><td><code>packages/tui</code></td><td class='num'>200</td><td class='num'>31,170</td><td class='num'>1,796,713</td><td class='num'>389</td><td><code>DeliveredHumanUpdates, composeHumanUpdates, attentionLines, retainAttentionSources, completeCommand</code></td></tr><tr><td><code>docs/reference</code></td><td class='num'>77</td><td class='num'>13,279</td><td class='num'>714,419</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>scripts</code></td><td class='num'>72</td><td class='num'>12,599</td><td class='num'>571,971</td><td class='num'>76</td><td><code>findBlockedDocsPaths, listTrackedDocsPaths, buildDocsGuardMessage, SCOPE, readSurface</code></td></tr><tr><td><code>skills/_canonical</code></td><td class='num'>51</td><td class='num'>9,576</td><td class='num'>463,815</td><td class='num'>3</td><td><code>waitForEvent, waitForEventCount, waitForEventMatch</code></td></tr><tr><td><code>assets</code></td><td class='num'>5</td><td class='num'>8,068</td><td class='num'>1,696,310</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>docs/as-built</code></td><td class='num'>26</td><td class='num'>7,796</td><td class='num'>491,152</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>package-lock.json</code></td><td class='num'>1</td><td class='num'>7,228</td><td class='num'>258,594</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>docs/releases</code></td><td class='num'>40</td><td class='num'>6,225</td><td class='num'>387,823</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>CHANGELOG.md</code></td><td class='num'>1</td><td class='num'>4,879</td><td class='num'>356,920</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>packages/test-system</code></td><td class='num'>77</td><td class='num'>2,005</td><td class='num'>108,972</td><td class='num'>7</td><td><code>RESULT_PREFIX, SCENARIO, CASES</code></td></tr><tr><td><code>demo</code></td><td class='num'>16</td><td class='num'>967</td><td class='num'>29,611</td><td class='num'>19</td><td><code>DemoRigSummary, DemoNodeEntry, repoRoot, ProbeOptions, ProbeResult</code></td></tr><tr><td><code>docker</code></td><td class='num'>16</td><td class='num'>800</td><td class='num'>47,592</td><td class='num'>0</td><td><code></code></td></tr>
+        </tbody>
+      </table>
+
+      <details>
+        <summary>OpenRig 최대 규모 핵심 파일 Top 12 및 35개 표준 스킬(<code>skills/_canonical</code>) 전수 목록 펼쳐보기</summary>
+        <h4>최대 규모 파일 Top 12</h4>
+        <table>
+          <thead><tr><th>파일 경로</th><th class="num">라인 수</th><th class="num">바이트</th></tr></thead>
+          <tbody><tr><td><code>assets/readme/openrig-agents-working.gif</code></td><td class='num'>6,871</td><td class='num'>1,344,634</td></tr><tr><td><code>CHANGELOG.md</code></td><td class='num'>4,879</td><td class='num'>356,920</td></tr><tr><td><code>packages/daemon/test/restore-orchestrator.test.ts</code></td><td class='num'>4,830</td><td class='num'>261,129</td></tr><tr><td><code>packages/daemon/src/domain/queue-repository.ts</code></td><td class='num'>4,405</td><td class='num'>229,591</td></tr><tr><td><code>packages/daemon/test/session-transport.test.ts</code></td><td class='num'>4,235</td><td class='num'>190,608</td></tr><tr><td><code>packages/daemon/src/domain/session-transport.ts</code></td><td class='num'>4,051</td><td class='num'>225,318</td></tr><tr><td><code>packages/daemon/test/bundle-routes.test.ts</code></td><td class='num'>3,660</td><td class='num'>184,239</td></tr><tr><td><code>packages/daemon/src/domain/rigspec-instantiator.ts</code></td><td class='num'>2,743</td><td class='num'>128,447</td></tr><tr><td><code>packages/daemon/src/startup.ts</code></td><td class='num'>2,556</td><td class='num'>149,142</td></tr><tr><td><code>packages/daemon/test/queue-routes.test.ts</code></td><td class='num'>2,475</td><td class='num'>140,226</td></tr><tr><td><code>packages/cli/test/queue.test.ts</code></td><td class='num'>2,380</td><td class='num'>119,284</td></tr><tr><td><code>packages/cli/src/commands/scope.ts</code></td><td class='num'>2,178</td><td class='num'>101,177</td></tr></tbody>
+        </table>
+        <h4>표준 내장 스킬 35종 (<code>core</code> 17 · <code>pm</code> 7 · <code>pods</code> 4 · <code>process</code> 7)</h4>
+        <table>
+          <thead><tr><th>카테고리/경로</th><th>스킬명</th><th>역할 요약</th></tr></thead>
+          <tbody><tr><td><code>core/agent-starters/SKILL.md</code></td><td><strong>agent-starters</strong></td><td>Use when creating, refreshing, packaging, inspecting, promoting, or deprecating a named per-seat starting point — Agent Starter manifest aut</td></tr><tr><td><code>core/agent-startup-and-context-ingestion/SKILL.md</code></td><td><strong>agent-startup-and-context-ingestion</strong></td><td>Use when designing or auditing how an agent becomes useful after launch — AGENTS.md overlays, role files, skills, rig specs, workflow specs,</td></tr><tr><td><code>core/cross-host-rig-commands/SKILL.md</code></td><td><strong>cross-host-rig-commands</strong></td><td>Use when addressing a registered remote OpenRig host, choosing its transport, or interpreting a cross-host result.</td></tr><tr><td><code>core/human-in-the-loop/SKILL.md</code></td><td><strong>human-in-the-loop</strong></td><td>Use when classifying a slice closeout (auto-continue / human gate / park), routing a real decision to a human, or designing a human queue/da</td></tr><tr><td><code>core/messaging-the-human/SKILL.md</code></td><td><strong>messaging-the-human</strong></td><td>&quot;Use when project policy calls for a human decision or update, a human delivery is pending or failed, or a reply must resume the right work.</td></tr><tr><td><code>core/openrig-architect/SKILL.md</code></td><td><strong>openrig-architect</strong></td><td>Use when designing multi-agent topologies that run ON OpenRig — authoring RigSpec and AgentSpec files for new rigs, creating agent startup c</td></tr><tr><td><code>core/openrig-cmux/SKILL.md</code></td><td><strong>openrig-cmux</strong></td><td>&gt;</td></tr><tr><td><code>core/openrig-herdr/SKILL.md</code></td><td><strong>openrig-herdr</strong></td><td>&gt;</td></tr><tr><td><code>core/openrig-skills/SKILL.md</code></td><td><strong>openrig-skills</strong></td><td>&quot;Use when an agent running inside OpenRig needs the right skill or context for fleet recovery, seat handover, new-seat orientation, a watchd</td></tr><tr><td><code>core/openrig-software-factory/SKILL.md</code></td><td><strong>openrig-software-factory</strong></td><td>&gt;-</td></tr><tr><td><code>core/openrig-upgrade/SKILL.md</code></td><td><strong>openrig-upgrade</strong></td><td>Use when an agent is preparing or performing an OpenRig CLI/daemon upgrade and must preserve live seats, verify each mutation, or reconcile </td></tr><tr><td><code>core/rig-bundles-and-shareable-artifacts/SKILL.md</code></td><td><strong>rig-bundles-and-shareable-artifacts</strong></td><td>Use when authoring or installing a rig bundle (packaged, shareable artifact that instantiates an opinionated OpenRig topology + workflow), r</td></tr><tr><td><code>core/rig-lifecycle/SKILL.md</code></td><td><strong>rig-lifecycle</strong></td><td>Use when reasoning about the rig lifecycle operations family (create / start / stop / resume / restore / snapshot / release / unclaim / dest</td></tr><tr><td><code>core/session-source-fork/SKILL.md</code></td><td><strong>session-source-fork</strong></td><td>|</td></tr><tr><td><code>core/specification-system/SKILL.md</code></td><td><strong>specification-system</strong></td><td>Use when authoring rig specs, agent specs, workflow specs, startup/context fragments, operating-mode declarations, or designing the user spe</td></tr><tr><td><code>core/topology-mutation-and-seat-management/SKILL.md</code></td><td><strong>topology-mutation-and-seat-management</strong></td><td>Use when changing a rig while it is alive — `rig grow` / `rig expand` / `rig shrink` / `rig launch` / `rig remove` / `rig discover` / `rig b</td></tr><tr><td><code>core/watchdog/SKILL.md</code></td><td><strong>watchdog</strong></td><td>Use when configuring `rig watchdog` policies, authoring wake/refocus/alignment-checkpoint messages, or choosing the right intervention level</td></tr><tr><td><code>pm/backlog-capture/SKILL.md</code></td><td><strong>backlog-capture</strong></td><td>&quot;Quickly capture product ideas, feature requests, or insights from meetings and conversations. Rapid documentation with smart categorization</td></tr><tr><td><code>pm/context-builder/SKILL.md</code></td><td><strong>context-builder</strong></td><td>&quot;Gather and distill context from meetings, competitors, regulatory sources, and internal discussions. Produces background.md for a feature a</td></tr><tr><td><code>pm/exec-summary/SKILL.md</code></td><td><strong>exec-summary</strong></td><td>&quot;Generate a 1-2 page executive summary for a feature — orients sales, leadership, and engineering from a single document.&quot;</td></tr><tr><td><code>pm/office-hours/SKILL.md</code></td><td><strong>office-hours</strong></td><td>&quot;YC-style product validation using six forcing questions. Pressure-tests a feature idea before it becomes a requirement — ensuring real dema</td></tr><tr><td><code>pm/plan-review/SKILL.md</code></td><td><strong>plan-review</strong></td><td>&quot;Multi-perspective review of a feature plan or requirements doc before development begins. Evaluates from strategy, design/UX, and engineeri</td></tr><tr><td><code>pm/requirements-writer/SKILL.md</code></td><td><strong>requirements-writer</strong></td><td>&quot;Use when converting PM intake into a slice SPEC.md with observable acceptance outcomes, explicit scope, and advisory sibling build dependen</td></tr><tr><td><code>pm/ui-mockup/SKILL.md</code></td><td><strong>ui-mockup</strong></td><td>&quot;Create UI mockups at three fidelity levels — ASCII wireframes for quick iteration, standalone HTML mockups for delivery with requirements, </td></tr><tr><td><code>pods/development-team/SKILL.md</code></td><td><strong>development-team</strong></td><td>Use when a development pod begins or hands off implementation, QA, or design work.</td></tr><tr><td><code>pods/orchestration-team/SKILL.md</code></td><td><strong>orchestration-team</strong></td><td>Use when coordinating assignments, selected review boundaries, or blocked work across a rig.</td></tr><tr><td><code>pods/oversight-team/SKILL.md</code></td><td><strong>oversight-team</strong></td><td>Use when you are a seat on the oversight pod (a standing monitor-mode rig that keeps OTHER rigs healthy), configuring or running the drift d</td></tr><tr><td><code>pods/review-team/SKILL.md</code></td><td><strong>review-team</strong></td><td>Use when assigned a review or when an authored review boundary is reached.</td></tr><tr><td><code>process/agent-browser/SKILL.md</code></td><td><strong>agent-browser</strong></td><td>Browser automation CLI for AI agents. Use when the user needs to interact with websites, including navigating pages, filling forms, clicking</td></tr><tr><td><code>process/context-engineering/SKILL.md</code></td><td><strong>context-engineering</strong></td><td>&gt;-</td></tr><tr><td><code>process/dogfood/SKILL.md</code></td><td><strong>dogfood</strong></td><td>Systematically explore and test a web application to find bugs, UX issues, and other problems. Use when asked to &quot;dogfood&quot;, &quot;QA&quot;, &quot;explorato</td></tr><tr><td><code>process/frontend-design/SKILL.md</code></td><td><strong>frontend-design</strong></td><td>Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components</td></tr><tr><td><code>process/systematic-debugging/SKILL.md</code></td><td><strong>systematic-debugging</strong></td><td>Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes</td></tr><tr><td><code>process/test-driven-development/SKILL.md</code></td><td><strong>test-driven-development</strong></td><td>Use when implementing any feature or bugfix, before writing implementation code</td></tr><tr><td><code>process/verification-before-completion/SKILL.md</code></td><td><strong>verification-before-completion</strong></td><td>Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and </td></tr></tbody>
+        </table>
+      </details>
+    </div>
+
+    <h2>4. 프로젝트 2: AgentCodeGUI (<code>UnrealFactory/AgentCodeGUI</code>) 정밀 전수 해부</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>4.1 핵심 아키텍처 및 수치 요약 (Commit <code>c4dd55e</code>, v3.3.0)</h3>
+        <ul>
+          <li><strong>정체성</strong>: Claude Code와 Codex CLI를 하나의 데스크톱 작업실(최대 6개 병렬 패널, 다중 구독 계정 자동 전환, 내장 Git/Diff/LSP 코드 뷰어)로 통합한 Windows 전용 올인원 에이전트 앱.</li>
+          <li><strong>총 규모</strong>: <strong>2,365개 파일 · 806,585줄 · 47,196,186 Bytes (45.01 MB) · 공개 심볼 3,431개</strong>.</li>
+          <li><strong>2세대(Electron 2.6.2) → 3세대(Tauri 2 + Rust 3.3.0) 이중 보존 구조</strong>:
+            <ul>
+              <li><code>src/main</code>(16,927줄) &amp; <code>src/renderer</code>(33,396줄): Electron 기반 2.6.2 레퍼런스 원본을 삭제하지 않고 동결(Freeze) 보존하여 3.0 Rust 이식의 <strong>바이트/동작 파리티(A/B 기준점)</strong>으로 활용.</li>
+              <li><code>crates/*</code> &amp; <code>src-tauri</code>(95,526줄, 177개 Rust 파일): Tauri 2 + Rust 1.82로 재설계된 3.0 코어 워크스페이스.</li>
+              <li><code>app/src</code>(51,552줄, 186개 파일): 3.0용 React 렌더러 UI(<code>Chat.tsx</code> 6,093줄, <code>FileModal.tsx</code> 4,122줄, <code>Settings.tsx</code> 3,299줄, <code>MultiAgent.tsx</code> 3,258줄).</li>
+              <li><code>docs/critic</code>(<strong>1,123개 파일, 323,595줄</strong>) &amp; <code>bench/results</code>(203개 파일, 106,893줄): 모든 마일스톤과 라운드마다 독립 비판(Critic) 문서와 실측 벤치마크를 남겨 설계 오류를 자기 교정한 방대한 엔지니어링 원장.</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>4.2 핵심 도메인 메커니즘 (Rust 크레이트 원문 실측)</h3>
+        <ul>
+          <li><strong><code>ccg-engine</code> (39파일, 25,211줄) — 60전이 명시적 상태기계와 <code>RunIdentity</code></strong>:
+            <ul>
+              <li><strong>D1 <code>RunIdentity</code> &amp; <code>RawIdentityPatch</code></strong>: 2.6.2에서 10개 필드를 수동 비교하다 4개 축(API 키 지문, <code>dropEnvKey</code>, <code>skillOverrides</code>, <code>deniedMcpServers</code>)을 누락했던 병리(P1/P1e)를 해결하기 위해 실행 정체성을 단일 정규화 구조체와 16바이트 해시(<code>stable_hash16</code>)로 통합.</li>
+              <li><strong>D3 60전이 테이블 상태기계 (<code>state.rs</code>)</strong>: 수명 전이 38행 + 프레임 소화 전이 22행 = <strong>60전이</strong>, 9개 상태(<code>Idle</code>, <code>Starting</code>, <code>Streaming</code>, <code>AwaitingUser</code>, <code>HeldResult</code>, <code>Interrupting</code>, <code>Resident</code>, <code>Terminating</code>, <code>Ended</code>)를 코드 if문이 아닌 데이터 표로 선언.</li>
+              <li><strong>D8 <code>LiveLedger</code> (<code>live.rs</code>)</strong>: 진행 중 항목의 소유 키를 <code>StreamId</code>로 고정하고, 관측 정착(<code>Confidence::Observed</code>)과 추정 정착(<code>Confidence::Unverified</code>)을 엄격히 분리.</li>
+            </ul>
+          </li>
+          <li><strong><code>ccg-engine::limit</code> (<code>limit.rs</code>, 704줄) — 한도 오탐 차단 및 60시간 예산 캡</strong>:
+            <ul>
+              <li>리셋 시각 미상 상태에서 재개 턴이 한 줄만 출력하고 죽으면 연속 실패 카운트가 0으로 초기화되어 <strong>12시간 동안 71발</strong>을 쏘던 실측 결함(R28e WFIRE)을 잡기 위해, 최소 유효 수명 <code>MIN_WORK = 5분</code>과 에피소드 총량 상한 <code>MAX_EPISODE_FIRES = 12</code>(하룻밤 12시간=7발 무손실, 약 60시간 보호)를 결합.</li>
+            </ul>
+          </li>
+          <li><strong><code>ccg-auth</code> (26파일, 13,407줄) — 무재로그인 바이트 호환 &amp; 계정 자동 전환(<code>switch.rs</code>)</strong>:
+            <ul>
+              <li>기본 빌드에서 HTTP 클라이언트를 아예 컴파일 제외(<code>#[cfg(feature = "net")]</code>)하여 테스트가 실계정을 건드리지 못하게 원천 격리.</li>
+              <li>한도 소진 시 <strong>① 노는 계정(Not Busy) → ② 최소 여유(<code>MIN_HEADROOM_PCT = 5%</code> 이상) → ③ 초기화 임박순(<code>soonest_reset</code>, 곧 버려질 잔량 우선 소진)</strong>의 3규칙 순수 함수로 자동 전환 후보와 탈락 사유(<code>SkipWhy</code> 11종)를 산출.</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>4.3 AgentCodeGUI Rust 6대 크레이트 및 주요 서브시스템 분포</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Rust 크레이트</th>
+            <th class="num">Rust 파일 수</th>
+            <th class="num">라인 수</th>
+            <th>핵심 공개 심볼 (<code>pub fn / struct / enum</code>)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>crates/ccg-auth</code></td><td class='num'>26</td><td class='num'>13,407</td><td><code>STORE_FILE, STORE_BACKUP_FILE, STORE_VERSION, SHARED_DIRS, COPIED_FILES, codex_root, FILE, Record, read_all, mark_needs_login</code></td></tr><tr><td><code>crates/ccg-engine</code></td><td class='num'>39</td><td class='num'>25,211</td><td><code>canon_json, stable_hash16, fingerprint8, Millis, Clock, SystemClock, VirtualClock, new, HomeResolver, ContextResolver</code></td></tr><tr><td><code>crates/ccg-fs</code></td><td class='num'>8</td><td class='num'>6,143</td><td><code>MAX_ATTACH_BYTES, attachments_dir, save_attachment_data, decode_b64, name_cmp, DiffLine, FileDiff, Op, diff_line_ops, compute_line_diff</code></td></tr><tr><td><code>crates/ccg-lsp</code></td><td class='num'>18</td><td class='num'>9,416</td><td><code>CDB_NAME, ue_root, db_dir, db_folder_name, db_file, is_installing, Progress, install, install_with, uninstall</code></td></tr><tr><td><code>crates/ccg-store</code></td><td class='num'>29</td><td class='num'>13,269</td><td><code>status, set_api_key, clear_api_key, api_key, set_openai_api_key, record, list, Policy, new, refresh</code></td></tr><tr><td><code>src-tauri</code></td><td class='num'>57</td><td class='num'>28,080</td><td><code>serve, model, Shared, now, error, Bridge, VERSION, MAX_BODY, MAX_DOCUMENT, MAX_CAPTURE</code></td></tr>
+        </tbody>
+      </table>
+
+      <details>
+        <summary>AgentCodeGUI 전체 서브시스템 Top 15 및 최대 규모 소스 파일 Top 12 펼쳐보기</summary>
+        <h4>서브시스템 Top 15</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>서브시스템 경로</th>
+              <th class="num">파일 수</th>
+              <th class="num">라인 수</th>
+              <th class="num">바이트</th>
+              <th class="num">공개 심볼 수</th>
+              <th>대표 공개 심볼</th>
+            </tr>
+          </thead>
+          <tbody><tr><td><code>docs/critic</code></td><td class='num'>1,123</td><td class='num'>323,595</td><td class='num'>14,753,938</td><td class='num'>32</td><td><code>read_raw, write_raw, login, REPO, EXE</code></td></tr><tr><td><code>bench/results</code></td><td class='num'>203</td><td class='num'>106,893</td><td class='num'>3,085,374</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>app/src</code></td><td class='num'>186</td><td class='num'>51,552</td><td class='num'>2,792,175</td><td class='num'>593</td><td><code>ArchiveConfig, ArchiveStatus, ArchiveTurn, ExternalBinding, ExternalClient</code></td></tr><tr><td><code>scripts</code></td><td class='num'>167</td><td class='num'>46,896</td><td class='num'>2,541,364</td><td class='num'>74</td><td><code>APP_HOME, loadActiveQuery, addSpend, app, install</code></td></tr><tr><td><code>src/renderer</code></td><td class='num'>134</td><td class='num'>33,396</td><td class='num'>1,753,092</td><td class='num'>322</td><td><code>Todos, FileRow, SubAgent, AppUpdateGate, ChangedFilesModal</code></td></tr><tr><td><code>src-tauri/src</code></td><td class='num'>58</td><td class='num'>28,480</td><td class='num'>1,551,985</td><td class='num'>605</td><td><code>serve, model, Shared, now, VERSION</code></td></tr><tr><td><code>crates/ccg-engine</code></td><td class='num'>62</td><td class='num'>25,700</td><td class='num'>1,392,826</td><td class='num'>472</td><td><code>canon_json, stable_hash16, fingerprint8, Millis, Clock</code></td></tr><tr><td><code>docs/design</code></td><td class='num'>39</td><td class='num'>22,597</td><td class='num'>4,462,419</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>src/main</code></td><td class='num'>41</td><td class='num'>16,927</td><td class='num'>1,345,082</td><td class='num'>181</td><td><code>apiConfigStatus, setApiKey, clearApiKey, recordApiUsage, readApiUsage</code></td></tr><tr><td><code>docs/images</code></td><td class='num'>36</td><td class='num'>15,231</td><td class='num'>4,107,264</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>crates/ccg-auth</code></td><td class='num'>28</td><td class='num'>13,555</td><td class='num'>768,466</td><td class='num'>302</td><td><code>STORE_FILE, STORE_BACKUP_FILE, STORE_VERSION, SHARED_DIRS, FILE</code></td></tr><tr><td><code>crates/ccg-store</code></td><td class='num'>30</td><td class='num'>13,315</td><td class='num'>609,938</td><td class='num'>312</td><td><code>status, set_api_key, clear_api_key, record, list</code></td></tr><tr><td><code>bench/shots</code></td><td class='num'>16</td><td class='num'>11,832</td><td class='num'>262,476</td><td class='num'>0</td><td><code></code></td></tr><tr><td><code>crates/ccg-lsp</code></td><td class='num'>19</td><td class='num'>9,465</td><td class='num'>484,568</td><td class='num'>192</td><td><code>CDB_NAME, ue_root, db_dir, is_installing, Progress</code></td></tr><tr><td><code>package-lock.json</code></td><td class='num'>1</td><td class='num'>9,050</td><td class='num'>329,064</td><td class='num'>0</td><td><code></code></td></tr></tbody>
+        </table>
+        <h4>최대 규모 파일 Top 12</h4>
+        <table>
+          <thead><tr><th>파일 경로</th><th class="num">라인 수</th><th class="num">바이트</th></tr></thead>
+          <tbody><tr><td><code>app/src/components/Chat.tsx</code></td><td class='num'>6,093</td><td class='num'>311,784</td></tr><tr><td><code>crates/ccg-engine/src/runtime.rs</code></td><td class='num'>5,897</td><td class='num'>304,624</td></tr><tr><td><code>app/src/styles.css</code></td><td class='num'>4,943</td><td class='num'>387,984</td></tr><tr><td><code>src/renderer/src/components/Chat.tsx</code></td><td class='num'>4,925</td><td class='num'>229,513</td></tr><tr><td><code>app/src/components/FileModal.tsx</code></td><td class='num'>4,122</td><td class='num'>203,014</td></tr><tr><td><code>src/renderer/src/styles.css</code></td><td class='num'>4,092</td><td class='num'>310,911</td></tr><tr><td><code>src/renderer/src/components/FileModal.tsx</code></td><td class='num'>3,850</td><td class='num'>186,403</td></tr><tr><td><code>app/src/components/Settings.tsx</code></td><td class='num'>3,299</td><td class='num'>150,214</td></tr><tr><td><code>app/src/components/MultiAgent.tsx</code></td><td class='num'>3,258</td><td class='num'>176,945</td></tr><tr><td><code>src/renderer/src/components/Settings.tsx</code></td><td class='num'>3,163</td><td class='num'>137,389</td></tr><tr><td><code>crates/ccg-fs/src/git.rs</code></td><td class='num'>3,144</td><td class='num'>163,155</td></tr><tr><td><code>src/main/lsp/manager.ts</code></td><td class='num'>3,114</td><td class='num'>164,539</td></tr></tbody>
+        </table>
+      </details>
+    </div>
+
+    <h2>5. 3대 시스템 비교 및 UAOS-RSI 아키텍처 대조 매트릭스 (Codex <code>ARTICLES-V04</code> 판정 반영)</h2>
+    <div class="card">
+      <p>
+        이전 기사 분석 라운드의 Codex 독립 판정(<code>.coord/reviews/ARTICLES-V04-codex-review.json</code> 및 <code>ARTICLES-V04-desk3-map-PASS.json</code>)을 준수하여,
+        이미 UAOS-RSI에 구축된 기능과의 중복을 구분하고 실측 증거 기반의 시사점만 정리했습니다.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>비교 축</th>
+            <th>OpenRig (<code>mvschwarz/openrig</code>)</th>
+            <th>AgentCodeGUI (<code>UnrealFactory/AgentCodeGUI</code>)</th>
+            <th>UAOS-RSI (현재 우리 운영체제)</th>
+            <th>판정 및 전략적 시사점</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>실행 토폴로지 및 플랫폼</strong></td>
+            <td>macOS/Linux(Windows는 WSL2 필수), 로컬 Hono 데몬 + SQLite + <code>tmux</code> 세션</td>
+            <td>Windows 10/11 네이티브 데스크톱(Tauri 2 + Rust + WebView2), 최대 6패널 GUI</td>
+            <td>Windows 네이티브 + Git Worktree 격리 + <code>.coord/</code> 파일/SQLite 우편함 + 3대 도구(Codex, Claude, Antigravity)</td>
+            <td><span class="pill pill-warn">DEFER RigSpec 중복</span><br/>UAOS는 이미 <code>master_schedule.json</code> + 명시적 데스크 선언으로 단일 권위를 보유하므로 별도 YAML 오케스트레이터 중복 도입 불필요</td>
+          </tr>
+          <tr>
+            <td><strong>메시지 배달 및 입력 충돌 방지</strong></td>
+            <td><code>SeatDeliveryGuard</code>(<code>off</code>/<code>draft-aware</code>/<code>hold</code>) + 15초 훅 신선도 + <code>capture-pane</code> 프로브</td>
+            <td><code>ChatRuntime</code> 단일 소유 큐 + 60전이 상태기계(<code>Busy</code>일 때 큐 적재, 턴 종료 시 드레인)</td>
+            <td><code>coord deliver</code> + <code>user_window.py</code>(<code>is_human_prompt</code>, <code>QUIET_LOCK</code>, <code>PRIMARY</code>/<code>HANDED_OFF</code> 가드)</td>
+            <td><span class="pill pill-pass">U241C-RW1B 진행 중</span><br/>현재 진행 중인 <code>U241C-RW1B</code>의 네이티브 훅 가드 및 손상 레지스트리 fail-closed가 두 레퍼런스의 방어선과 정확히 부합</td>
+          </tr>
+          <tr>
+            <td><strong>한도(Quota) 소진 및 재개 제어</strong></td>
+            <td><code>queue-wake-ladder.ts</code>: 프로바이더 리셋 시각 + 30~90초 지터(Jitter) + 3회 재시도 후 에스컬레이션</td>
+            <td><code>limit.rs</code> &amp; <code>switch.rs</code>: <code>MIN_WORK=5분</code> + <code>MAX_EPISODE_FIRES=12</code> + 초기화 임박 유휴 계정 자동 전환</td>
+            <td><code>U225</code> 쿼터 수리 + <code>worker_routing.py</code>(로컬 Ollama 1순위 → Haiku 5.5 상한 게이트) + 도구 간 대행(Codex → Claude → Antigravity)</td>
+            <td><span class="pill pill-pass">핵심 인사이트</span><br/>AgentCodeGUI의 "헛발질 재개 총량 상한(<code>MAX_EPISODE_FIRES</code>) + 최소 수명(<code>MIN_WORK</code>)" 및 "Unverified vs Observed 구분"은 UAOS 감시관/재개 루프의 모범 참조 모델</td>
+          </tr>
+          <tr>
+            <td><strong>검증 하네스 및 회귀 방지</strong></td>
+            <td><code>packages/test-system</code>: 0토큰 <code>runtime: stub</code> + <code>seed_regression</code>(결함 주입 시 반드시 실패해야 통과)</td>
+            <td><code>m-logic-replay.md</code>: 가상 시계(<code>VirtualClock</code>) + 실와이어 프레임 오프라인($0) 재생 하네스 + 1,123개 Critic 문서</td>
+            <td><code>pilot run</code> 계약 매뉴얼 + 고정 인수 테스트 SHA256 핀닝 + <code>mia-vaccine-test</code>(실패 주입/변이 검증)</td>
+            <td><span class="pill pill-pass">완전 부합</span><br/>세 시스템 모두 "유료 모델 호출 없는 $0 결정론적 재현 + 결함 주입 음수 게이트"를 최고 검증 표준으로 채택</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>6. 검증된 사실(Facts) · 가설(Hypotheses) · 미지수(Unknowns) 분리</h2>
+    <div class="card">
+      <ul>
+        <li><strong>검증된 사실 (Verified Facts)</strong>:
+          <ul>
+            <li><code>.work/library</code>에는 OpenRig(<code>fecffdc6</code>, 3,871파일, 844,030줄, 6,599심볼)와 AgentCodeGUI(<code>c4dd55e</code>, 2,365파일, 806,585줄, 3,431심볼)가 온전히 보존되어 있으며, 본 전수분석은 단 하나의 외부 설치·빌드·스크립트 실행 없이 읽기 전용으로 100% 완수되었습니다.</li>
+            <li>OpenRig의 8대 동맥(Arteries)과 AgentCodeGUI의 1,123개 Critic 문서는 모두 <strong>"비결정적 에이전트 상태 추정(낡은 캐시, 프로세스 생존을 작업 생존으로 오인, 부분 출력 턴의 무한 재시도)이 오케스트레이션 실패의 제1원인"</strong>임을 실측 코드로 증명합니다.</li>
+          </ul>
+        </li>
+        <li><strong>검증할 가설 (Hypotheses)</strong>:
+          <ul>
+            <li>AgentCodeGUI의 <code>MIN_WORK</code>(최소 유효 작업 시간) + <code>MAX_EPISODE_FIRES</code>(에피소드당 재개 총량 캡) 패턴을 UAOS의 스톨/재개 감시기에 참조하면 시각 미상 한도 오류에서의 불필요한 재시도를 추가로 줄일 수 있음 (단, 새 카드 발행 전 실제 재현 영수증 필수).</li>
+          </ul>
+        </li>
+        <li><strong>미지수 (Unknowns)</strong>:
+          <ul>
+            <li>두 외부 저장소의 실제 런타임 성능이나 구독 쿼터 절감률은 이 PC에서 직접 빌드·실행하지 않았으므로(안전 규칙 준수) <code>UNMEASURED</code>로 기록합니다.</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

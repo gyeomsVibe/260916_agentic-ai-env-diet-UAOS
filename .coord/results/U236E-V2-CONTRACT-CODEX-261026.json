@@ -1,0 +1,31 @@
+{
+  "work_id": "U236E-v2",
+  "judge": "codex",
+  "original_requested_sha256": "FA4D8CCA3CBBA54698B4716ED2551E00C5987115E802273E60FC7960866F287A",
+  "current_withdrawn_sha256": "9943A4943555E414DEACDFE84A58E812FECDC3B7A0AAB53C495941F96122C7FA",
+  "status": "AUTHOR_WITHDRAWAL_ACCEPTED",
+  "decision": "C_NO_GO_SUBSCRIPTION_HARD12000_HIGH_FREQUENCY",
+  "implementation_go": false,
+  "paid_probe_approved": false,
+  "source_promotion_approved": false,
+  "approval_of_oauth_capture": false,
+  "approval_of_in_session_cap_bypass": false,
+  "why": "Dummy-key capture is a different execution path from live subscription, so its measured size does not certify the immutable12000 pre-dispatch bound. Post-spend violation detection cannot establish admission.",
+  "evidence": {
+    "prior_oauth_input_tokens": 17041,
+    "exact_request_equivalence": "NOT_PROVEN",
+    "success_classify_body_bytes": 2890,
+    "success_capture_sha256": "69DE6C1FD28433A8EE9008E51710B4814C9FC0D4AD8A5E6906F033514E3367C0",
+    "test_disposition": "Author explicitly selected v1 tests; not covert evaluator tampering. No implementation acceptance approved.",
+    "edit_capture_largest_body_bytes": 12606,
+    "edit_capture_sha256": "3D14BCF6E818CC7350E276E60B02763AF58F8303997F97E3D531BC7152EB0FC1",
+    "success_classify_requests": 1
+  },
+  "route_A": "Not authorized; do not route subscription credentials to local capture",
+  "route_B": "Not authorized as a substitute for U236E cap. Any separate in-session Haiku scope needs independent bounded contract/accounting, no high-frequency policy adoption",
+  "scope": "No-Go for U236E hard-budget high-frequency admission only; prior verified model availability remains a distinct fact",
+  "next": "Park U236E paid qualification. Preserve v1 bundle and v2 withdrawal. Continue deterministic/local tasks and existing isolation profiling priority; no further U236E paid/capture retry",
+  "primary_source": "https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways",
+  "new_paid_calls": 0,
+  "source_changes": 0
+}

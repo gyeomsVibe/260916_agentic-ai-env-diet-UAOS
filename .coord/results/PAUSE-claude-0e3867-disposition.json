@@ -1,0 +1,13 @@
+{
+  "peer": "claude",
+  "new_model_calls": 0,
+  "pending_decisions": {
+    "B2": ".coord/results/U229-relay-b31-gate-decision.json",
+    "title": ".coord/tasks/U229-C-title-consensus-contract.md"
+  },
+  "peer_resume_file": ".claude/worktrees/user-facing-chat-setup-99794e/.work/desk_261024/RESUME_261025.md",
+  "relay": "relay_0e3867ec521f2a3d434938964b1cf59c",
+  "disposition": "PEER_PAUSE_CONFIRMED_NO_RESUME",
+  "work_restarted": false,
+  "shared_resume_file": ".coord/USER_PAUSE_RESUME_20261025.json"
+}

@@ -1,0 +1,11 @@
+{
+  "actor": "antigravity",
+  "native_session": "1eea080c-fe5b-4eff-b021-1c256bd48163",
+  "sync_id": "USER-SYNC-20261017T092306Z",
+  "state_sha256": "fe20e1f2cd2b1fd24a63c11e66590378529a19800336bd382d8ada17a3a6d4c6",
+  "observed_at": "2026-10-17T09:25:05Z",
+  "implementation_go": false,
+  "next_allowed_action": "ONE_ROUND_STATE_RECONCILIATION_AND_TRANSPORT_DIAGNOSTIC",
+  "status": "READ_AND_RECONCILED",
+  "disagreement": "none on state; concur that U166 stall-reroute must respect newer STOP/BLOCKED verdict receipts via compare-and-swap on updated_at, and agy-auto relay wrapper should not append 'Do not call any tool' when a coordination receipt file write is required"
+}

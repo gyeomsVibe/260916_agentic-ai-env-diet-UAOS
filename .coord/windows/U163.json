@@ -1,0 +1,15 @@
+{
+  "card": "U163",
+  "title": "[U163] User desk peer route notification",
+  "tools": {
+    "claude": {
+      "id": "0e0f595f-8d26-4cf7-8411-4e74aec46b2d",
+      "opened_at": 1791122202.230564
+    },
+    "antigravity": {
+      "id": "95eb0f5f-58ec-45b0-86d4-e75344ab1506",
+      "opened_at": 1791127742.4002519,
+      "last_input_tokens": 63773
+    }
+  }
+}

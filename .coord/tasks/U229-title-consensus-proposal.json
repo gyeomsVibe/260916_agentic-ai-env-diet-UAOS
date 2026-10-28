@@ -1,0 +1,10 @@
+{
+  "topic": "창구·호출기록 개선",
+  "schedule_sha256": "1be225acad548a7a87b14eb0e26cca6139e2b236750d71a27eaadf449745a93c",
+  "agreed_by": [
+    "codex"
+  ],
+  "state": "REFRESHED_PROPOSAL_NATIVE_HASH_VOTES_REQUIRED",
+  "prior_hash": "7f5ace080eaf1ef60b87a17394486e5d72758d8e3b29fc4ad877bbd522a71994",
+  "reason": "Actual reviewed installation and RSI state replaced stale reroute metadata; prior peer votes retained in mailbox, not transferred"
+}

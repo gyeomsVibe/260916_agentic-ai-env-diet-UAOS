@@ -1,0 +1,21 @@
+{
+  "relay": "relay_57bb5b72ec0b4125f87915df1d32985c",
+  "classification": "ACK_ONLY_WITH_LIVE_RELEASE_CHECK",
+  "pr": 201,
+  "state": "MERGED",
+  "head": "2dd1313d84f5bb99561700ae99f6eab47f94051a",
+  "merge": "3dcfa956ecc0c5d8d535e3fb39f784d85ac2930a",
+  "ci": "SUCCESS",
+  "runtime": "0.3.0-532129a3276c",
+  "runtime_integrity_command": "python C:/Users/Kimyoongyeom/.uaos/uaos.py --version",
+  "runtime_integrity_exit": 0,
+  "runtime_payload_match": {
+    "cli_py": false,
+    "docs_manager_py": false
+  },
+  "runtime_doc_help": "new,sync,next-num; no hub",
+  "deployment": "NOT_CONFIRMED_U233_NOT_PRESENT_IN_CURRENT_COMMAND_SURFACE",
+  "action": "Preserve installed candidate and existing live pilot ownership; release owner must assemble reviewed current payload including U233 without regressing installed changes, independently gate and verify post-install. No duplicate merge or blind runtime replacement.",
+  "test_claim_62": "Original PASS letter present; not rerun in this relay turn",
+  "new_paid_worker_calls": 0
+}

@@ -1,5 +1,17 @@
 # UAOS-Diet v7: Unified Agentic AI Orchestration System - AI Environment Diet v7
 
+## 업데이트 (v7.5.8 / UAOS-RSI v0.5.1, 2026-10-26)
+
+- **3→2→1 한도 장애전환 및 단독 생존 자율 완결 (`U249`, `v7_harness/coord/failover_closeout.py`)**: 운영 중 1개 도구가 사용량 제한(`LIMITED`/`ABSENT`)으로 멈추면 남은 2개 도구가 즉시 스케줄을 재편성(`TWO_TOOL_CONTINUITY`)하고, 1개 도구만 남으면(`SOLE_SURVIVOR_AUTONOMOUS`) 대기 중인 `REVIEW` 단계를 복귀 재검토(`needs_return_review`) 조건부로 승격해 끝까지 자율 마무리.
+- **비백그라운드 5초 초과 대기 선점 및 스케줄 자연 종료 (`FOREGROUND_WAIT_LIMIT_S = 5.0`)**: 백그라운드 감시(`coord watch`)가 아닌 포그라운드 대기가 5.0초 이상 길어지면 전수검토 후 다음 `READY` 작업을 즉시 선점하거나, 전체 스케줄 완료 시 `SCHEDULE-CLOSEOUT-<id>.json` 영수증을 발행하고 `stop_gate`를 해제해 자연 종료.
+- **REA(Reverse Engineer Anything) 커스텀 아키텍처 통합 (`U245`~`U248`, [ZDNet 기사](https://zdnet.co.kr/view/?no=20261019165618) · [morluto/rea](https://github.com/morluto/rea))**:
+  - `U245` (`v7_harness/evidence_ledger.py`): 기사·GitHub 1차 출처 필수 인용 게이트(`MISSING_PRIMARY_SOURCE` 자동 반려) 및 `OBSERVED`/`DERIVED`/`INFERRED`/`UNKNOWN` 4등급 인식론적 원장.
+  - `U246` (`v7_harness/analysis_view.py`): `parent_evidence_id` 기반 Summary-First 슬라이싱 프로젝터(`inspect_analysis_view`).
+  - `U247` (`v7_harness/rea_bridge.py`): `STATIC_ONLY` 정적 역설계 브리지 및 재현 의무 원장(`build_reconstruction_obligation_ledger`)·계약 매뉴얼 생성기.
+  - `U248` (`v7_harness/process_supervisor.py`): 프로세스 타임아웃 시 `SIGTERM` → `finalization_ms` 유예 → `SIGKILL` 단계적 종료 및 유한 타입 명세 재현 검증(`verify_reconstruction`).
+- **OpenRig & AgentCodeGUI 전수 해부 반영 ([mvschwarz/openrig](https://github.com/mvschwarz/openrig) · [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/AgentCodeGUI))**: 6,236개 파일·10,030개 공개 심볼 전수 감사([docs/92](docs/92_MIA_Library_Full_Audit_OpenRig_AgentCodeGUI_Report.html)) 및 REA 상세 참조보고서([docs/86](docs/86_REA_역설계도구_분석_및_UAOS-RSI_업그레이드_계획.md), [docs/93](docs/93_MIA_REA_Reverse_Engineer_Anything_Deep_Audit_and_UAOS_RSI_Master_Schedule.html)) 수록.
+- **3대 도구 전역 창 제목 `[YYMMDD-N] <프로세스명>` 자동 동기화 및 메인 컨트롤 UX (`U241`~`U244`)**: Antigravity·Claude Code·Codex 3대 도구의 대화창 제목 자동 변환 및 `<details>` 기반 Zero-JS 컨트롤 대시보드 가동.
+
 ## 업데이트 (v7.5.4, 2026-10-05)
 
 - **3대 도구 자율 병합 순위(v7.5.4) 정본화**: PR 병합을 사람에게 넘기지 않고 **1순위 Antigravity, 2순위 Codex**로 정식 내규화 완료.
@@ -26,17 +38,17 @@
 
 AI 코딩 도구 **세 개(Codex, Claude Code, Antigravity)**와 **전자계산기(Ollama)**가 한 프로젝트를 함께 하면서 **거짓 성공을 내지 않고**, **토큰 예산을 극대화하여 절약**하도록 만든 장치와 그 측정 기록입니다.
 
-> 처음 오셨다면 [UAOS 처음부터 이해하고 사용하는 학습 가이드](docs/UAOS_처음부터_이해하고_사용하는_학습가이드.md)부터 보세요. 긴 설명은 저장소 문서에 두고, 대화창 보고는 짧고 한눈에 읽히게 합니다.
+> 처음 오셨다면 [UAOS 처음부터 이해하고 사용하는 학습 가이드](docs/26_UAOS_처음부터_이해하고_사용하는_학습가이드.md)부터 보세요. 긴 설명은 저장소 문서에 두고, 대화창 보고는 짧고 한눈에 읽히게 합니다.
 
-사용자의 미완성 아이디어를 근거 조사와 실행 계약으로 바꾸는 원칙, 그리고 안티그래비티·올라마 호출 전에 매뉴얼을 **파일로 발행하고 실제 입력으로 전달하는 절차**는 [네 AI 도구 운영 규칙](docs/AI_4도구_아이디어_조사와_위임전_매뉴얼_운영규칙.md)에 있습니다. 올라마의 실제 오류와 방어 관문은 [오류 방지·대체 절차](docs/올라마_오류를_막는_검증과_대체_절차.md)에 따로 설명했습니다.
+사용자의 미완성 아이디어를 근거 조사와 실행 계약으로 바꾸는 원칙, 그리고 안티그래비티·올라마 호출 전에 매뉴얼을 **파일로 발행하고 실제 입력으로 전달하는 절차**는 [네 AI 도구 운영 규칙](docs/25_AI_4도구_아이디어_조사와_위임전_매뉴얼_운영규칙.md)에 있습니다. 올라마의 실제 오류와 방어 관문은 [오류 방지·대체 절차](docs/43_올라마_오류를_막는_검증과_대체_절차.md)에 따로 설명했습니다.
 
-토큰예산 운영은 [3대 도구 예측·역할 전환 규칙](docs/27_token-budget-routing-policy.md)에서 시작합니다. [Claude](docs/28_claude-budget-manual.md)·[Antigravity](docs/29_antigravity-budget-manual.md)·[Ollama](docs/30_ollama-calculator-manual.md) 실행 매뉴얼이 이어집니다.
+토큰예산 운영은 [3대 도구 예측·역할 전환 규칙](docs/35_token-budget-routing-policy.md)에서 시작합니다. [Claude](docs/36_claude-budget-manual.md)·[Antigravity](docs/37_antigravity-budget-manual.md)·[Ollama](docs/38_ollama-calculator-manual.md) 실행 매뉴얼이 이어집니다.
 
-사용자 5대 비유의 실현도 감사는 [docs/35](docs/35_five-metaphors-realization-audit_2026-09-25.md), 그 보강 구현 기록은 [docs/36](docs/36_metaphor-realization-implementation-record_2026-09-25.md), 모든 프로젝트에 쓰는 표준 작업 프로세스와 Ollama·Antigravity 하네스·계약 매뉴얼 설계는 [docs/37](docs/37_standard-process-and-worker-harness.md)에 있습니다.
+사용자 5대 비유의 실현도 감사는 [docs/35](docs/44_five-metaphors-realization-audit_2026-09-25.md), 그 보강 구현 기록은 [docs/36](docs/45_metaphor-realization-implementation-record_2026-09-25.md), 모든 프로젝트에 쓰는 표준 작업 프로세스와 Ollama·Antigravity 하네스·계약 매뉴얼 설계는 [docs/37](docs/46_standard-process-and-worker-harness.md)에 있습니다.
 
-자가개선(RSI)의 맹점 조사와 코드로 강제한 증거 관문은 [docs/38](docs/38_rsi-self-improvement-blind-spots-and-evidence-gate.md), UAOS를 이 PC의 **모든 프로젝트**에 설치하는 방법은 [uaos_everywhere/](uaos_everywhere/README.md)와 [docs/39](docs/39_uaos-everywhere-global-deployment-and-b77.md)에 있습니다. Claude Code를 파이프라인의 작업자·검증자·알림 수신자로 참여시키는 설계와 구현 기록은 [docs/40](docs/40_claude-code-in-the-uaos-pipeline-design.md), "Ollama를 재교육하면 스스로 나아지나"에 대한 계산과 작업 배정 상태 기계(U39)는 [docs/41](docs/41_ollama-retraining-myth-and-escalation-math.md), Ollama의 시스템 학습과 LoRA 실험 관문(U40)은 [docs/42](docs/42_ollama-system-level-learning-and-lora-gate-u40.md), 사용자 PC 마무리 배포를 명령 하나로 끝내는 방법(U41)은 [docs/43](docs/43_one-command-pc-rollout-u41.md), 증거 관문형 RSI 연구·PR 자동화 파이프라인(U42)은 [docs/43-U42](docs/43_evidence-to-pr-rsi-pipeline-u42.md)입니다. 진단부터 해결까지의 전 과정을 용어 설명과 함께 쉬운 말로 정리한 글은 [쉽게 읽는 UAOS 진단과 해결 전과정](docs/쉽게_읽는_UAOS_진단과_해결_전과정/00_먼저_읽기_이_폴더_사용법.md)입니다.
+자가개선(RSI)의 맹점 조사와 코드로 강제한 증거 관문은 [docs/38](docs/47_rsi-self-improvement-blind-spots-and-evidence-gate.md), UAOS를 이 PC의 **모든 프로젝트**에 설치하는 방법은 [uaos_everywhere/](uaos_everywhere/README.md)와 [docs/39](docs/48_uaos-everywhere-global-deployment-and-b77.md)에 있습니다. Claude Code를 파이프라인의 작업자·검증자·알림 수신자로 참여시키는 설계와 구현 기록은 [docs/40](docs/49_claude-code-in-the-uaos-pipeline-design.md), "Ollama를 재교육하면 스스로 나아지나"에 대한 계산과 작업 배정 상태 기계(U39)는 [docs/41](docs/50_ollama-retraining-myth-and-escalation-math.md), Ollama의 시스템 학습과 LoRA 실험 관문(U40)은 [docs/42](docs/51_ollama-system-level-learning-and-lora-gate-u40.md), 사용자 PC 마무리 배포를 명령 하나로 끝내는 방법(U41)은 [docs/43](docs/52_one-command-pc-rollout-u41.md), 증거 관문형 RSI 연구·PR 자동화 파이프라인(U42)은 [docs/43-U42](docs/54_evidence-to-pr-rsi-pipeline-u42.md)입니다. 진단부터 해결까지의 전 과정을 용어 설명과 함께 쉬운 말로 정리한 글은 [쉽게 읽는 UAOS 진단과 해결 전과정](docs/쉽게_읽는_UAOS_진단과_해결_전과정/00_먼저_읽기_이_폴더_사용법.md)입니다.
 
-실행 기록을 안전하게 개선에 쓰는 방법은 [증거 관문형 RSI](docs/31_evidence-gated-rsi-for-uaos.md)와 [사용량 장부](.coord/usage/README.md)에 있습니다. **현재 구현·복귀 검증은 완료**됐습니다. 설치·첫 실행·운영·문제 해결은 [최종 사용자 안내](docs/33_uaos-final-user-guide-and-completion-briefing.md)를 따르세요. 삭제·원격 push·배포·계정/권한 변경은 계속 사용자 승인 대상입니다.
+실행 기록을 안전하게 개선에 쓰는 방법은 [증거 관문형 RSI](docs/39_evidence-gated-rsi-for-uaos.md)와 [사용량 장부](.coord/usage/README.md)에 있습니다. **현재 구현·복귀 검증은 완료**됐습니다. 설치·첫 실행·운영·문제 해결은 [최종 사용자 안내](docs/41_uaos-final-user-guide-and-completion-briefing.md)를 따르세요. 삭제·원격 push·배포·계정/권한 변경은 계속 사용자 승인 대상입니다.
 
 ---
 
@@ -65,7 +77,7 @@ AI 코딩 도구 **세 개(Codex, Claude Code, Antigravity)**와 **전자계산�
 
 ### 사용자의 5대 핵심 비유 (The 5 Core Metaphors)
 
-이 시스템의 모든 기술적 구조는 사용자가 직관적으로 제시한 **5대 핵심 비유**에서 출발했습니다. 상세한 기획 의도와 철학은 [사용자 핵심 철학과 비유 정의서](docs/34_user-core-philosophy-metaphors-and-intent.md)에 정본으로 보존되어 있습니다.
+이 시스템의 모든 기술적 구조는 사용자가 직관적으로 제시한 **5대 핵심 비유**에서 출발했습니다. 상세한 기획 의도와 철학은 [사용자 핵심 철학과 비유 정의서](docs/42_user-core-philosophy-metaphors-and-intent.md)에 정본으로 보존되어 있습니다.
 
 1. **전자계산기 (Calculator)**: 사람이 복잡한 암산을 계산기에 맡기듯, 유료 프론티어 AI(지휘자)는 코드를 손으로 직접 작성하여 비싼 토큰을 쓰지 않고 비용 0원의 로컬 올라마(Ollama) 계산기에게 지시문과 숨은 검증 인수만 넘겨 0원에 계산(수정)시킵니다.
 2. **유선 전화기 (Telephone) vs 위성전화 (Satellite Phone)**: 올라마는 평소 대기하다가 필요할 때 다이얼을 걸어 즉시 응답을 받는 통화료 0원의 유선 전화기입니다. 유료 모델을 24시간 켜놓고 폴링하는 상주 감시(cron)는 초당 비용이 폭증하는 '비싼 위성전화를 켜놓고 방치하는 낭비'이므로 전면 금지합니다.
@@ -212,3 +224,5 @@ python -m v7_harness.cli pilot run --task T01 --source . \
 | 하루 운용 측정 | 25.4시간 창 집계 완료, 판정 왕복 미관측으로 효과는 `UNMEASURED` |
 | 자가개선 관문·전역 설치(U36·U37) | 구현(Linux 710 중 실패 1=B75). Windows 실행·Codex 판정·사용자 PC 설치 대기 |
 | 지휘자 최종 재검토 | 대기(Codex 한도, 9/24 예상) |
+- **U250 참조·벤치마킹 자료실 전역 규칙 (`v7_harness/library_store.py`)**: GitHub 샘플·벤치마킹 저장소를 `D:\D_Workspace_NB\-agentic-ai-workspace\260916_agentic-ai-env-diet\.work\library\<repo>`에 읽기 전용 독립 Git 프로젝트로 일괄 격리 저장하고 `.work/library/README.md`에 자동 색인.
+- **U251 3대 벤치마킹(`OpenRig`·`Show GN`·`REA`) 통합 이식 오케스트레이터 (`v7_harness/benchmark_logic_transplant.py`)**: 3대 도구+Ollama 4좌석(Seat) 레지스트리, 5칩 실시간 계기판, REA Tier-1 상시/Tier-2 온디맨드 하이브리드 라우터 및 초보자/전문가 완전 가이드(`docs/benchmark_transplant_openrig_showgn_rea/`).

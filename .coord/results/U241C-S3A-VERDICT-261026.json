@@ -1,0 +1,24 @@
+{
+  "work_id": "U241C-S3A",
+  "bundle_id": "9b1d3729beba39531da1137acd92530242d4dbbb8b95f149487d7bc30b4b9667",
+  "verdict": "REVISE_NO_PROMOTION",
+  "judge": "codex",
+  "base_sha256": "D350318F886EB43723E16A88EC4488E0C28FD1E61538050B71FDB206267FEA86",
+  "candidate_sha256": "CFC0386D628D533E80FB84C34E8734FB94712CFF156EBEF6C6E3BED05771ABD2",
+  "independent_extra_gate": "C:/Users/Kimyoongyeom/.codex/worktrees/26e2/260916_agentic-ai-env-diet/.work/desk_261026/s3_guard_gate.py",
+  "extra_gate_sha256": "98DAA34002816BA360D4B19058700179513587436F0604590FEFF6BFC66BB5A7",
+  "independent_tests": 2,
+  "independent_failures": 2,
+  "independent_exit": 1,
+  "status_baseline_exit": 0,
+  "counterexamples": [
+    "Recognized human status request also mentioning the desk rendered on D350 but is suppressed on candidateCFC; violates unchanged status behaviour",
+    "Real renderer and pilot subprocesses: pilot atomically acquires QUIET_LOCK after initial exists check but before snapshot/render; candidate writes dashboard while foreign lock is held"
+  ],
+  "promotion": "Not attempted; source remains D350",
+  "correction": "Keep recognized status triggers independent of declaration-only triggers. Acquire shared QUIET_LOCK writer ownership atomically before collect/render, preserve existing foreign locks, finally release only own lock.",
+  "full_existing_gates": "Keep all7/8/original0FD586/5ED172 byte-identical and add fixed new gate",
+  "rework_iteration": 1,
+  "budget": "No paid review or repeated failed model calls; existing two local failure receipts support deterministic apply_after route",
+  "runtime_approval": false
+}
