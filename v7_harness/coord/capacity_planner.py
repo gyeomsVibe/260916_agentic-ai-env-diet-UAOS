@@ -151,6 +151,315 @@ def _atomic_write_json(path: Path, data: Any) -> None:
                 pass
 
 
+from contextlib import contextmanager
+
+@contextmanager
+def _cas_file_lock(target: Path, timeout_s: float = 15.0):
+    """Interprocess lock guaranteeing atomic CAS check-backup-replace transaction."""
+    lock_file = target.with_name(f".{target.name}.cas_lock")
+    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o666)
+    deadline = time.monotonic() + timeout_s
+    locked = False
+    try:
+        while time.monotonic() < deadline:
+            if os.name == "nt":
+                import msvcrt
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    locked = True
+                    break
+                except OSError:
+                    time.sleep(0.005)
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                    break
+                except OSError:
+                    time.sleep(0.005)
+        if not locked:
+            raise TimeoutError("CAS_LOCK_TIMEOUT")
+        yield
+    finally:
+        if locked:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def atomic_write_if_hash_matches(
+    path: Path,
+    data: Any,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """U276 (Transplanted from Cockpit Tools `config.rs:save_global_config_if_hash_matches`):
+    Compare-and-swap atomic JSON writer with `.bak` backup before replacement.
+    Stages to a unique temp file first, then verifies fresh disk contents right before replacing.
+    """
+    import hashlib
+    import sys
+    import threading
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    stage_path = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.stage")
+    try:
+        _atomic_write_json(stage_path, data)
+        # 1. Initial read for backup preparation
+        exists_initial = target.is_file()
+        raw_initial = b""
+        if exists_initial:
+            try:
+                raw_initial = target.read_bytes()
+            except OSError as exc:
+                return {
+                    "ok": False,
+                    "error": f"CAS_READ_FAILED:{exc}",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+
+        # 2. Fresh read right before committing CAS swap
+        exists_now = target.is_file()
+        current_sha: str | None = None
+        raw_existing = b""
+        if exists_now:
+            try:
+                raw_existing = target.read_bytes()
+                current_sha = hashlib.sha256(raw_existing).hexdigest()
+            except OSError as exc:
+                return {
+                    "ok": False,
+                    "error": f"CAS_READ_FAILED:{exc}",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+
+        if expected_sha256 is not None:
+            if not exists_now:
+                return {
+                    "ok": False,
+                    "error": "CAS_TARGET_MISSING",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": None,
+                }
+            if current_sha != expected_sha256:
+                return {
+                    "ok": False,
+                    "error": "CAS_HASH_MISMATCH",
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": current_sha,
+                }
+
+        # Interprocess atomic check-backup-replace transaction
+        with _cas_file_lock(target):
+            exists_final = target.is_file()
+            raw_final = b""
+            final_sha: str | None = None
+            if exists_final:
+                try:
+                    raw_final = target.read_bytes()
+                    final_sha = hashlib.sha256(raw_final).hexdigest()
+                except OSError as exc:
+                    return {
+                        "ok": False,
+                        "error": f"CAS_READ_FAILED:{exc}",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": None,
+                    }
+
+            if expected_sha256 is not None:
+                if not exists_final:
+                    return {
+                        "ok": False,
+                        "error": "CAS_TARGET_MISSING",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": None,
+                    }
+                if final_sha != expected_sha256:
+                    return {
+                        "ok": False,
+                        "error": "CAS_HASH_MISMATCH",
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": final_sha,
+                    }
+
+            bak_path = target.with_name(target.name + ".bak")
+            if exists_final and raw_final:
+                try:
+                    json.loads(raw_final.decode("utf-8"))
+                    bak_path.write_bytes(raw_final)
+                except (OSError, ValueError, UnicodeDecodeError):
+                    pass
+
+            os.replace(str(stage_path), str(target))
+            new_sha = hashlib.sha256(target.read_bytes()).hexdigest()
+            return {
+                "ok": True,
+                "path": target.as_posix(),
+                "previous_sha256": final_sha,
+                "new_sha256": new_sha,
+                "backup_path": str(bak_path),
+            }
+    finally:
+        if stage_path.exists():
+            try:
+                stage_path.unlink()
+            except OSError:
+                pass
+
+
+def parse_json_with_auto_restore(path: Path, default: Any = None) -> Any:
+    """U276 (Transplanted from Cockpit Tools `modules/config.rs` `.bak` auto-restore):
+    Reads JSON from `path`; if corrupted/truncated, restores from `<path>.bak` without clobbering newer concurrent CAS writes.
+    """
+    import sys
+    import threading
+
+    target = Path(path)
+    bak_path = target.with_name(target.name + ".bak")
+    if target.is_file():
+        try:
+            raw_bytes = target.read_bytes()
+            return json.loads(raw_bytes.decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            corrupt_bytes: bytes | None = raw_bytes if "raw_bytes" in locals() else None
+    else:
+        corrupt_bytes = None
+
+    if not bak_path.is_file():
+        return default
+    try:
+        restored = json.loads(bak_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+    stage_restore = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.restore")
+    try:
+        _atomic_write_json(stage_restore, restored)
+        now_bytes = b""
+        if target.is_file():
+            try:
+                now_bytes = target.read_bytes()
+                if corrupt_bytes is None or now_bytes != corrupt_bytes:
+                    try:
+                        parsed_now = json.loads(now_bytes.decode("utf-8"))
+                        return parsed_now
+                    except (ValueError, UnicodeDecodeError):
+                        pass
+            except OSError:
+                pass
+
+        # Enter shared transaction lock before committing restore replacement
+        with _cas_file_lock(target):
+            if target.is_file():
+                try:
+                    locked_now_bytes = target.read_bytes()
+                    if corrupt_bytes is None or locked_now_bytes != corrupt_bytes or locked_now_bytes != now_bytes:
+                        try:
+                            parsed_locked = json.loads(locked_now_bytes.decode("utf-8"))
+                            return parsed_locked
+                        except (ValueError, UnicodeDecodeError):
+                            pass
+                except OSError:
+                    pass
+            os.replace(str(stage_restore), str(target))
+            return restored
+    finally:
+        if stage_restore.exists():
+            try:
+                stage_restore.unlink()
+            except OSError:
+                pass
+
+
+def scan_cockpit_sqlite_telemetry(home_dir: Path | None = None) -> dict[str, Any]:
+    """U276 (Transplanted from Cockpit Tools `codex_session_usage.sqlite` / `Token_stats.db`):
+    Read-only single-query snapshot of `session_usage_events` and `session_log_sync`.
+    """
+    import sqlite3
+
+    if home_dir is not None and (Path(home_dir).is_file() or Path(home_dir).suffix.lower() in (".sqlite", ".db")):
+        db_file = Path(home_dir)
+    else:
+        base_home = Path(home_dir) if home_dir is not None else Path.home()
+        cand1 = base_home / ".antigravity_cockpit" / "codex_session_usage.sqlite"
+        cand2 = base_home / ".antigravity_cockpit" / "Token_stats.db"
+        db_file = cand1 if cand1.is_file() or not cand2.is_file() else cand2
+
+    if not db_file.is_file():
+        return {
+            "available": False,
+            "db_path": str(db_file),
+            "synced_files": 0,
+            "synced_files_count": 0,
+            "total_events": 0,
+            "events_count": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hit_pct": 0.0,
+        }
+    try:
+        uri = db_file.resolve().as_uri() + "?mode=ro"
+        con = sqlite3.connect(uri, uri=True, timeout=3)
+        try:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), "
+                "COALESCE(SUM(cached_input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+                "(SELECT COUNT(*) FROM session_log_sync) "
+                "FROM session_usage_events"
+            )
+            row = cur.fetchone() or (0, 0, 0, 0, 0)
+            ev_count = int(row[0] or 0)
+            inp_tok = int(row[1] or 0)
+            cached_tok = int(row[2] or 0)
+            out_tok = int(row[3] or 0)
+            synced_files = int(row[4] or 0)
+            cache_hit_pct = round((cached_tok / float(inp_tok)) * 100.0, 1) if inp_tok > 0 else 0.0
+            return {
+                "available": True,
+                "db_path": str(db_file),
+                "synced_files": synced_files,
+                "synced_files_count": synced_files,
+                "total_events": ev_count,
+                "events_count": ev_count,
+                "input_tokens": inp_tok,
+                "cached_input_tokens": cached_tok,
+                "output_tokens": out_tok,
+                "cache_hit_pct": cache_hit_pct,
+            }
+        finally:
+            con.close()
+    except Exception:
+        return {
+            "available": False,
+            "db_path": str(db_file),
+            "synced_files": 0,
+            "synced_files_count": 0,
+            "total_events": 0,
+            "events_count": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hit_pct": 0.0,
+        }
+
+
 def load_policy(project_root: Path) -> dict[str, Any]:
     desk = shared_desk(Path(project_root))
     policy_path = desk / ".coord" / "usage" / "capacity_policy.json"
@@ -170,7 +479,7 @@ def load_policy(project_root: Path) -> dict[str, Any]:
 
 
 def _parse_ts(row: dict[str, Any]) -> float | None:
-    for key in ("ts", "timestamp", "window_end", "observed_at"):
+    for key in ("ts", "timestamp", "window_end", "observed_at", "resets_at"):
         val = row.get(key)
         if isinstance(val, (int, float)) and not isinstance(val, bool) and val > 0:
             return float(val)
@@ -408,6 +717,7 @@ def _parse_brain_planner_lines(lines: list[str], conv_id: str) -> list[dict[str,
             continue
         parsed.append({
             "engine": "antigravity",
+            "source_kind": "brain_step",
             "ts": ts,
             "work_id": f"agy-brain-{conv_id[:8]}-{row.get('step_index', 0)}",
             "conv_id": conv_id,
@@ -465,7 +775,6 @@ def _scan_agy_brain_transcripts(
                 continue
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
             cached = wm_files.get(f_key)
-
             cached_ok = False
             if isinstance(cached, dict) and isinstance(cached.get("events"), list):
                 try:
@@ -812,6 +1121,7 @@ def collect_capacity_snapshot(
             "resets_at_7d": (q_7d or {}).get("resets_at") if isinstance(q_7d, dict) else None,
             "reset_in_seconds_5h": (q_5h or {}).get("reset_in_seconds") if isinstance(q_5h, dict) else (q_snap or {}).get("reset_in_seconds") if isinstance(q_snap, dict) else None,
             "quota_reset_ready": quota_reset_ready,
+            "wake_on_reset_ready": bool(quota_reset_ready and pres_state != "ACTIVE"),
             "predictive_exhaustion": predictive_exhaustion,
         }
 
@@ -820,6 +1130,7 @@ def collect_capacity_snapshot(
             "role": policy["tool_roles"].get(eng, ""),
             "presence_state": pres_state,
             "quota_reset_ready": quota_reset_ready,
+            "wake_on_reset_ready": bool(quota_reset_ready and pres_state != "ACTIVE"),
             "status_tier": status_tier,
             "budget_cap_5h_tokens": cap_5h,
             "budget_cap_7d_tokens": ref_cap_7d if (cap_5h is not None or cap_7d_cfg is not None) else None,
@@ -842,7 +1153,15 @@ def collect_capacity_snapshot(
             "window_7d": w7,
         }
 
-    total_calls_24h = sum(engines_summary[e]["window_24h"]["calls"] for e in ALL_ENGINES)
+    raw_step_calls_24h = sum(engines_summary[e]["window_24h"]["calls"] for e in ALL_ENGINES)
+    agy_ev_24h = [e for e in events if e["engine"] == "antigravity" and e["ts"] >= cutoff_24h]
+    agy_brain_convs_24h = len({str(e.get("conv_id") or "") for e in agy_ev_24h if e.get("source_kind") == "brain_step" and e.get("conv_id")})
+    agy_non_brain_24h = sum(1 for e in agy_ev_24h if e.get("source_kind") != "brain_step")
+    agy_work_units_24h = agy_brain_convs_24h + agy_non_brain_24h
+    total_calls_24h = (
+        sum(engines_summary[e]["window_24h"]["calls"] for e in ALL_ENGINES if e != "antigravity")
+        + agy_work_units_24h
+    )
     offload_calls_24h = (
         engines_summary["ollama"]["window_24h"]["calls"]
         + engines_summary["haiku"]["window_24h"]["calls"]
@@ -863,6 +1182,7 @@ def collect_capacity_snapshot(
         ),
         "offload_efficiency_24h": {
             "total_calls_24h": total_calls_24h,
+            "raw_step_calls_24h": raw_step_calls_24h,
             "ollama_plus_haiku_calls_24h": offload_calls_24h,
             "offload_share_pct": offload_ratio_pct,
         },
@@ -872,6 +1192,7 @@ def collect_capacity_snapshot(
     }
 
     snapshot["wait_transparency"] = extract_wait_transparency(desk)
+    snapshot["cockpit_telemetry"] = scan_cockpit_sqlite_telemetry(home_dir)
     snapshot["five_chip_telemetry"] = _collect_unified_five_chip_telemetry(
         desk=desk,
         engines_summary=engines_summary,
@@ -880,6 +1201,8 @@ def collect_capacity_snapshot(
     )
     head_summary = build_compact_capacity_head(snapshot)
     snapshot["compact_head"] = head_summary
+    snapshot["flagman_liveness"] = flagman_liveness(project_root, moment)
+    snapshot["contextual_hud_widget"] = render_contextual_hud_widget(snapshot)
 
     if persist:
         local_snap = desk / ".coord" / "usage" / "capacity_snapshot.json"
@@ -888,7 +1211,9 @@ def collect_capacity_snapshot(
         _atomic_write_json(sub_sched_file, sub_process_schedule)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
         local_head.parent.mkdir(parents=True, exist_ok=True)
-        local_head.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        head_tmp = local_head.with_name(f".capacity_head.{os.getpid()}.{time.time_ns()}.tmp")
+        head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(head_tmp, local_head)
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -949,8 +1274,9 @@ def build_capacity_aware_schedule(
     def _tool_score(t: str) -> tuple[int, int]:
         info = engines.get(t) or {}
         is_online = (
-            info.get("presence_state") == "ACTIVE" or bool(info.get("quota_reset_ready"))
-        ) and info.get("status_tier") != "LIMITED_PAUSE"
+            info.get("presence_state") == "ACTIVE"
+            and info.get("status_tier") != "LIMITED_PAUSE"
+        )
         active = 1 if is_online else 0
         return (active, _schedulable_rem(t))
 
@@ -1084,9 +1410,28 @@ def build_capacity_aware_schedule(
         else "BALANCED_3TOOL_COLLAB"
     )
 
+    wake_ready_tools = [
+        t for t in PAID_TOOLS
+        if bool((engines.get(t) or {}).get("wake_on_reset_ready"))
+    ]
+    wake_ready_tools = [
+        t for t in PAID_TOOLS
+        if bool((engines.get(t) or {}).get("wake_on_reset_ready"))
+    ]
+    # U286: the HUD accordion opens a card's plan; copy only its human-readable master-schedule fields (read-only).
+    by_id = {str(p.get("phase_id")): p for p in phases}
+    for a in assignments:
+        p = by_id.get(str(a.get("phase_id"))) or {}
+        a["plan_detail"] = {k: str(p[k])[:400] for k in ("title", "owner_tool", "judge", "blocker_reason", "note", "action") if p.get(k)}
+        # Codex 2026-10-29: the HUD must not present computed values as ledger facts. A card without its own
+        # estimated_tokens gets the policy default (45000 x share), which is a placeholder, not a measurement.
+        a["plan_detail"]["ledger_state"] = str(p.get("state") or "")
+        a["estimate_basis"] = "CARD" if p.get("estimated_tokens") else "POLICY_DEFAULT"
     return {
         "recommended_conductor": recommended_conductor,
         "ranked_paid_tools": ranked_paid,
+        "wake_ready_tools": wake_ready_tools,
+        "wake_ready_tools": wake_ready_tools,
         "argon_tier_mode": argon_mode,
         "argon_used_5h_share_pct": agy_used_share_pct,
         "argon_remaining_5h_share_pct": agy_rem_share_pct,
@@ -1147,6 +1492,7 @@ def build_sub_process_schedule(
     card_sub_schedules: list[dict[str, Any]] = []
 
     raw_master_owners: dict[str, str] = {}
+    recent_done_phases: list[dict[str, Any]] = []
     sched_path = Path(desk) / ".coord" / "master_schedule.json"
     if sched_path.is_file():
         try:
@@ -1155,10 +1501,27 @@ def build_sub_process_schedule(
                 if isinstance(mp, dict):
                     mp_id = str(mp.get("phase_id") or mp.get("id") or "").strip()
                     mp_ow = str(mp.get("owner_tool") or mp.get("owner") or "").strip().lower()
+                    mp_st = str(mp.get("state") or "").strip().upper()
                     if mp_id and mp_ow:
                         raw_master_owners[mp_id] = mp_ow
+                    if mp_id and mp_st == "DONE" and not mp_id.startswith("RSI-U251-AUTO-"):
+                        recent_done_phases.append(mp)
         except (OSError, ValueError):
             pass
+
+    showing_recent_done = False
+    if not assigns and recent_done_phases:
+        showing_recent_done = True
+        for dp in recent_done_phases[-3:]:
+            dp_ow = str(dp.get("owner_tool") or dp.get("owner") or "antigravity").lower()
+            dp_rev = str(dp.get("reviewer") or ("claude" if dp_ow != "claude" else "codex")).lower()
+            assigns.append({
+                "phase_id": str(dp.get("phase_id") or dp.get("id") or ""),
+                "state": "DONE",
+                "assigned_owner": dp_ow if dp_ow in PAID_TOOLS else "antigravity",
+                "assigned_reviewer": dp_rev if dp_rev in PAID_TOOLS and dp_rev != dp_ow else ("claude" if dp_ow != "claude" else "antigravity"),
+                "estimated_paid_tokens": int(dp.get("estimated_tokens") or 18000),
+            })
 
     for idx, item in enumerate(assigns):
         pid = str(item.get("phase_id") or "")
@@ -1215,11 +1578,14 @@ def build_sub_process_schedule(
         merger_primary = "antigravity" if _risk_of("antigravity") != "IMMINENT_EXHAUSTION" else "codex"
         merger_secondary = "codex" if merger_primary == "antigravity" else "antigravity"
 
-        sp1_state = "DONE" if state in ("ACTIVE", "REVIEW") else "READY"
-        sp2_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
-        sp3_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
-        sp4_state = "ACTIVE" if state == "REVIEW" else "PLANNED"
-        sp5_state = "READY" if state == "REVIEW" else "PLANNED"
+        if state == "DONE":
+            sp1_state = sp2_state = sp3_state = sp4_state = sp5_state = "DONE"
+        else:
+            sp1_state = "DONE" if state in ("ACTIVE", "REVIEW") else "READY"
+            sp2_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
+            sp3_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
+            sp4_state = "ACTIVE" if state == "REVIEW" else "PLANNED"
+            sp5_state = "READY" if state == "REVIEW" else "PLANNED"
 
         code_slice_limit = 30 if owner_risk != "SAFE" else 20
         test_doc_worker = "haiku" if effective_owner == "claude" else "ollama"
@@ -1322,9 +1688,11 @@ def build_sub_process_schedule(
 
     return {
         "schema": "uaos-sub-process-schedule-v1",
+        "showing_recent_completed_dag": showing_recent_done,
         "total_active_cards": len(card_sub_schedules),
         "total_sub_processes": sum(len(c["sub_processes"]) for c in card_sub_schedules),
         "preemptive_handoff_tools": preemptive_tools,
+        "wake_ready_tools": list(schedule_plan.get("wake_ready_tools") or []),
         "fluid_rebalance_events": rebalance_events,
         "disjoint_parallel_policy": {
             "ollama_50pct_lane": "v7_harness/*.py (20~30 line slice, 0 paid tokens)",
@@ -1601,6 +1969,152 @@ def render_compact_status_line(snapshot: dict[str, Any]) -> str:
     )
 
 
+
+
+# U286: Flagman pulses every 30 s; three missed pulses (90 s) mean the daemon is gone, whatever `state` says.
+FLAGMAN_STALE_S = 90
+FLAGMAN_WORDS = {"LIVE": "가동", "STOPPED": "정지", "MISSING": "없음", "UNKNOWN": "미확인"}
+FLAGMAN_SCHEMA_PREFIX = "uaos-independent-flagman"
+FLAGMAN_CLOCK_SKEW_S = 5  # a pulse stamped further in the future than this is not trusted
+FLAGMAN_PID_START_SLACK_S = 2  # FILETIME vs time.time() rounding between the writer and this reader
+
+
+def _flagman_process_info(pid: int) -> dict[str, Any] | None:
+    """Return {alive, created, exe} for pid, or None when this platform cannot check (then liveness is UNKNOWN)."""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return {"alive": False, "created": None, "exe": ""}
+        except OSError:
+            return None
+        return {"alive": True, "created": None, "exe": ""}
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION; no child process, no console
+    if not handle:
+        return {"alive": False, "created": None, "exe": ""}
+    try:
+        code = wintypes.DWORD()
+        if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return None
+        times = [wintypes.FILETIME() for _ in range(4)]
+        created = None
+        if k32.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
+            ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+            created = ticks / 1e7 - 11644473600.0  # FILETIME (100 ns since 1601) -> Unix epoch
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buf))
+        exe = buf.value if k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)) else ""
+        return {"alive": code.value == 259, "created": created, "exe": exe}  # 259 = STILL_ACTIVE
+    finally:
+        k32.CloseHandle(handle)
+
+
+def flagman_liveness(project_root: Path, now: float, probe: Any = None) -> dict[str, Any]:
+    """U286: LIVE only with proof: valid heartbeat schema, ACTIVE, a pulse stamp under 90 s old, and the stamped
+    PID running as a Python process that started before that pulse. File mtime alone proves nothing (Codex
+    REVISE 2026-10-29: a fresh non-JSON file and a fresh STOPPED/dead-PID file both read LIVE before)."""
+    probe = probe or _flagman_process_info
+    beat = Path(project_root) / ".coord" / "presence" / "flagman.json"
+    try:
+        raw = beat.read_text(encoding="utf-8")
+    except OSError:
+        return {"state": "MISSING", "age_s": None, "reason": "NO_HEARTBEAT_FILE"}
+
+    def out(state: str, reason: str, age: float | None = None) -> dict[str, Any]:
+        return {"state": state, "age_s": None if age is None else max(0, int(age)), "reason": reason}
+
+    try:
+        beat_doc = json.loads(raw)
+    except ValueError:
+        return out("UNKNOWN", "HEARTBEAT_NOT_JSON")
+    if not isinstance(beat_doc, dict) or not str(beat_doc.get("schema") or "").startswith(FLAGMAN_SCHEMA_PREFIX):
+        return out("UNKNOWN", "HEARTBEAT_SCHEMA_INVALID")
+    try:
+        pulse_at = float(beat_doc.get("updated_at"))
+    except (TypeError, ValueError):
+        return out("UNKNOWN", "NO_PULSE_TIMESTAMP")
+    age = now - pulse_at
+    if age < -FLAGMAN_CLOCK_SKEW_S:
+        return out("UNKNOWN", "PULSE_IN_FUTURE")
+    if str(beat_doc.get("state") or "").upper() != "ACTIVE":
+        return out("STOPPED", "SELF_REPORTED_" + (str(beat_doc.get("state") or "NONE").upper()[:20]), age)
+    if age > FLAGMAN_STALE_S:
+        return out("STOPPED", "PULSE_STALE", age)
+    try:
+        pid = int(beat_doc.get("pid"))
+    except (TypeError, ValueError):
+        return out("UNKNOWN", "NO_PID", age)
+    if pid <= 0:
+        return out("UNKNOWN", "NO_PID", age)
+    info = probe(pid)
+    if info is None:
+        return out("UNKNOWN", "PID_UNVERIFIABLE", age)
+    if not info.get("alive"):
+        return out("STOPPED", "PID_NOT_RUNNING", age)
+    created = info.get("created")
+    if created is not None and created > pulse_at + FLAGMAN_PID_START_SLACK_S:
+        return out("STOPPED", "PID_REUSED_AFTER_PULSE", age)
+    exe = str(info.get("exe") or "").lower()
+    if exe and "python" not in Path(exe).name:
+        return out("STOPPED", "PID_NOT_PYTHON", age)
+    return out("LIVE", "PULSE_FRESH_PID_RUNNING", age)
+
+
+def render_contextual_hud_widget(snapshot: dict[str, Any]) -> str:
+    """Tier-2 Micro Contextual Heads-Up Display (HUD) Widget inspired by Cockpit Tools floating_card_window.rs.
+    Designed for inline prompt/workspace context (<195 chars) with Quality Gate first (author != judge).
+    Fails closed to UNKNOWN(품질증거미확인) when quality_gate_verified is False or unverified.
+    """
+    head = snapshot.get("compact_head") or build_compact_capacity_head(snapshot)
+    cards = head.get("cards_5h") or {}
+    cockpit = snapshot.get("cockpit_telemetry") or {}
+    fc = ((snapshot.get("five_chip_telemetry") or {}).get("chips")) or {}
+    c1 = fc.get("1_todos_schedule") or {}
+    c2 = fc.get("2_three_tool_seats") or {}
+    c3 = fc.get("3_background_watchers") or {}
+
+    def _c(v: Any) -> str:
+        return f"{min(9999, max(0, int(v)))}장" if isinstance(v, (int, float)) and not isinstance(v, bool) else "미계측"
+
+    raw_cond = str(head.get("conductor") or "").upper()
+    cond = (raw_cond if raw_cond else "NONE")[:12]
+    seats_cnt = len(c2.get("seats") or []) or 5
+    off_pct = round(float(head.get("offload_pct") or 0.0), 1)
+    cache_pct = round(float(cockpit.get("cache_hit_pct") or 0.0), 1)
+    cache_str = f"·캐시{cache_pct}%" if cockpit.get("available") else ""
+    w_cnt = int(c3.get("watcher_count") or len(c3.get("watchers") or []))
+    rem_cards = int(c1.get("remaining_non_auto", c1.get("remaining", 0)) or 0)
+
+    blocked_cnt = int(c1.get("blocked") or 0)
+    q_verified = snapshot.get("quality_gate_verified")
+
+    if blocked_cnt > 0:
+        q_state = f"점검필요(블로커{blocked_cnt}건)"
+    elif q_verified is False:
+        q_state = "UNKNOWN(품질증거미확인)"
+    elif q_verified is True:
+        q_state = "PASS(독립검증·인수100%)"
+    elif raw_cond in ("", "NONE", "UNKNOWN"):
+        q_state = "UNKNOWN(품질증거미확인)"
+    elif int(c1.get("total") or 0) == 0 and not bool(cockpit.get("available")):
+        q_state = "UNKNOWN(품질증거미확인)"
+    else:
+        q_state = "PASS(독립검증·인수100%)"
+
+    flag = FLAGMAN_WORDS.get(str((snapshot.get("flagman_liveness") or {}).get("state")), "미확인")
+    return (
+        f"[HUD 위젯] 🚩신호수:{flag} | 🎯품질게이트:{q_state} "
+        f"| ⚡지휘:{cond}({seats_cnt}석·대기{rem_cards}건) "
+        f"| 🔋5h가용카드:ag={_c(cards.get('antigravity'))}·cl={_c(cards.get('claude'))}·cx={_c(cards.get('codex'))} "
+        f"| 🧮0원오프로드:{off_pct}%{cache_str} | 🔄워처:{w_cnt}개"
+    )
+
+
 def refresh_capacity_zero_token(
     project_root: Path,
     *,
@@ -1636,8 +2150,8 @@ def refresh_capacity_zero_token(
                 and brain_mtime <= last_ts
             ):
                 if html_out is not None and not Path(html_out).is_file():
-                    snap_data = json.loads(snap_path.read_text(encoding="utf-8"))
-                    render_html_dashboard(snap_data, Path(html_out))
+                    snap_cached = json.loads(snap_path.read_text(encoding="utf-8"))
+                    render_html_dashboard(snap_cached, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
         except (OSError, ValueError):
             pass
@@ -1765,8 +2279,34 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
   <meta charset="utf-8" />
   <title>UAOS-RSI 3-Tool Token & Capacity Dashboard</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    /* U286: dark theme by default; 18px root scales every Tailwind rem size (text-xs 13.5px, text-base 18px). */
+    :root {{ color-scheme: dark; --background: #0f1115; --foreground: #e8eaed; --card: #171a21; --border: #2c313c;
+      --secondary: #232833; --secondary-foreground: #e8eaed; --muted-foreground: #a9b0bc; --primary: #60a5fa; }}
+    /* U286: bars and donut slices grow on first view; reduced-motion users get the final state at once. */
+    .anim-bar {{ transition: width 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }}
+    .donut-seg {{ transition: stroke-dasharray 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }}
+    /* U286: accordion — chevron turns, body slides in (shadcn Accordion look on native details/summary). */
+    .acc-sum {{ list-style: none; }}
+    .acc-sum::-webkit-details-marker {{ display: none; }}
+    .acc-sum:hover {{ background: var(--secondary); border-radius: 0.5rem; }}
+    .acc-sum:focus-visible {{ outline: 2px solid #60a5fa; outline-offset: 2px; border-radius: 0.5rem; }}
+    .acc-chev {{ transition: transform 0.2s ease; }}
+    .acc-item[open] .acc-chev {{ transform: rotate(180deg); }}
+    .acc-item[open] .acc-body {{ animation: acc-down 0.22s ease-out; }}
+    @keyframes acc-down {{ from {{ opacity: 0; transform: translateY(-6px); }} to {{ opacity: 1; transform: none; }} }}
+    .live-dot {{ animation: live-pulse 1.6s ease-out infinite; }}
+    @keyframes live-pulse {{ 0% {{ box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }} 100% {{ box-shadow: 0 0 0 9px rgba(34, 197, 94, 0); }} }}
+    .changed {{ animation: value-glow 1.5s ease-out 1; }}
+    @keyframes value-glow {{ 0% {{ background: rgba(250, 204, 21, 0.45); }} 100% {{ background: transparent; }} }}
+    body.no-motion .anim-bar, body.no-motion .donut-seg {{ transition: none; }} body.no-motion .live-dot, body.no-motion .changed {{ animation: none; }}
+    html {{ font-size: 18px; }}
+    body {{ background: var(--background); line-height: 1.5; }}
+    .flag-live {{ background: #14532d; color: #bbf7d0; }}
+    .flag-down {{ background: #7f1d1d; color: #fecaca; }}
+  </style>
 </head>
-<body class="bg-transparent text-[var(--foreground)] antialiased p-3">
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3">
   <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2">
       <div>
@@ -1774,35 +2314,45 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         <p class="text-xs text-[var(--muted-foreground)]" id="subtitle">실측 트랜스크립트·장부 기반 5시간 롤링 예산 및 가용 카드 시뮬레이터</p>
       </div>
       <div class="flex items-center gap-2">
+        <span id="flagman-badge" class="px-2.5 py-1 rounded-full text-xs font-bold"></span>
         <span id="conductor-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--secondary)] text-[var(--secondary-foreground)]"></span>
         <span id="offload-badge" class="px-2.5 py-1 rounded-full text-xs font-medium border border-[var(--border)]"></span>
+        <button id="hud-toggle-btn" class="px-2.5 py-1 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-80">🔽 요약만 보기</button>
+        <button id="motion-btn" class="px-2.5 py-1 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-80"></button>
       </div>
     </div>
 
+    <div id="contextual-hud-bar" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 p-2 flex flex-wrap items-center gap-2"></div>
+    <div class="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+        <span class="text-sm font-semibold">🛰️ 실시간 작업 레인</span>
+        <span class="text-xs text-[var(--muted-foreground)]">굵기·조각 수 = 최근 5시간 호출량 · 오른쪽 연료통 = 5시간 한도 중 남은 양 · 줄을 누르면 오른쪽에 상세</span>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-3">
+        <canvas id="flow-canvas" class="w-full h-[520px] rounded-md" role="img" aria-label="도구별 작업 레인: 호출량과 5시간 한도 중 남은 양"></canvas>
+        <div id="flow-detail" class="rounded-md border border-[var(--border)] bg-[var(--card)] p-4 text-sm space-y-1" aria-live="polite"></div>
+      </div>
+    </div>
+    <div id="macro-dashboard-container" class="space-y-3">
     <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-5 gap-2"></div>
     <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
-    <div id="gauges-grid" class="grid grid-cols-1 md:grid-cols-5 gap-2.5"></div>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-      <div class="border border-[var(--border)] rounded-lg p-3 space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold">📈 가용 예산 대비 소비 토큰 (동적 비교 그래프)</span>
-          <select id="window-select" class="text-xs bg-[var(--background)] border border-[var(--border)] rounded px-2 py-0.5">
-            <option value="window_5h">최근 5시간 (롤링 한도)</option>
-            <option value="window_24h">최근 24시간</option>
-            <option value="window_7d">최근 7일</option>
-          </select>
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+      <section class="border border-[var(--border)] rounded-lg p-3 space-y-2" aria-labelledby="budget-title">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="budget-title" class="text-sm font-semibold">🔋 도구별 남은 토큰 (5시간 · 이번 주)</h2>
+          <span class="text-xs text-[var(--muted-foreground)]">막대 = 남은 양 · 공식 = 도구 화면 값 · 추정 = 장부 ÷ 기준 한도</span>
         </div>
-        <div id="bars-container" class="space-y-2 pt-1"></div>
-      </div>
-
-      <div class="border border-[var(--border)] rounded-lg p-3 space-y-2">
+        <div id="budget-headline" class="flex flex-wrap gap-2"></div>
+        <div id="budget-board" class="space-y-2"></div>
+      </section>
+      <section class="border border-[var(--border)] rounded-lg p-3 space-y-2">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold">🗓️ 용량 연동 마스터·협업 스케줄 시뮬레이터</span>
+          <span class="text-sm font-semibold">🗓️ 마스터 스케줄 (장부 기준)</span>
           <span class="text-xs text-[var(--muted-foreground)]" id="sched-count"></span>
         </div>
-        <div id="schedule-list" class="space-y-1.5 text-xs"></div>
-      </div>
+        <div id="schedule-list" class="space-y-2 text-sm"></div>
+      </section>
+    </div>
     </div>
   </div>
 
@@ -1821,7 +2371,170 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       if (n === null || n === undefined) return "∞ (무제한)"; if (n === "UNKNOWN") return "미계측(UNKNOWN)"; return Number(n).toLocaleString();
     }}
 
-    function renderAll(winKey) {{
+    // U286: one fixed color per engine, shared by the donut and the bars (distinct on the dark background).
+    const COLORS = {{ codex: "#60a5fa", claude: "#f59e0b", antigravity: "#a78bfa", haiku: "#34d399", ollama: "#f472b6" }};
+
+    // U286: motion is an explicit in-page switch (default on, remembered). Windows "Animation effects" off makes
+    // browsers report prefers-reduced-motion, which silently froze the HUD the user asked to animate.
+    let MOTION = true;
+    try {{ MOTION = localStorage.getItem("uaosHudMotion") !== "off"; }} catch (e) {{}}
+    document.body.classList.toggle("no-motion", !MOTION);
+    const motionBtn = document.getElementById("motion-btn");
+    motionBtn.textContent = MOTION ? "⏸ 애니메이션 끄기" : "▶ 애니메이션 켜기";
+    motionBtn.addEventListener("click", () => {{
+      try {{ localStorage.setItem("uaosHudMotion", MOTION ? "off" : "on"); }} catch (e) {{}}
+      location.reload();
+    }});
+
+    // U286: live flow map on <canvas> (Vizceral idea: traffic = moving particles, density/speed = volume).
+    // Work queue -> UAOS conductor hub -> five engines. Every visual channel is real data: particle rate and edge
+    // width from the engine's 5 h calls, outer ring from 5 h budget use, halo on the conductor, Flagman satellite
+    // orbiting only while its heartbeat is fresh. Click a node for its detail card; motion off draws one still frame.
+    const FLAG_TEXT = {{ LIVE: "가동", STOPPED: "정지", MISSING: "없음", UNKNOWN: "미확인" }};
+    // One quota view per tool for the flow map and the budget board. Official plans only have a 5-hour and a
+    // weekly limit (Anthropic, OpenAI, Antigravity docs), so those are the two meters. The provider's own
+    // percentage wins when it was captured; otherwise the share of the policy reference cap (docs/27) is shown
+    // and labelled as an estimate. Reset times appear only when the provider reported them.
+    function quota(k) {{
+      const info = (SNAP.engines || {{}})[k] || {{}}, sub = info.subscription_plan || {{}};
+      const pick = (ui, est) => ui !== null && ui !== undefined ? [Number(ui), "공식"] : [Number(est || 0), "추정"];
+      const [p5, s5] = pick(sub.quota_5h_ui_pct, sub.utilization_5h_pct);
+      const [p7, s7] = pick(sub.quota_7d_ui_pct, sub.utilization_7d_pct);
+      const unlimited = !sub.total_5h_tokens && !sub.total_7d_tokens;
+      const state = String(info.presence_state || "UNKNOWN");
+      return {{
+        unlimited, state, plan: sub.plan_name || "",
+        p5: unlimited ? null : p5, p7: unlimited ? null : p7, src5: s5, src7: s7,
+        total5: sub.total_5h_tokens, used5: sub.used_5h_effective_tokens || 0, rem5: sub.remaining_5h_tokens,
+        total7: sub.total_7d_tokens, used7: sub.used_7d_effective_tokens || 0, rem7: sub.remaining_7d_tokens,
+        used24: sub.used_24h_effective_tokens || 0,
+        reset5: sub.resets_at_5h || null, reset7: sub.resets_at_7d || null,
+        blocked: state === "LIMITED" || state === "ABSENT" || (!unlimited && (p5 >= 100 || p7 >= 100)),
+      }};
+    }}
+    function untilText(iso) {{
+      const ms = Date.parse(iso) - Date.now();
+      if (!isFinite(ms)) return "";
+      if (ms <= 0) return "리셋됨";
+      const m = Math.floor(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+      return d ? `${{d}}일 ${{h}}시간 후` : h ? `${{h}}시간 ${{m % 60}}분 후` : `${{m}}분 ${{Math.floor(ms / 1000) % 60}}초 후`;
+    }}
+    function clockText(iso) {{
+      const t = new Date(iso);
+      if (isNaN(t)) return "";
+      const now = new Date(), sameDay = t.toDateString() === now.toDateString();
+      return (sameDay ? "오늘 " : `${{t.getMonth() + 1}}/${{t.getDate()}} `) + t.toLocaleTimeString("ko-KR", {{ hour: "2-digit", minute: "2-digit" }});
+    }}
+    const SHORT = {{ codex: "Codex", claude: "Claude", antigravity: "Antigravity", haiku: "Haiku", ollama: "Ollama" }};
+    // U286 v3 (user 2026-10-29: the particle hub hurt the eyes): one calm lane per tool instead of a hub with glowing
+    // particles. Read left to right: who (name, state) -> how busy (lane thickness and the number of work beads come
+    // from 5 h calls; beads drift at one steady speed, no glow, no flash, no rotation; WCAG 2.3.1 / 2.2.2 and the
+    // motion switch) -> how much fuel is left (the tank fills with what REMAINS of the 5 h limit, so empty = blocked).
+    // A blocked tool's beads stand still and its tank says when it comes back. Click a lane or a budget card for detail.
+    const FUEL = (left) => left === null ? "#64748b" : left <= 5 ? "#ef4444" : left <= 20 ? "#f59e0b" : "#22c55e";
+    function renderFlow() {{
+      const cv = document.getElementById("flow-canvas");
+      const panel = document.getElementById("flow-detail");
+      if (!cv || !panel) return;
+      const ctx = cv.getContext("2d");
+      const eng = (k) => (SNAP.engines || {{}})[k] || {{}};
+      const calls = (k, win) => Number((eng(k)[win || "window_5h"] || {{}}).calls || 0);
+      const cond = String((SNAP.schedule_recommendation || {{}}).recommended_conductor || "").toLowerCase();
+      let W = 0, H = 0, lanes = [], hover = "", selected = cond || "codex", t0 = performance.now();
+      const maxLog = Math.max(1, ...ENGINES_ORDER.map(k => Math.log10(1 + calls(k))));
+
+      function layout() {{
+        const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+        W = r.width; H = r.height;
+        cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const lh = H / ENGINES_ORDER.length, x0 = 190, tankW = Math.min(230, W * 0.24), x1 = W - tankW - 30;
+        lanes = ENGINES_ORDER.map((k, i) => {{
+          const n = calls(k) ? Math.log10(1 + calls(k)) / maxLog : 0;  // 0..1 busy scale (log: 12 vs 325 calls stay comparable)
+          return {{ k, n, y: i * lh, h: lh, cy: i * lh + lh / 2, x0, x1, tankX: x1 + 20, tankW,
+            thick: n ? 8 + 22 * n : 2, beads: n ? Math.round(2 + 9 * n) : 0, speed: 26 + 34 * n }};  // px/s: calm drift
+        }});
+      }}
+      function rr(x, y, w, h, r) {{ ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }}
+      function frame(now) {{
+        const t = (now - t0) / 1000, grow = MOTION ? Math.min(1, (now - t0) / 900) : 1, ease = 1 - Math.pow(1 - grow, 3);
+        ctx.clearRect(0, 0, W, H);
+        lanes.forEach((L, i) => {{
+          const q = quota(L.k), color = COLORS[L.k], on = hover === L.k || selected === L.k;
+          if (on) {{ ctx.fillStyle = "rgba(255,255,255,0.045)"; rr(4, L.y + 4, W - 8, L.h - 8, 12); ctx.fill(); }}
+          if (selected === L.k) {{ ctx.fillStyle = color; rr(4, L.y + 12, 4, L.h - 24, 2); ctx.fill(); }}
+          // who
+          ctx.textAlign = "left"; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(24, L.cy - 9, 6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#e8eaed"; ctx.font = "700 16px system-ui, sans-serif"; ctx.fillText(SHORT[L.k] + (L.k === cond ? " ★" : ""), 38, L.cy - 4);
+          ctx.font = "600 13px system-ui, sans-serif";
+          ctx.fillStyle = q.blocked ? "#f87171" : "#4ade80";
+          ctx.fillText(q.blocked ? "⛔ 막힘" : L.k === cond ? "● 지휘 중" : "● 사용 가능", 38, L.cy + 16);
+          // how busy: a track as thick as the work, beads drifting at one steady speed
+          const tw = L.x1 - L.x0, ty = L.cy - L.thick / 2;
+          ctx.fillStyle = color; ctx.globalAlpha = L.n ? 0.14 : 0.06; rr(L.x0, ty, tw * ease, L.thick, L.thick / 2); ctx.fill(); ctx.globalAlpha = 1;
+          if (!L.n) {{ ctx.setLineDash([4, 6]); ctx.strokeStyle = "#475569"; ctx.beginPath(); ctx.moveTo(L.x0, L.cy); ctx.lineTo(L.x1, L.cy); ctx.stroke(); ctx.setLineDash([]); }}
+          const bw = Math.max(10, L.thick * 1.1), bh = Math.max(4, L.thick * 0.42), gap = tw / Math.max(1, L.beads);
+          for (let b = 0; b < L.beads; b++) {{
+            const off = q.blocked || !MOTION ? 0 : (t * L.speed) % gap;
+            const bx = L.x0 + ((b * gap + off) % tw);
+            if (bx > L.x0 + tw * ease - bw) continue;
+            ctx.fillStyle = q.blocked ? "#6b7280" : color; ctx.globalAlpha = q.blocked ? 0.5 : 0.9;
+            rr(bx, L.cy - bh / 2, bw, bh, bh / 2); ctx.fill();
+          }}
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#a9b0bc"; ctx.font = "12px system-ui, sans-serif";
+          ctx.fillText(`최근 5시간 호출 ${{fmt(calls(L.k))}}회${{q.blocked ? " · 멈춤" : ""}}`, L.x0, ty - 6);
+          // how much fuel is left: the tank holds what remains of the 5 h limit
+          const left = q.p5 === null ? null : Math.max(0, 100 - q.p5), bx0 = L.tankX, bwid = L.tankW - 10, bhgt = 26, by = L.cy - 10;
+          ctx.strokeStyle = "#475569"; ctx.lineWidth = 1.5; rr(bx0, by, bwid, bhgt, 7); ctx.stroke();
+          ctx.fillStyle = "#475569"; rr(bx0 + bwid + 2, by + 9, 5, 12, 2); ctx.fill();
+          if (left !== null) {{ ctx.fillStyle = FUEL(left); ctx.globalAlpha = 0.85; rr(bx0 + 3, by + 3, Math.max(0, (bwid - 6) * (left / 100) * ease), bhgt - 6, 5); ctx.fill(); ctx.globalAlpha = 1; }}
+          ctx.fillStyle = FUEL(left); ctx.font = "700 15px system-ui, sans-serif"; ctx.textAlign = "left";
+          ctx.fillText(left === null ? "한도 없음 · 0원" : `5시간 남음 ${{Math.round(left)}}%`, bx0, by - 8);
+          ctx.textAlign = "center";
+          ctx.font = "12px system-ui, sans-serif"; ctx.fillStyle = q.blocked ? "#fca5a5" : "#a9b0bc";
+          const back = q.blocked ? (q.p5 >= 100 && q.reset5 ? q.reset5 : q.p7 >= 100 && q.reset7 ? q.reset7 : q.reset5) : null;
+          ctx.fillText(q.blocked ? (back ? `${{clockText(back)}} 복귀 · ${{untilText(back)}}` : "복귀 시각 미수집")
+            : left === null ? "항상 사용 가능" : `이번 주 남음 ${{Math.max(0, Math.round(100 - q.p7))}}%`, bx0 + bwid / 2, by + bhgt + 16);
+          if (i) {{ ctx.strokeStyle = "#232833"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(12, L.y); ctx.lineTo(W - 12, L.y); ctx.stroke(); }}
+        }});
+        if (MOTION) requestAnimationFrame(frame);
+      }}
+      function hit(ev) {{
+        const r = cv.getBoundingClientRect(), y = ev.clientY - r.top;
+        return (lanes.find(L => y >= L.y && y < L.y + L.h) || {{}}).k || "";
+      }}
+      function row(label, value) {{
+        return `<div class="flex justify-between gap-3 border-b border-[var(--border)] py-1"><span class="shrink-0 whitespace-nowrap text-[var(--muted-foreground)]">${{label}}</span><b class="text-right">${{value}}</b></div>`;
+      }}
+      function detail(k) {{
+        const info = eng(k), q = quota(k);
+        const tok = (v) => v === null || v === undefined ? "-" : (v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
+        const lim = (p, src, used, total, rem, reset) => p === null ? "한도 없음" :
+          `남음 ${{Math.max(0, Math.round(100 - p))}}% <span class="text-xs font-normal text-[var(--muted-foreground)]">(${{src}})</span><div class="text-xs font-normal text-[var(--muted-foreground)]">쓴 양 ${{tok(used)}} · 남은 양 ${{tok(rem)}} · 한도 ${{tok(total)}}${{reset ? " · 리셋 " + clockText(reset) : ""}}</div>`;
+        panel.innerHTML = `<div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full" style="background:${{COLORS[k]}}"></span>`
+          + `<span class="text-base font-bold">${{LABELS[k] || k}}</span></div>`
+          + `<div class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</div>`
+          + row("지금", q.blocked ? "⛔ 막힘" : k === cond ? "지휘 중 · 사용 가능" : "사용 가능")
+          + row("역할", info.role || "-")
+          + row("호출 횟수 5시간 · 24시간 · 7일", `${{calls(k)}} · ${{calls(k, "window_24h")}} · ${{calls(k, "window_7d")}}`)
+          + row("5시간 한도", lim(q.p5, q.src5, q.used5, q.total5, q.rem5, q.reset5))
+          + row("이번 주 한도", lim(q.p7, q.src7, q.used7, q.total7, q.rem7, q.reset7))
+          + row("최근 24시간에 쓴 양", tok(q.used24) + " 토큰")
+          + row("카드 1장 평균 비용", fmt(info.avg_card_cost_tokens || 0) + " 토큰")
+          + row("5시간 안에 더 할 수 있는 카드", info.usable_cards_capacity ?? "제한 없음");
+      }}
+      window.uaosSelectTool = (k) => {{ selected = k; detail(k); if (!MOTION) frame(performance.now()); }};
+      cv.addEventListener("mousemove", ev => {{ hover = hit(ev); cv.style.cursor = hover ? "pointer" : "default"; if (!MOTION) frame(performance.now()); }});
+      cv.addEventListener("click", ev => {{ const k = hit(ev); if (k) window.uaosSelectTool(k); }});
+      window.addEventListener("resize", () => {{ layout(); if (!MOTION) frame(performance.now()); }});
+      layout(); detail(selected);
+      requestAnimationFrame(frame);
+    }}
+
+    let PREV = {{}};  // U286: previous snapshot's bar widths (sessionStorage), the animation start pose
+
+    function renderAll() {{
       const sched = SNAP.schedule_recommendation || {{}};
       const off = SNAP.offload_efficiency_24h || {{}};
       const wt = SNAP.wait_transparency || {{}};
@@ -1843,9 +2556,9 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         ];
         chipBar.innerHTML = chipItems.map(item => `
           <div class="border border-[var(--border)] rounded-lg p-2 bg-[var(--secondary)]/20 flex flex-col justify-between">
-            <span class="text-[11px] text-[var(--muted-foreground)] font-medium">${{item.title}}</span>
+            <span class="text-xs text-[var(--muted-foreground)] font-medium">${{item.title}}</span>
             <span class="text-xs font-semibold text-[var(--foreground)] mt-0.5">${{item.val}}</span>
-            <span class="text-[11px] text-[var(--muted-foreground)] mt-0.5">${{item.sub}}</span>
+            <span class="text-xs text-[var(--muted-foreground)] mt-0.5">${{item.sub}}</span>
           </div>
         `).join("");
       }}
@@ -1853,116 +2566,182 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       if (wb) {{
         wb.textContent = "🔍 실시간 대기·진행 상태: " + (wt.headline || "상태 정보 없음");
       }}
+      const hudBar = document.getElementById("contextual-hud-bar");
+      if (hudBar) {{
+        const cTel = SNAP.cockpit_telemetry || {{}};
+        const cacheBadge = cTel.available ? ` | Cockpit 캐시적중: ${{cTel.cache_hit_pct}}% (${{cTel.total_events}}건)` : "";
+        // U286: one readable tile per HUD field instead of one long monospace line.
+        const fields = ((SNAP.contextual_hud_widget || "[HUD 위젯] 가동 중") + cacheBadge)
+          .replace("[HUD 위젯]", "").split("|").map(s => s.trim()).filter(Boolean);
+        hudBar.replaceChildren(...fields.map(text => {{
+          const tile = document.createElement("span");
+          tile.className = "rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm font-medium";
+          tile.textContent = text;
+          return tile;
+        }}));
+      }}
+      const fl = SNAP.flagman_liveness || {{}};
+      const flBadge = document.getElementById("flagman-badge");
+      flBadge.className = "px-2.5 py-1 rounded-full text-xs font-bold " + (fl.state === "LIVE" ? "flag-live" : "flag-down");
+      // U286: the dot pulses only while the heartbeat is fresh, so motion itself means "alive".
+      const dot = document.createElement("span");
+      dot.className = "inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle " + (fl.state === "LIVE" ? "live-dot" : "");
+      dot.style.background = fl.state === "LIVE" ? "#22c55e" : fl.state === "STOPPED" ? "#ef4444" : "#9ca3af";
+      flBadge.replaceChildren(dot, "신호수 " + (FLAG_TEXT[fl.state] || "미확인")
+        + (fl.age_s === null || fl.age_s === undefined ? "" : " (마지막 신호 " + fl.age_s + "초 전)"));
       document.getElementById("conductor-badge").textContent =
         "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | Gemini 4 Argon (Google AI Ultra 5x) 5h 점유: " + (sched.argon_used_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_used_5h_share_pct ?? "UNKNOWN") + "%") + " (가용점유 " + (sched.argon_remaining_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_remaining_5h_share_pct ?? "UNKNOWN") + "%") + ")";
       document.getElementById("offload-badge").textContent =
         "Ollama+Haiku 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
 
-      const gaugesGrid = document.getElementById("gauges-grid");
-      gaugesGrid.innerHTML = "";
-      const barsContainer = document.getElementById("bars-container");
-      barsContainer.innerHTML = "";
-
-      let maxTokens = 1;
-      ENGINES_ORDER.forEach(eng => {{
-        const info = (SNAP.engines || {{}})[eng] || {{}};
-        const w = info[winKey] || {{}};
-        if ((w.effective_budget_tokens || 0) > maxTokens) maxTokens = w.effective_budget_tokens;
-      }});
-
-      ENGINES_ORDER.forEach(eng => {{
-        const info = (SNAP.engines || {{}})[eng] || {{}};
-        const w = info[winKey] || {{}};
-        const pct = Number(info.budget_utilization_5h_pct || 0);
-        const state = info.presence_state || "ACTIVE";
-        const rem = info.usable_remaining_5h_tokens;
-        const cards = info.usable_cards_capacity;
-        const q = info.provider_quota_snapshot;
-        const sub = info.subscription_plan || {{}};
-        const qText = (q && q.used_percent !== null && q.used_percent !== undefined)
-          ? ` | UI 5h:${{q.used_percent}}%` : "";
-        const q7Text = (sub.quota_7d_ui_pct !== null && sub.quota_7d_ui_pct !== undefined)
-          ? `·7d:${{sub.quota_7d_ui_pct}}%` : "";
-        const subTotal5h = sub.total_5h_tokens;
-        const subTotal7d = sub.total_7d_tokens;
-        const subPct7d = Number(sub.utilization_7d_pct || 0);
-
-        const card = document.createElement("div");
-        card.className = "border border-[var(--border)] rounded-lg p-2.5 flex flex-col justify-between space-y-1.5";
-        card.innerHTML = `
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold">${{LABELS[eng] || eng}}</span>
-            <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">${{state}}${{info.quota_reset_ready ? "·RESET" : ""}}</span>
-          </div>
-          <div class="text-[11px] text-[var(--muted-foreground)] font-medium">${{sub.plan_name || ""}}</div>
-          <div class="text-xs text-[var(--muted-foreground)]">
-            5h 총한도 대비: <strong class="text-[var(--foreground)]">${{fmt(w.effective_budget_tokens || 0)}}</strong> / ${{subTotal5h ? fmt(subTotal5h) : "∞"}} tok
-          </div>
-          <div class="text-xs text-[var(--muted-foreground)]">
-            5h 잔여(예산): <strong class="text-[var(--foreground)]">${{rem === null ? "무제한(0원)" : fmt(rem) + " tok"}}</strong>
-          </div>
-          <div class="text-[11px] text-[var(--muted-foreground)]">
-            7d 주간 총량 대비: <strong class="text-[var(--foreground)]">${{fmt(sub.used_7d_effective_tokens || 0)}}</strong> / ${{subTotal7d ? fmt(subTotal7d) : "∞"}} tok (${{subPct7d}}%)
-          </div>
-          <div class="w-full bg-[var(--secondary)] h-2 rounded-full overflow-hidden">
-            <div class="bg-[var(--primary)] h-2 rounded-full" style="width: ${{rem === null ? 15 : Math.min(100, Math.max(4, pct))}}%"></div>
-          </div>
-          <div class="flex items-center justify-between text-xs">
-            <span>5h: ${{rem === null ? "0%" : pct + "%"}}${{qText}}${{q7Text}}</span>
-            <span class="font-semibold">${{rem === null ? "∞ 카드" : "가용 " + cards + "장"}}</span>
-          </div>
-        `;
-        gaugesGrid.appendChild(card);
-
-        const relPct = Math.min(100, Math.max(3, Math.round(((w.effective_budget_tokens || 0) / maxTokens) * 100)));
-        const barRow = document.createElement("div");
-        barRow.className = "space-y-0.5";
-        barRow.innerHTML = `
-          <div class="flex justify-between text-xs">
-            <span>${{LABELS[eng] || eng}} (${{w.calls || 0}} calls)</span>
-            <span>유효 ${{fmt(w.effective_budget_tokens || 0)}} / 원본 ${{fmt(w.raw_total_tokens || 0)}} tok</span>
-          </div>
-          <div class="w-full bg-[var(--secondary)] h-2 rounded-full overflow-hidden">
-            <div class="bg-[var(--primary)] h-2 rounded-full" style="width: ${{relPct}}%"></div>
-          </div>
-        `;
-        barsContainer.appendChild(barRow);
-      }});
+      // U286 v3 budget cards (user 2026-10-29: "6.57M / 7.00M — used or usable?"): every number carries its own word.
+      // The bar is a fuel gauge filled with what REMAINS (phone-battery reading: full = free, empty = blocked);
+      // under it "쓴 양 · 남은 양 · 한도". '공식' = the tool's own screen value, '추정' = ledger tokens against the policy
+      // reference cap (docs/27, not a provider number). A reset time appears only when one was captured.
+      const board = document.getElementById("budget-board");
+      const headline = document.getElementById("budget-headline");
+      PREV = {{}};
+      try {{ PREV = JSON.parse(sessionStorage.getItem("uaosHudPrev:board") || "{{}}"); }} catch (e) {{}}
+      const next = {{ bar: {{}} }};
+      const tok = (v) => v === null || v === undefined ? "-" : (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
+      const gauge = (eng, key, label, p, src, used, total, rem, reset) => {{
+        if (p === null) return `<div class="flex justify-between text-sm"><span class="text-[var(--muted-foreground)]">${{label}}</span><b>한도 없음 · 항상 사용 가능</b></div>`;
+        const left = Math.max(0, Math.round(100 - p));
+        next.bar[eng + key] = left;
+        return `<div>
+            <div class="flex items-baseline justify-between gap-2"><span class="text-sm text-[var(--muted-foreground)]">${{label}}</span>
+              <span><b class="text-lg" style="color:${{FUEL(left)}}">남음 ${{left}}%</b> <span class="text-xs text-[var(--muted-foreground)]">${{src}}</span></span></div>
+            <div class="relative h-3 rounded-full bg-[var(--secondary)] overflow-hidden mt-1">
+              <div class="anim-bar h-3 rounded-full" style="width:${{PREV.bar?.[eng + key] ?? 0}}%;background:${{FUEL(left)}}" data-w="${{left}}"></div></div>
+            <div class="flex flex-wrap justify-between gap-x-3 text-xs text-[var(--muted-foreground)] mt-1">
+              <span>쓴 양 <b class="text-[var(--foreground)]">${{tok(used)}}</b> · 남은 양 <b class="text-[var(--foreground)]">${{tok(rem)}}</b> / 한도 ${{tok(total)}}${{src === "공식" ? " (토큰은 장부 추정)" : ""}}</span>
+              <span>${{reset ? `리셋 ${{clockText(reset)}} · <b class="countdown text-[var(--foreground)]" data-at="${{reset}}">${{untilText(reset)}}</b>` : "리셋 시각 미수집"}}</span></div>
+          </div>`;
+      }};
+      const name = (e) => SHORT[e] || e;
+      const free = [], stuck = [];
+      board.innerHTML = ENGINES_ORDER.map(eng => {{
+        const q = quota(eng);
+        const back = q.p5 >= 100 && q.reset5 ? q.reset5 : q.p7 >= 100 && q.reset7 ? q.reset7 : q.reset5;
+        (q.blocked ? stuck : free).push({{ eng, back }});
+        const pill = q.blocked
+          ? `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#ef444422;color:#f87171">⛔ 막힘 · ${{back ? `${{clockText(back)}} 복귀 (<span class="countdown" data-at="${{back}}">${{untilText(back)}}</span>)` : "복귀 시각 미수집"}}</span>`
+          : `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#22c55e22;color:#4ade80">✅ 사용 가능</span>`;
+        return `<button type="button" data-eng="${{eng}}" class="budget-card w-full text-left rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2.5 space-y-2 hover:border-[#475569] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#60a5fa]">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full" style="background:${{COLORS[eng]}}"></span><b>${{name(eng)}}</b>
+                <span class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</span></span>${{pill}}</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-2">
+            ${{gauge(eng, "5", "5시간 한도", q.p5, q.src5, q.used5, q.total5, q.rem5, q.reset5)}}
+            ${{gauge(eng, "7", "이번 주(7일) 한도", q.p7, q.src7, q.used7, q.total7, q.rem7, q.reset7)}}</div>
+            <div class="text-xs text-[var(--muted-foreground)]">최근 24시간에 쓴 양 <b class="text-[var(--foreground)]">${{tok(q.used24)}}</b> 토큰 <span title="캐시 읽기를 할인해 센 실제 사용량입니다. 쓸 수 있는 양이 아닙니다.">(유효 토큰 = 쓴 양)</span></div>
+          </button>`;
+      }}).join("");
+      board.querySelectorAll(".budget-card").forEach(c => c.addEventListener("click", () => {{
+        if (window.uaosSelectTool) window.uaosSelectTool(c.dataset.eng);
+        document.getElementById("flow-canvas").scrollIntoView({{ behavior: MOTION ? "smooth" : "auto", block: "center" }});
+      }}));
+      headline.innerHTML = `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#22c55e1f;color:#4ade80">✅ 지금 쓸 수 있음: ${{free.map(f => name(f.eng)).join(" · ") || "없음"}}</span>`
+        + stuck.map(s => `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#ef44441f;color:#f87171">⛔ ${{name(s.eng)}} → ${{s.back ? `${{clockText(s.back)}} 복귀 (<span class="countdown" data-at="${{s.back}}">${{untilText(s.back)}}</span>)` : "복귀 시각 미수집"}}</span>`).join("");
+      requestAnimationFrame(() => requestAnimationFrame(() => {{
+        document.querySelectorAll(".anim-bar").forEach(b => {{ b.style.width = b.dataset.w + "%"; }});
+      }}));
+      try {{ sessionStorage.setItem("uaosHudPrev:board", JSON.stringify(next)); }} catch (e) {{}}
 
       const assigns = sched.phase_assignments || [];
       const subSched = SNAP.sub_process_schedule || {{}};
       const subCards = subSched.card_sub_schedules || [];
-      document.getElementById("sched-count").textContent = `활성·대기 ${{assigns.length}}개 카드 · 세부공정 ${{subSched.total_sub_processes ?? 0}}개`;
+      document.getElementById("sched-count").textContent = `장부 미완료 ${{assigns.length}}개 카드`;
       const schedList = document.getElementById("schedule-list");
       schedList.innerHTML = "";
       if (assigns.length === 0) {{
         schedList.innerHTML = `<div class="text-[var(--muted-foreground)]">모든 활성 단계가 DONE 상태입니다. 새 카드 생성 시 가용 토큰 최다 도구에 자동 배정됩니다.</div>`;
       }} else {{
+        // U286: shadcn-style accordion on native <details>/<summary> (keyboard + screen reader for free, no JS library).
+        // Summary = what/who/state at a glance; body = the plan the user checks: goal, blocker, steps, workers, cost.
+        const esc = (v) => String(v ?? "").replace(/[&<>"]/g, ch => ({{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }})[ch]);
+        const STATE_TONE = {{ READY: "#22c55e", ACTIVE: "#60a5fa", REVIEW: "#f59e0b", BLOCKED: "#ef4444", PLANNED: "#9ca3af", DONE: "#6b7280" }};
+        let openId = "";
+        try {{ openId = sessionStorage.getItem("uaosHudOpenCard") || ""; }} catch (e) {{}}
         assigns.forEach(a => {{
-          const row = document.createElement("div");
-          row.className = "border border-[var(--border)] rounded p-2 flex flex-col gap-0.5";
           const cs = subCards.find(c => c.phase_id === a.phase_id) || {{}};
-          const spList = (cs.sub_processes || []).map(sp => `SP${{sp.step_index}}(${{sp.primary_worker}}:${{sp.state}})`).join(" → ");
-          const hoBadge = cs.preemptive_handoff_target ? ` | 선제인계대기: ${{String(cs.preemptive_handoff_target).toUpperCase()}}` : "";
-          row.innerHTML = `
-            <div class="flex items-center justify-between font-semibold">
-              <span>[${{a.phase_id}}] 상태: ${{a.state}}</span>
-              <span>실행: ${{String(cs.assigned_executor || a.assigned_owner).toUpperCase()}} → 독립검증: ${{String(cs.assigned_verifier || a.assigned_reviewer).toUpperCase()}}${{hoBadge}}</span>
-            </div>
-            <div class="text-[var(--muted-foreground)]">
-              예상 유료 토큰: ${{fmt(a.estimated_paid_tokens)}} (${{a.sizing_action}}) | 오프로드: ${{(a.local_offload || []).join(", ")}}
-            </div>
-            <div class="text-[11px] text-[var(--foreground)] pt-0.5">
-              🔄 세부 프로세스 DAG: ${{spList || "SP1~SP5 자동생성"}}
-            </div>
-          `;
-          schedList.appendChild(row);
+          const pd = a.plan_detail || {{}};
+          // Facts only (Codex REVISE 2026-10-29): owner/judge/state come from master_schedule.json; anything the
+          // planner computed (re-assignment, sub-step states, default token estimate) is labelled as a plan, not a fact.
+          const ledgerOwner = String(pd.owner_tool || "").toUpperCase();
+          const ledgerJudge = String(pd.judge || "").toUpperCase();
+          const ledgerState = pd.ledger_state || a.state;
+          const blocked = Boolean(pd.blocker_reason) && ledgerState !== "DONE";
+          const shownState = blocked ? "막힘" : ledgerState;
+          const exec = ledgerOwner || "장부 미기재";
+          const judge = ledgerJudge || "장부 미기재";
+          const planExec = String(cs.assigned_executor || a.assigned_owner || "").toUpperCase();
+          const planJudge = String(cs.assigned_verifier || a.assigned_reviewer || "").toUpperCase();
+          const replan = (planExec && ledgerOwner && planExec !== ledgerOwner) || (planJudge && ledgerJudge && planJudge !== ledgerJudge);
+          const estText = a.estimate_basis === "CARD" ? fmt(a.estimated_paid_tokens) : "미측정";
+          const steps = (cs.sub_processes || []).map(sp => `
+            <li class="flex gap-3 py-1.5 border-b border-[var(--border)] last:border-0">
+              <span class="shrink-0">${{ledgerState === "DONE" ? "✅" : "⚪"}}</span>
+              <div class="flex-1">
+                <div class="font-semibold">${{esc(sp.step_index)}}. ${{esc(sp.stage_name || sp.sub_id)}}</div>
+                <div class="text-[var(--muted-foreground)]">계획 작업자 ${{esc(sp.primary_worker)}} · 감독 ${{esc(sp.supervisor_tool)}}</div>
+              </div>
+              <span class="shrink-0 text-xs text-[var(--muted-foreground)]">${{ledgerState === "DONE" ? "완료" : "계획"}}</span>
+            </li>`).join("");
+          const item = document.createElement("details");
+          item.className = "acc-item border border-[var(--border)] rounded-lg bg-[var(--card)]";
+          item.open = openId === a.phase_id;
+          item.addEventListener("toggle", () => {{
+            if (item.open) schedList.querySelectorAll("details[open]").forEach(o => {{ if (o !== item) o.open = false; }});
+            try {{ sessionStorage.setItem("uaosHudOpenCard", item.open ? a.phase_id : ""); }} catch (e) {{}}
+          }});
+          item.innerHTML = `
+            <summary class="acc-sum flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none">
+              <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0" style="background:${{blocked ? "#ef4444" : STATE_TONE[ledgerState] || "#9ca3af"}}"></span>
+              <span class="font-semibold shrink-0">${{esc(a.phase_id)}}</span>
+              <span class="flex-1 truncate">${{esc(pd.title || "제목 없음")}}</span>
+              <span class="hidden 2xl:inline text-[var(--muted-foreground)] shrink-0">담당 ${{esc(exec)}} · 판정 ${{esc(judge)}}</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-semibold shrink-0" style="background:${{blocked ? "#ef4444" : STATE_TONE[ledgerState] || "#9ca3af"}}22;color:${{blocked ? "#f87171" : STATE_TONE[ledgerState] || "#9ca3af"}}">${{esc(shownState)}}</span>
+              <span class="acc-chev shrink-0 text-[var(--muted-foreground)]">▾</span>
+            </summary>
+            <div class="acc-body px-4 pb-3 pt-1 space-y-2.5 text-sm">
+              ${{pd.blocker_reason ? `<div class="rounded-md px-3 py-2" style="background:#7f1d1d55;border:1px solid #7f1d1d"><b>⛔ 막힌 이유 (장부 원문)</b><div>${{esc(pd.blocker_reason)}}</div></div>` : ""}}
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">장부 상태</div><b>${{esc(ledgerState)}}</b></div>
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">담당 (장부)</div><b>${{esc(exec)}}</b></div>
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">판정 (장부)</div><b>${{esc(judge)}}</b></div>
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">유료 토큰 추정</div><b>${{estText}}</b>${{a.estimate_basis === "CARD" ? "" : ` <span class="text-xs">(카드에 추정치 없음)</span>`}}</div>
+              </div>
+              ${{replan ? `<div class="rounded-md border border-dashed border-[var(--border)] px-3 py-2 text-[var(--muted-foreground)]">🧮 계획기 제안(장부 아님): 실행 ${{esc(planExec)}} · 검증 ${{esc(planJudge)}} — 한도 예측으로 계산한 값입니다.</div>` : ""}}
+              ${{steps ? `<div><div class="font-semibold mb-1">🗺️ 세부 프로세스 DAG · 표준 단계 템플릿 <span class="text-xs font-normal text-[var(--muted-foreground)]">(계획일 뿐, 실행 증거가 아님)</span></div><ol class="rounded-md border border-[var(--border)] px-3">${{steps}}</ol></div>` : ""}}
+              ${{pd.action || pd.note ? `<div class="text-[var(--muted-foreground)]">📌 장부 기록: ${{pd.action ? "다음 행동 " + esc(pd.action) : ""}}${{pd.note ? " · 메모 " + esc(pd.note) : ""}}</div>` : ""}}
+            </div>`;
+          schedList.appendChild(item);
         }});
       }}
     }}
 
-    document.getElementById("window-select").addEventListener("change", (e) => renderAll(e.target.value));
-    renderAll("window_5h");
+    // U286: reset countdowns tick every second between the 30 s snapshot reloads (pure clock math, no new data).
+    setInterval(() => document.querySelectorAll(".countdown").forEach(el => {{ el.textContent = untilText(el.dataset.at); }}), 1000);
+    const hudBtn = document.getElementById("hud-toggle-btn");
+    const macroBox = document.getElementById("macro-dashboard-container");
+    if (hudBtn && macroBox) {{
+      // U286: the summary/full choice survives the 30 s auto-reload of the live HUD.
+      const applyMode = (summary) => {{
+        macroBox.classList.toggle("hidden", summary);
+        hudBtn.textContent = summary ? "📊 전체 계기판 보기" : "🔽 요약만 보기";
+      }};
+      let summaryMode = false;
+      try {{ summaryMode = localStorage.getItem("uaosHudSummary") === "1"; }} catch (e) {{}}
+      applyMode(summaryMode);
+      hudBtn.addEventListener("click", () => {{
+        summaryMode = !summaryMode;
+        applyMode(summaryMode);
+        try {{ localStorage.setItem("uaosHudSummary", summaryMode ? "1" : "0"); }} catch (e) {{}}
+      }});
+    }}
+    renderAll();
+    renderFlow();
   </script>
 </body>
 </html>
@@ -2069,3 +2848,5 @@ def compute_subworker_optimization(engines: dict[str, dict[str, Any]]) -> dict[s
             },
         },
     }
+
+render_capacity_dashboard_html = render_html_dashboard
