@@ -19,3 +19,17 @@ No pool, batching, session rotation or cap change (those wait for Codex's separa
 - `python -m pytest -q -p no:cacheprovider tests/test_u279_answer_wakes.py` (red now: 3 failed).
 - Unchanged regressions: `tests/test_u194_verdict_wakes_agy.py tests/test_u141a_wake_policy.py tests/test_u141b_producer_wake.py tests/test_u15_notify_codex.py`.
 - Full suite exit 0.
+
+## Invariants (Codex relay_a0991be3)
+
+- NOTICE / ACK_ONLY (class or marker) always wins: zero dispatch, whatever `verdict` or `verdict_requested` say.
+- ACTIONABLE class or explicit verdict with `verdict_requested=False` keeps its wake (one dispatch).
+- `_wants_wake` decides only wake or not; message_id, digest, target, requester, request/session binding and the
+  receiver ACK path (mailbox claim, `coord ack`) are untouched. No session rotation, pooling, UUID replacement, caps.
+- Evaluators frozen: tests/test_u279_answer_wakes.py and the four named regressions are not edited by the worker.
+
+## Limits and stop
+
+- Output: one function body, at most ~10 changed lines in `v7_harness/coord/deliver.py`; anything else is rejected.
+- Time cap 900 s per attempt; worker local (Ollama, 0 paid tokens); no paid fallback without a new contract.
+- Stop: any need to change another function or file, or a second local failure of the same cause → report to Codex.
