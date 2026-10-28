@@ -124,15 +124,19 @@ class DarkReadableHtml(unittest.TestCase):
         self.assertIn('id="budget-headline"', html)
         self.assertIn("리셋 시각 미수집", html)  # no captured reset time is said, never guessed
         self.assertIn('querySelectorAll(".countdown")', html)
-        # v3: calm lanes, no glow or flash (WCAG 2.3.1), budget cards open the lane detail, budget beside schedule
+        # v4: one tool console replaces the lanes and the budget cards, which said the same thing twice (user receipt
+        # 2026-10-29); a ring of the 5 h remainder, bars for the week and 24 h, a drifting call strip, calm motion only
         self.assertNotIn("shadowBlur", html)
+        self.assertNotIn('id="flow-canvas"', html)
+        self.assertIn("function renderConsole()", html)
+        self.assertIn('class="ring', html)
+        self.assertIn("flow-strip", html)
+        self.assertIn("tickRings()", html)  # a blocked tool's ring drains toward its reset every second
+        self.assertIn("agy-accounts", html)  # one chip per Antigravity account
         self.assertIn("window.uaosSelectTool", html)
         self.assertIn("xl:grid-cols-2", html)
         self.assertIn("no-motion", html)  # in-page switch; OS reduced-motion froze the HUD
-        # flow map overhaul: full-width canvas with particles plus a click-to-open detail panel per tool
-        self.assertIn('id="flow-canvas"', html)
-        self.assertIn('id="flow-detail"', html)
-        self.assertIn("function renderFlow()", html)
+        self.assertIn("body.no-motion .flow-strip", html)
         # schedule plans open as an accordion with the master-schedule detail
         self.assertIn("acc-item", html)
         # facts only: ledger fields are labelled as ledger, planner output as plan, unmeasured cost as unmeasured

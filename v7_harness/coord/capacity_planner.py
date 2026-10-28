@@ -25,6 +25,7 @@ import tempfile
 import time
 from typing import Any
 
+from .agy_accounts import antigravity_accounts
 from .hook_context import shared_desk
 from .next_card import TERMINAL
 from .presence import TOOLS, read_all as read_all_presence
@@ -1202,6 +1203,9 @@ def collect_capacity_snapshot(
     head_summary = build_compact_capacity_head(snapshot)
     snapshot["compact_head"] = head_summary
     snapshot["flagman_liveness"] = flagman_liveness(project_root, moment)
+    # U286 v4: per-account Antigravity facts (registry + 429 log); a test home never reads the real APPDATA
+    snapshot["antigravity_accounts"] = antigravity_accounts(
+        desk, appdata=(home / "AppData" / "Roaming") if home else None, persist=persist)
     snapshot["contextual_hud_widget"] = render_contextual_hud_widget(snapshot)
 
     if persist:
@@ -2285,7 +2289,12 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       --secondary: #232833; --secondary-foreground: #e8eaed; --muted-foreground: #a9b0bc; --primary: #60a5fa; }}
     /* U286: bars and donut slices grow on first view; reduced-motion users get the final state at once. */
     .anim-bar {{ transition: width 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }}
-    .donut-seg {{ transition: stroke-dasharray 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }}
+    .ring {{ transition: stroke-dasharray 1.2s cubic-bezier(0.2, 0.8, 0.2, 1); }}
+    .ring-count {{ transition: stroke-dasharray 1s linear; }}
+    .flow-strip {{ animation: flow-drift var(--dur) linear infinite; }}
+    .flow-strip.still {{ animation: none; }}
+    @keyframes flow-drift {{ from {{ background-position: 0 0; }} to {{ background-position: var(--gap) 0; }} }}
+    .tool-head:hover {{ background: rgba(255, 255, 255, 0.03); }}
     /* U286: accordion — chevron turns, body slides in (shadcn Accordion look on native details/summary). */
     .acc-sum {{ list-style: none; }}
     .acc-sum::-webkit-details-marker {{ display: none; }}
@@ -2297,9 +2306,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     @keyframes acc-down {{ from {{ opacity: 0; transform: translateY(-6px); }} to {{ opacity: 1; transform: none; }} }}
     .live-dot {{ animation: live-pulse 1.6s ease-out infinite; }}
     @keyframes live-pulse {{ 0% {{ box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }} 100% {{ box-shadow: 0 0 0 9px rgba(34, 197, 94, 0); }} }}
-    .changed {{ animation: value-glow 1.5s ease-out 1; }}
-    @keyframes value-glow {{ 0% {{ background: rgba(250, 204, 21, 0.45); }} 100% {{ background: transparent; }} }}
-    body.no-motion .anim-bar, body.no-motion .donut-seg {{ transition: none; }} body.no-motion .live-dot, body.no-motion .changed {{ animation: none; }}
+    body.no-motion .anim-bar, body.no-motion .ring {{ transition: none; }} body.no-motion .live-dot, body.no-motion .flow-strip {{ animation: none; }}
     html {{ font-size: 18px; }}
     body {{ background: var(--background); line-height: 1.5; }}
     .flag-live {{ background: #14532d; color: #bbf7d0; }}
@@ -2323,28 +2330,16 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     </div>
 
     <div id="contextual-hud-bar" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 p-2 flex flex-wrap items-center gap-2"></div>
-    <div class="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
-      <div class="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
-        <span class="text-sm font-semibold">🛰️ 실시간 작업 레인</span>
-        <span class="text-xs text-[var(--muted-foreground)]">굵기·조각 수 = 최근 5시간 호출량 · 오른쪽 연료통 = 5시간 한도 중 남은 양 · 줄을 누르면 오른쪽에 상세</span>
-      </div>
-      <div class="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-3">
-        <canvas id="flow-canvas" class="w-full h-[520px] rounded-md" role="img" aria-label="도구별 작업 레인: 호출량과 5시간 한도 중 남은 양"></canvas>
-        <div id="flow-detail" class="rounded-md border border-[var(--border)] bg-[var(--card)] p-4 text-sm space-y-1" aria-live="polite"></div>
-      </div>
-    </div>
-    <div id="macro-dashboard-container" class="space-y-3">
-    <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-5 gap-2"></div>
-    <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
       <section class="border border-[var(--border)] rounded-lg p-3 space-y-2" aria-labelledby="budget-title">
         <div class="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="budget-title" class="text-sm font-semibold">🔋 도구별 남은 토큰 (5시간 · 이번 주)</h2>
-          <span class="text-xs text-[var(--muted-foreground)]">막대 = 남은 양 · 공식 = 도구 화면 값 · 추정 = 장부 ÷ 기준 한도</span>
+          <h2 id="budget-title" class="text-base font-semibold">🎛️ 도구 콘솔 — 지금 얼마나 남았나</h2>
+          <span class="text-xs text-[var(--muted-foreground)]">원 = 5시간 한도 중 남은 양 · 막대 = 이번 주 남은 양 · 흐르는 점 = 최근 5시간 작업량 · 누르면 상세</span>
         </div>
         <div id="budget-headline" class="flex flex-wrap gap-2"></div>
         <div id="budget-board" class="space-y-2"></div>
       </section>
+      <div id="macro-dashboard-container" class="space-y-3">
       <section class="border border-[var(--border)] rounded-lg p-3 space-y-2">
         <div class="flex items-center justify-between">
           <span class="text-sm font-semibold">🗓️ 마스터 스케줄 (장부 기준)</span>
@@ -2352,7 +2347,14 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         </div>
         <div id="schedule-list" class="space-y-2 text-sm"></div>
       </section>
-    </div>
+      <details class="rounded-lg border border-[var(--border)] p-2">
+        <summary class="acc-sum cursor-pointer text-sm font-semibold px-1 py-1">📟 운영 칩 · 대기 상태</summary>
+        <div class="space-y-2 pt-2">
+          <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+          <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
+        </div>
+      </details>
+      </div>
     </div>
   </div>
 
@@ -2426,113 +2428,164 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       return (sameDay ? "오늘 " : `${{t.getMonth() + 1}}/${{t.getDate()}} `) + t.toLocaleTimeString("ko-KR", {{ hour: "2-digit", minute: "2-digit" }});
     }}
     const SHORT = {{ codex: "Codex", claude: "Claude", antigravity: "Antigravity", haiku: "Haiku", ollama: "Ollama" }};
-    // U286 v3 (user 2026-10-29: the particle hub hurt the eyes): one calm lane per tool instead of a hub with glowing
-    // particles. Read left to right: who (name, state) -> how busy (lane thickness and the number of work beads come
-    // from 5 h calls; beads drift at one steady speed, no glow, no flash, no rotation; WCAG 2.3.1 / 2.2.2 and the
-    // motion switch) -> how much fuel is left (the tank fills with what REMAINS of the 5 h limit, so empty = blocked).
-    // A blocked tool's beads stand still and its tank says when it comes back. Click a lane or a budget card for detail.
+    // U286 v4 tool console (user 2026-10-29: the lanes and the budget cards said the same thing twice, both static and
+    // hard to read; "a donut and a bar together"; "I want to see each part move"). One card per tool, read left to right:
+    // ring = what REMAINS of the 5 h limit (a blocked tool's ring instead drains in real time toward its captured reset),
+    // bars = this week's remainder and the last 24 h spend, a flowing strip = 5 h calls (speed and density from calls,
+    // still when blocked). Motion is calm: steady linear drift and eased value changes, no glow, flash or rotation
+    // (WCAG 2.3.1), and the in-page switch stops it (WCAG 2.2.2). Antigravity adds one chip per account.
     const FUEL = (left) => left === null ? "#64748b" : left <= 5 ? "#ef4444" : left <= 20 ? "#f59e0b" : "#22c55e";
-    function renderFlow() {{
-      const cv = document.getElementById("flow-canvas");
-      const panel = document.getElementById("flow-detail");
-      if (!cv || !panel) return;
-      const ctx = cv.getContext("2d");
+    const WEEK_MS = 7 * 24 * 3600 * 1000, FIVE_H_MS = 5 * 3600 * 1000;
+    function agyView() {{
+      const v = SNAP.antigravity_accounts || {{}};
+      const accs = v.accounts || [], waits = v.unassigned_waits || [];
+      if (!accs.length) return null;
+      const blocked = accs.filter(a => a.blocked).length + waits.length;
+      const free = Math.max(0, accs.length - blocked);
+      const backs = accs.filter(a => a.blocked && a.resets_at).map(a => a.resets_at).concat(waits.map(w => w.resets_at));  // a date-only weekly reset has no time, so it never drives a countdown
+      const first = backs.filter(t => Date.parse(t) > Date.now()).sort((a, b) => Date.parse(a) - Date.parse(b))[0] || null;
+      const weekly = accs.map(a => a.weekly_reset_date).filter(Boolean).sort()[0] || null;
+      return {{ v, accs, waits, blocked, free, first, weekly }};
+    }}
+    function renderConsole() {{
+      const board = document.getElementById("budget-board");
+      const headline = document.getElementById("budget-headline");
+      if (!board || !headline) return;
       const eng = (k) => (SNAP.engines || {{}})[k] || {{}};
       const calls = (k, win) => Number((eng(k)[win || "window_5h"] || {{}}).calls || 0);
       const cond = String((SNAP.schedule_recommendation || {{}}).recommended_conductor || "").toLowerCase();
-      let W = 0, H = 0, lanes = [], hover = "", selected = cond || "codex", t0 = performance.now();
-      const maxLog = Math.max(1, ...ENGINES_ORDER.map(k => Math.log10(1 + calls(k))));
-
-      function layout() {{
-        const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
-        W = r.width; H = r.height;
-        cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        const lh = H / ENGINES_ORDER.length, x0 = 190, tankW = Math.min(230, W * 0.24), x1 = W - tankW - 30;
-        lanes = ENGINES_ORDER.map((k, i) => {{
-          const n = calls(k) ? Math.log10(1 + calls(k)) / maxLog : 0;  // 0..1 busy scale (log: 12 vs 325 calls stay comparable)
-          return {{ k, n, y: i * lh, h: lh, cy: i * lh + lh / 2, x0, x1, tankX: x1 + 20, tankW,
-            thick: n ? 8 + 22 * n : 2, beads: n ? Math.round(2 + 9 * n) : 0, speed: 26 + 34 * n }};  // px/s: calm drift
-        }});
-      }}
-      function rr(x, y, w, h, r) {{ ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }}
-      function frame(now) {{
-        const t = (now - t0) / 1000, grow = MOTION ? Math.min(1, (now - t0) / 900) : 1, ease = 1 - Math.pow(1 - grow, 3);
-        ctx.clearRect(0, 0, W, H);
-        lanes.forEach((L, i) => {{
-          const q = quota(L.k), color = COLORS[L.k], on = hover === L.k || selected === L.k;
-          if (on) {{ ctx.fillStyle = "rgba(255,255,255,0.045)"; rr(4, L.y + 4, W - 8, L.h - 8, 12); ctx.fill(); }}
-          if (selected === L.k) {{ ctx.fillStyle = color; rr(4, L.y + 12, 4, L.h - 24, 2); ctx.fill(); }}
-          // who
-          ctx.textAlign = "left"; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(24, L.cy - 9, 6, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = "#e8eaed"; ctx.font = "700 16px system-ui, sans-serif"; ctx.fillText(SHORT[L.k] + (L.k === cond ? " ★" : ""), 38, L.cy - 4);
-          ctx.font = "600 13px system-ui, sans-serif";
-          ctx.fillStyle = q.blocked ? "#f87171" : "#4ade80";
-          ctx.fillText(q.blocked ? "⛔ 막힘" : L.k === cond ? "● 지휘 중" : "● 사용 가능", 38, L.cy + 16);
-          // how busy: a track as thick as the work, beads drifting at one steady speed
-          const tw = L.x1 - L.x0, ty = L.cy - L.thick / 2;
-          ctx.fillStyle = color; ctx.globalAlpha = L.n ? 0.14 : 0.06; rr(L.x0, ty, tw * ease, L.thick, L.thick / 2); ctx.fill(); ctx.globalAlpha = 1;
-          if (!L.n) {{ ctx.setLineDash([4, 6]); ctx.strokeStyle = "#475569"; ctx.beginPath(); ctx.moveTo(L.x0, L.cy); ctx.lineTo(L.x1, L.cy); ctx.stroke(); ctx.setLineDash([]); }}
-          const bw = Math.max(10, L.thick * 1.1), bh = Math.max(4, L.thick * 0.42), gap = tw / Math.max(1, L.beads);
-          for (let b = 0; b < L.beads; b++) {{
-            const off = q.blocked || !MOTION ? 0 : (t * L.speed) % gap;
-            const bx = L.x0 + ((b * gap + off) % tw);
-            if (bx > L.x0 + tw * ease - bw) continue;
-            ctx.fillStyle = q.blocked ? "#6b7280" : color; ctx.globalAlpha = q.blocked ? 0.5 : 0.9;
-            rr(bx, L.cy - bh / 2, bw, bh, bh / 2); ctx.fill();
-          }}
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = "#a9b0bc"; ctx.font = "12px system-ui, sans-serif";
-          ctx.fillText(`최근 5시간 호출 ${{fmt(calls(L.k))}}회${{q.blocked ? " · 멈춤" : ""}}`, L.x0, ty - 6);
-          // how much fuel is left: the tank holds what remains of the 5 h limit
-          const left = q.p5 === null ? null : Math.max(0, 100 - q.p5), bx0 = L.tankX, bwid = L.tankW - 10, bhgt = 26, by = L.cy - 10;
-          ctx.strokeStyle = "#475569"; ctx.lineWidth = 1.5; rr(bx0, by, bwid, bhgt, 7); ctx.stroke();
-          ctx.fillStyle = "#475569"; rr(bx0 + bwid + 2, by + 9, 5, 12, 2); ctx.fill();
-          if (left !== null) {{ ctx.fillStyle = FUEL(left); ctx.globalAlpha = 0.85; rr(bx0 + 3, by + 3, Math.max(0, (bwid - 6) * (left / 100) * ease), bhgt - 6, 5); ctx.fill(); ctx.globalAlpha = 1; }}
-          ctx.fillStyle = FUEL(left); ctx.font = "700 15px system-ui, sans-serif"; ctx.textAlign = "left";
-          ctx.fillText(left === null ? "한도 없음 · 0원" : `5시간 남음 ${{Math.round(left)}}%`, bx0, by - 8);
-          ctx.textAlign = "center";
-          ctx.font = "12px system-ui, sans-serif"; ctx.fillStyle = q.blocked ? "#fca5a5" : "#a9b0bc";
-          const back = q.blocked ? (q.p5 >= 100 && q.reset5 ? q.reset5 : q.p7 >= 100 && q.reset7 ? q.reset7 : q.reset5) : null;
-          ctx.fillText(q.blocked ? (back ? `${{clockText(back)}} 복귀 · ${{untilText(back)}}` : "복귀 시각 미수집")
-            : left === null ? "항상 사용 가능" : `이번 주 남음 ${{Math.max(0, Math.round(100 - q.p7))}}%`, bx0 + bwid / 2, by + bhgt + 16);
-          if (i) {{ ctx.strokeStyle = "#232833"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(12, L.y); ctx.lineTo(W - 12, L.y); ctx.stroke(); }}
-        }});
-        if (MOTION) requestAnimationFrame(frame);
-      }}
-      function hit(ev) {{
-        const r = cv.getBoundingClientRect(), y = ev.clientY - r.top;
-        return (lanes.find(L => y >= L.y && y < L.y + L.h) || {{}}).k || "";
-      }}
-      function row(label, value) {{
-        return `<div class="flex justify-between gap-3 border-b border-[var(--border)] py-1"><span class="shrink-0 whitespace-nowrap text-[var(--muted-foreground)]">${{label}}</span><b class="text-right">${{value}}</b></div>`;
-      }}
-      function detail(k) {{
-        const info = eng(k), q = quota(k);
-        const tok = (v) => v === null || v === undefined ? "-" : (v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
-        const lim = (p, src, used, total, rem, reset) => p === null ? "한도 없음" :
-          `남음 ${{Math.max(0, Math.round(100 - p))}}% <span class="text-xs font-normal text-[var(--muted-foreground)]">(${{src}})</span><div class="text-xs font-normal text-[var(--muted-foreground)]">쓴 양 ${{tok(used)}} · 남은 양 ${{tok(rem)}} · 한도 ${{tok(total)}}${{reset ? " · 리셋 " + clockText(reset) : ""}}</div>`;
-        panel.innerHTML = `<div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full" style="background:${{COLORS[k]}}"></span>`
-          + `<span class="text-base font-bold">${{LABELS[k] || k}}</span></div>`
-          + `<div class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</div>`
-          + row("지금", q.blocked ? "⛔ 막힘" : k === cond ? "지휘 중 · 사용 가능" : "사용 가능")
-          + row("역할", info.role || "-")
-          + row("호출 횟수 5시간 · 24시간 · 7일", `${{calls(k)}} · ${{calls(k, "window_24h")}} · ${{calls(k, "window_7d")}}`)
-          + row("5시간 한도", lim(q.p5, q.src5, q.used5, q.total5, q.rem5, q.reset5))
-          + row("이번 주 한도", lim(q.p7, q.src7, q.used7, q.total7, q.rem7, q.reset7))
-          + row("최근 24시간에 쓴 양", tok(q.used24) + " 토큰")
+      const tok = (v) => v === null || v === undefined ? "-" : (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
+      const name = (e) => SHORT[e] || e;
+      let prev = {{}};
+      try {{ prev = JSON.parse(sessionStorage.getItem("uaosHudPrev:console") || "{{}}"); }} catch (e) {{}}
+      const next = {{}};
+      const maxCalls = Math.max(1, ...ENGINES_ORDER.map(k => calls(k)));
+      const max24 = Math.max(1, ...ENGINES_ORDER.map(k => quota(k).used24));
+      const agy = agyView();
+      // the ring: pathLength 100, so stroke-dasharray "<pct> 100" fills pct percent of the circle
+      const ring = (id, pct, color, big, small, countdown) => {{
+        next[id] = pct;
+        return `<svg viewBox="0 0 120 120" class="w-[118px] h-[118px] shrink-0" aria-hidden="true">
+            <circle cx="60" cy="60" r="50" fill="none" stroke="var(--secondary)" stroke-width="11"></circle>
+            <circle class="ring${{countdown ? " ring-count" : ""}}" cx="60" cy="60" r="50" fill="none" stroke="${{color}}" stroke-width="11"
+              stroke-linecap="round" pathLength="100" transform="rotate(-90 60 60)" stroke-dasharray="${{prev[id] ?? 0}} 100"
+              data-p="${{pct}}"${{countdown ? ` data-at="${{countdown.at}}" data-win="${{countdown.win}}"` : ""}}></circle>
+            <text x="60" y="58" text-anchor="middle" font-size="${{big.length > 5 ? 16 : big.length > 3 ? 21 : 25}}" font-weight="800" fill="${{color}}">${{big}}</text>
+            ${{small.split(" · ").map((t, i) => `<text x="60" y="${{78 + i * 14}}" text-anchor="middle" font-size="12" fill="#a9b0bc">${{t}}</text>`).join("")}}</svg>`;
+      }};
+      const bar = (id, pct, color, label, right) => {{
+        next[id] = pct;
+        return `<div><div class="flex justify-between gap-2 text-xs"><span class="text-[var(--muted-foreground)]">${{label}}</span><span>${{right}}</span></div>
+            <div class="h-2.5 rounded-full bg-[var(--secondary)] overflow-hidden mt-0.5">
+              <div class="anim-bar h-2.5 rounded-full" style="width:${{prev[id] ?? 0}}%;background:${{color}}" data-w="${{pct}}"></div></div></div>`;
+      }};
+      // flowing strip: one bead per 26 px; more calls = denser and faster, blocked = frozen and grey
+      const flow = (k, color, blocked) => {{
+        const n = calls(k) ? Math.log10(1 + calls(k)) / Math.log10(1 + maxCalls) : 0;
+        const gap = Math.round(40 - 22 * n), dur = (6 - 4 * n).toFixed(2);
+        const c = blocked ? "#4b5563" : color;
+        return `<div class="flex items-center gap-2 text-xs"><span class="shrink-0 whitespace-nowrap text-[var(--muted-foreground)]">5시간 호출 <b class="text-[var(--foreground)]">${{fmt(calls(k))}}</b></span>
+            <div class="flow-strip flex-1 h-2 rounded-full ${{n && !blocked ? "" : "still"}}" style="--gap:${{gap}}px;--dur:${{dur}}s;background-color:var(--secondary);
+              background-image:${{n ? `radial-gradient(circle at 5px 50%, ${{c}} 3.5px, transparent 4px)` : "none"}};background-size:${{gap}}px 100%"></div></div>`;
+      }};
+      // U286 v4 (user 2026-10-29: "show it on click, only what is needed"): one line per account inside the card's
+      // click-open detail; the evidence source moves to the hover title instead of a line of its own.
+      const chip = (a) => {{
+        const state = a.blocked && a.resets_at
+          ? `<span style="color:#f87171">⛔ ${{clockText(a.resets_at)}} 복귀</span>`
+          : a.weekly_reset_date ? `<span>주간 리셋 ${{a.weekly_reset_date.slice(5).replace("-", "/")}}</span>`
+          : `<span class="text-[var(--muted-foreground)]">막힘 기록 없음</span>`;
+        const src = (a.blocked ? a.reset_source : a.weekly_reset_source) || "";
+        return `<div class="flex justify-between gap-3 py-1 border-b border-[var(--border)] text-sm" title="출처: ${{src}}">
+            <span class="truncate"><b>${{a.email.split("@")[0]}}</b> <span class="text-xs text-[var(--muted-foreground)]">${{a.kind === "subscription" ? "구독" : "무료"}}${{a.signed_in ? " · <span style='color:#93c5fd'>로그인 중</span>" : ""}}</span></span>${{state}}</div>`;
+      }};
+      const free = [], stuck = [];
+      board.innerHTML = ENGINES_ORDER.map(k => {{
+        const q = quota(k), color = COLORS[k], info = eng(k);
+        let blocked = q.blocked, back = q.p5 >= 100 && q.reset5 ? q.reset5 : q.p7 >= 100 && q.reset7 ? q.reset7 : q.reset5;
+        let donut, bars, extra = "", note = "";
+        if (k === "antigravity" && agy) {{
+          blocked = agy.free === 0 || q.state === "LIMITED" || q.state === "ABSENT";
+          back = agy.first;
+          if (agy.weekly && (!back || agy.weekly < back.slice(0, 10))) note = ` · 구독 주간 리셋 ${{agy.weekly.slice(5).replace("-", "/")}}(날짜만)`;
+          const pct = Math.round(100 * agy.free / agy.accs.length);
+          donut = blocked && back
+            ? ring("r-" + k, 0, "#ef4444", untilText(back).replace(" 후", ""), "복귀까지", {{ at: back, win: WEEK_MS }})
+            : ring("r-" + k, pct, FUEL(pct), `${{agy.free}}/${{agy.accs.length}}`, "막힘 없는 계정");
+          bars = `<div class="text-sm">계정 ${{agy.accs.length}}개 중 <b style="color:${{agy.free ? "#4ade80" : "#f87171"}}">사용 가능 ${{agy.free}}</b> · 막힘 ${{agy.accs.length - agy.free}} <span class="text-xs text-[var(--muted-foreground)]">▸ 누르면 계정별 복귀 시각</span></div>`
+            + bar("w24-" + k, Math.round(100 * q.used24 / max24), color, "최근 24시간 쓴 양 (장부)", `<b>${{tok(q.used24)}}</b> 토큰`);
+          const firstWait = agy.waits.map(w => w.resets_at).sort()[0];
+          extra = `<div class="agy-accounts">${{agy.accs.map(chip).join("")}}${{agy.waits.length ? `<div class="flex justify-between gap-3 py-1 border-b border-[var(--border)] text-sm" title="429 로그에 계정명이 없어 로그인 세션 단위로만 확인됨"><span class="text-[var(--muted-foreground)]">계정 미식별 대기 ${{agy.waits.length}}건</span><span style="color:#f87171">가장 빠른 복귀 ${{clockText(firstWait)}}</span></div>` : ""}}</div>`;
+        }} else if (q.unlimited) {{
+          donut = ring("r-" + k, 100, "#64748b", "∞", "한도 없음 · 0원");
+          bars = `<div class="text-xs text-[var(--muted-foreground)]">로컬 계산기 — 토큰 비용 없음, 항상 사용 가능</div>`;
+        }} else {{
+          const left5 = Math.max(0, Math.round(100 - q.p5)), left7 = Math.max(0, Math.round(100 - q.p7));
+          donut = blocked && back
+            ? ring("r-" + k, 0, "#ef4444", untilText(back).replace(" 후", ""), "복귀까지", {{ at: back, win: q.p5 >= 100 ? FIVE_H_MS : WEEK_MS }})
+            : ring("r-" + k, left5, FUEL(left5), `${{left5}}%`, `5시간 남음 · ${{q.src5}}`);
+          bars = bar("w7-" + k, left7, FUEL(left7), `이번 주 남음 <b style="color:${{FUEL(left7)}}">${{left7}}%</b> <span>(${{q.src7}})</span>`,
+              `쓴 <b>${{tok(q.used7)}}</b> · 남은 <b>${{tok(q.rem7)}}</b> / ${{tok(q.total7)}}`)
+            + bar("w24-" + k, Math.round(100 * q.used24 / max24), color, "최근 24시간 쓴 양", `<b>${{tok(q.used24)}}</b> 토큰`);
+        }}
+        (blocked ? stuck : free).push({{ k, back, note }});
+        const pill = blocked
+          ? `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#ef444422;color:#f87171">⛔ 막힘 · ${{back ? `${{clockText(back)}} 복귀` : "복귀 시각 미수집"}}${{note}}</span>`
+          : `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#22c55e22;color:#4ade80">${{k === cond ? "● 지휘 중" : "✅ 사용 가능"}}</span>`;
+        const row = (l, v) => `<div class="flex justify-between gap-3 border-b border-[var(--border)] py-1"><span class="text-[var(--muted-foreground)]">${{l}}</span><b class="text-right">${{v}}</b></div>`;
+        const detail = row("역할", info.role || "-")
+          + row("호출 5시간 · 24시간 · 7일", `${{calls(k)}} · ${{calls(k, "window_24h")}} · ${{calls(k, "window_7d")}}`)
+          + (q.unlimited ? "" : row("5시간 한도: 쓴 양 · 남은 양 / 한도", `${{tok(q.used5)}} · ${{tok(q.rem5)}} / ${{tok(q.total5)}} (${{q.src5}})`)
+            + row("이번 주(7일) 한도: 쓴 양 · 남은 양 / 한도", `${{tok(q.used7)}} · ${{tok(q.rem7)}} / ${{tok(q.total7)}} (${{q.src7}})`)
+            + row("이번 주 리셋", q.reset7 ? `${{clockText(q.reset7)}} · <span class="countdown" data-at="${{q.reset7}}">${{untilText(q.reset7)}}</span>` : "리셋 시각 미수집")
+            + row("5시간 리셋", q.reset5 ? `${{clockText(q.reset5)}} · <span class="countdown" data-at="${{q.reset5}}">${{untilText(q.reset5)}}</span>` : "리셋 시각 미수집"))
           + row("카드 1장 평균 비용", fmt(info.avg_card_cost_tokens || 0) + " 토큰")
           + row("5시간 안에 더 할 수 있는 카드", info.usable_cards_capacity ?? "제한 없음");
-      }}
-      window.uaosSelectTool = (k) => {{ selected = k; detail(k); if (!MOTION) frame(performance.now()); }};
-      cv.addEventListener("mousemove", ev => {{ hover = hit(ev); cv.style.cursor = hover ? "pointer" : "default"; if (!MOTION) frame(performance.now()); }});
-      cv.addEventListener("click", ev => {{ const k = hit(ev); if (k) window.uaosSelectTool(k); }});
-      window.addEventListener("resize", () => {{ layout(); if (!MOTION) frame(performance.now()); }});
-      layout(); detail(selected);
-      requestAnimationFrame(frame);
+        return `<div class="tool-card rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 space-y-2" data-eng="${{k}}">
+            <button type="button" class="tool-head w-full text-left flex items-center gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#60a5fa] rounded-md" aria-expanded="false">
+              ${{donut}}
+              <div class="flex-1 min-w-0 space-y-1.5">
+                <div class="flex flex-wrap items-center justify-between gap-2"><span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full" style="background:${{color}}"></span>
+                  <b class="text-base">${{name(k)}}${{k === cond ? " ★" : ""}}</b><span class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</span></span>${{pill}}</div>
+                ${{bars}}
+                ${{flow(k, color, blocked)}}
+              </div>
+            </button>
+            <details class="acc-item tool-detail border-t border-[var(--border)]">
+              <summary class="acc-sum flex items-center justify-between gap-2 cursor-pointer px-1 py-1.5 text-sm font-medium">
+                <span>${{extra ? "계정별 복귀 시각 · 상세" : "상세"}}</span><span class="acc-chev shrink-0 text-[var(--muted-foreground)]">▾</span></summary>
+              <div class="acc-body text-sm space-y-2 pt-1">${{extra}}<div>${{detail}}</div></div>
+            </details>
+          </div>`;
+      }}).join("");
+      board.querySelectorAll(".tool-head").forEach(h => h.addEventListener("click", () => {{
+        // the whole card head opens the same shadcn-style accordion as its own trigger row
+        const d = h.closest(".tool-card").querySelector(".tool-detail");
+        d.open = !d.open;
+        h.setAttribute("aria-expanded", String(d.open));
+      }}));
+      window.uaosSelectTool = (k) => {{
+        const card = board.querySelector(`.tool-card[data-eng="${{k}}"]`);
+        if (!card) return;
+        card.querySelector(".tool-detail").open = true;
+        card.scrollIntoView({{ behavior: MOTION ? "smooth" : "auto", block: "nearest" }});
+      }};
+      headline.innerHTML = `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#22c55e1f;color:#4ade80">✅ 지금 쓸 수 있음: ${{free.map(f => name(f.k)).join(" · ") || "없음"}}</span>`
+        + stuck.map(s => `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#ef44441f;color:#f87171">⛔ ${{name(s.k)}} → ${{s.back ? `${{clockText(s.back)}} 복귀 (<span class="countdown" data-at="${{s.back}}">${{untilText(s.back)}}</span>)` : "복귀 시각 미수집"}}${{s.note || ""}}</span>`).join("");
+      requestAnimationFrame(() => requestAnimationFrame(() => {{
+        board.querySelectorAll(".anim-bar").forEach(b => {{ b.style.width = b.dataset.w + "%"; }});
+        board.querySelectorAll(".ring").forEach(r => {{ r.setAttribute("stroke-dasharray", r.dataset.p + " 100"); }});
+        tickRings();
+      }}));
+      try {{ sessionStorage.setItem("uaosHudPrev:console", JSON.stringify(next)); }} catch (e) {{}}
     }}
-
-    let PREV = {{}};  // U286: previous snapshot's bar widths (sessionStorage), the animation start pose
+    // a blocked tool's ring holds the share of its wait still ahead, so it visibly drains toward the reset
+    function tickRings() {{
+      document.querySelectorAll(".ring-count").forEach(r => {{
+        const left = Date.parse(r.dataset.at) - Date.now(), win = Number(r.dataset.win) || WEEK_MS;
+        r.setAttribute("stroke-dasharray", Math.max(0, Math.min(100, 100 * left / win)).toFixed(2) + " 100");
+      }});
+    }}
 
     function renderAll() {{
       const sched = SNAP.schedule_recommendation || {{}};
@@ -2594,59 +2647,6 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       document.getElementById("offload-badge").textContent =
         "Ollama+Haiku 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
 
-      // U286 v3 budget cards (user 2026-10-29: "6.57M / 7.00M — used or usable?"): every number carries its own word.
-      // The bar is a fuel gauge filled with what REMAINS (phone-battery reading: full = free, empty = blocked);
-      // under it "쓴 양 · 남은 양 · 한도". '공식' = the tool's own screen value, '추정' = ledger tokens against the policy
-      // reference cap (docs/27, not a provider number). A reset time appears only when one was captured.
-      const board = document.getElementById("budget-board");
-      const headline = document.getElementById("budget-headline");
-      PREV = {{}};
-      try {{ PREV = JSON.parse(sessionStorage.getItem("uaosHudPrev:board") || "{{}}"); }} catch (e) {{}}
-      const next = {{ bar: {{}} }};
-      const tok = (v) => v === null || v === undefined ? "-" : (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
-      const gauge = (eng, key, label, p, src, used, total, rem, reset) => {{
-        if (p === null) return `<div class="flex justify-between text-sm"><span class="text-[var(--muted-foreground)]">${{label}}</span><b>한도 없음 · 항상 사용 가능</b></div>`;
-        const left = Math.max(0, Math.round(100 - p));
-        next.bar[eng + key] = left;
-        return `<div>
-            <div class="flex items-baseline justify-between gap-2"><span class="text-sm text-[var(--muted-foreground)]">${{label}}</span>
-              <span><b class="text-lg" style="color:${{FUEL(left)}}">남음 ${{left}}%</b> <span class="text-xs text-[var(--muted-foreground)]">${{src}}</span></span></div>
-            <div class="relative h-3 rounded-full bg-[var(--secondary)] overflow-hidden mt-1">
-              <div class="anim-bar h-3 rounded-full" style="width:${{PREV.bar?.[eng + key] ?? 0}}%;background:${{FUEL(left)}}" data-w="${{left}}"></div></div>
-            <div class="flex flex-wrap justify-between gap-x-3 text-xs text-[var(--muted-foreground)] mt-1">
-              <span>쓴 양 <b class="text-[var(--foreground)]">${{tok(used)}}</b> · 남은 양 <b class="text-[var(--foreground)]">${{tok(rem)}}</b> / 한도 ${{tok(total)}}${{src === "공식" ? " (토큰은 장부 추정)" : ""}}</span>
-              <span>${{reset ? `리셋 ${{clockText(reset)}} · <b class="countdown text-[var(--foreground)]" data-at="${{reset}}">${{untilText(reset)}}</b>` : "리셋 시각 미수집"}}</span></div>
-          </div>`;
-      }};
-      const name = (e) => SHORT[e] || e;
-      const free = [], stuck = [];
-      board.innerHTML = ENGINES_ORDER.map(eng => {{
-        const q = quota(eng);
-        const back = q.p5 >= 100 && q.reset5 ? q.reset5 : q.p7 >= 100 && q.reset7 ? q.reset7 : q.reset5;
-        (q.blocked ? stuck : free).push({{ eng, back }});
-        const pill = q.blocked
-          ? `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#ef444422;color:#f87171">⛔ 막힘 · ${{back ? `${{clockText(back)}} 복귀 (<span class="countdown" data-at="${{back}}">${{untilText(back)}}</span>)` : "복귀 시각 미수집"}}</span>`
-          : `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#22c55e22;color:#4ade80">✅ 사용 가능</span>`;
-        return `<button type="button" data-eng="${{eng}}" class="budget-card w-full text-left rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2.5 space-y-2 hover:border-[#475569] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#60a5fa]">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full" style="background:${{COLORS[eng]}}"></span><b>${{name(eng)}}</b>
-                <span class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</span></span>${{pill}}</div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-2">
-            ${{gauge(eng, "5", "5시간 한도", q.p5, q.src5, q.used5, q.total5, q.rem5, q.reset5)}}
-            ${{gauge(eng, "7", "이번 주(7일) 한도", q.p7, q.src7, q.used7, q.total7, q.rem7, q.reset7)}}</div>
-            <div class="text-xs text-[var(--muted-foreground)]">최근 24시간에 쓴 양 <b class="text-[var(--foreground)]">${{tok(q.used24)}}</b> 토큰 <span title="캐시 읽기를 할인해 센 실제 사용량입니다. 쓸 수 있는 양이 아닙니다.">(유효 토큰 = 쓴 양)</span></div>
-          </button>`;
-      }}).join("");
-      board.querySelectorAll(".budget-card").forEach(c => c.addEventListener("click", () => {{
-        if (window.uaosSelectTool) window.uaosSelectTool(c.dataset.eng);
-        document.getElementById("flow-canvas").scrollIntoView({{ behavior: MOTION ? "smooth" : "auto", block: "center" }});
-      }}));
-      headline.innerHTML = `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#22c55e1f;color:#4ade80">✅ 지금 쓸 수 있음: ${{free.map(f => name(f.eng)).join(" · ") || "없음"}}</span>`
-        + stuck.map(s => `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#ef44441f;color:#f87171">⛔ ${{name(s.eng)}} → ${{s.back ? `${{clockText(s.back)}} 복귀 (<span class="countdown" data-at="${{s.back}}">${{untilText(s.back)}}</span>)` : "복귀 시각 미수집"}}</span>`).join("");
-      requestAnimationFrame(() => requestAnimationFrame(() => {{
-        document.querySelectorAll(".anim-bar").forEach(b => {{ b.style.width = b.dataset.w + "%"; }});
-      }}));
-      try {{ sessionStorage.setItem("uaosHudPrev:board", JSON.stringify(next)); }} catch (e) {{}}
 
       const assigns = sched.phase_assignments || [];
       const subSched = SNAP.sub_process_schedule || {{}};
@@ -2722,7 +2722,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     }}
 
     // U286: reset countdowns tick every second between the 30 s snapshot reloads (pure clock math, no new data).
-    setInterval(() => document.querySelectorAll(".countdown").forEach(el => {{ el.textContent = untilText(el.dataset.at); }}), 1000);
+    setInterval(() => {{ document.querySelectorAll(".countdown").forEach(el => {{ el.textContent = untilText(el.dataset.at); }}); tickRings(); }}, 1000);
     const hudBtn = document.getElementById("hud-toggle-btn");
     const macroBox = document.getElementById("macro-dashboard-container");
     if (hudBtn && macroBox) {{
@@ -2741,7 +2741,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       }});
     }}
     renderAll();
-    renderFlow();
+    renderConsole();
   </script>
 </body>
 </html>
