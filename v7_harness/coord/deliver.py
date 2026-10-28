@@ -190,14 +190,111 @@ def _deliver_to_codex(
     return DeliverResult(True, "codex", "SENT", argv, "")
 
 
+# ── U279: Topic-key burst coalescing & per-topic lock sharding ──
+def _coalesced_batch_path(desk: Path, target: str, topic_key: str) -> Path:
+    safe_topic = re.sub(r"[^A-Za-z0-9_.-]", "_", topic_key or "default")
+    return Path(desk) / ".coord" / "mailbox" / "delivery" / "coalesced" / f"{target}_{safe_topic}.json"
+
+
+def coalesce_topic_relay(
+    project: Path,
+    *,
+    target: str,
+    topic_key: str,
+    message_id: str,
+    actor: str,
+    message: str,
+    delta: str = "",
+) -> dict[str, Any]:
+    """U279: Coalesce rapid-fire actionable relays for the same (target, topic_key) into a single batch buffer so
+    concurrent updates do not stack N separate turns in Codex or Claude."""
+    from v7_harness.coord.hook_context import shared_desk
+    desk = shared_desk(Path(project))
+    batch_file = _coalesced_batch_path(desk, target, topic_key)
+    batch_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = batch_file.with_suffix(".batch.lock")
+    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR)
+    try:
+        for _ in range(REPLACE_TRIES):
+            if _try_lock(fd):
+                break
+            time.sleep(CLAIM_SLEEP_S)
+        try:
+            data = json.loads(batch_file.read_text(encoding="utf-8")) if batch_file.is_file() else {}
+        except (OSError, ValueError):
+            data = {}
+        items: list[dict[str, Any]] = list(data.get("items") or [])
+        if not any(item.get("message_id") == message_id for item in items):
+            first_line = delta or next((ln.strip() for ln in message.splitlines() if ln.strip()), "")[:DELTA_LIMIT]
+            items.append({
+                "message_id": message_id,
+                "actor": actor,
+                "delta": first_line,
+                "message": message,
+                "queued_at": time.time(),
+            })
+        payload = {
+            "target": target,
+            "topic_key": topic_key,
+            "count": len(items),
+            "updated_at": time.time(),
+            "items": items,
+            "receipt_path": str(batch_file),
+        }
+        tmp = batch_file.with_suffix(f".tmp-{uuid.uuid4().hex}")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, batch_file)
+        return payload
+    finally:
+        try:
+            _unlock(fd)
+        except OSError:
+            pass
+        os.close(fd)
+
+
+def drain_coalesced_topic(project: Path, *, target: str, topic_key: str) -> dict[str, Any] | None:
+    """U279: Atomically pop and clear any coalesced relay batch for (target, topic_key)."""
+    if not topic_key:
+        return None
+    from v7_harness.coord.hook_context import shared_desk
+    desk = shared_desk(Path(project))
+    batch_file = _coalesced_batch_path(desk, target, topic_key)
+    if not batch_file.is_file():
+        return None
+    lock_file = batch_file.with_suffix(".batch.lock")
+    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR)
+    try:
+        if not _try_lock(fd):
+            return None
+        if not batch_file.is_file():
+            return None
+        try:
+            data = json.loads(batch_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        batch_file.unlink(missing_ok=True)
+        return data if isinstance(data, dict) and data.get("items") else None
+    finally:
+        try:
+            _unlock(fd)
+        except OSError:
+            pass
+        os.close(fd)
+
+
 # ── Claude 전달 ──────────────────────────────────────────────
 @contextmanager
-def _claude_turn(project_dir: Path | None, timeout: int):
-    """Serialize messages through the one persisted Claude conversation, including across processes."""
+def _claude_turn(project_dir: Path | None, timeout: int, *, topic_key: str = ""):
+    """Serialize messages through the persisted Claude conversation.
+    U279: when topic_key is provided, shard the turn lock per topic (claude-topic-<topic_key>.turn.lock) so a slow
+    turn on one topic never blocks a parallel topic window with CLAUDE_TURN_TIMEOUT."""
     if project_dir is None:
         yield
         return
-    lock = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.turn.lock"
+    safe_topic = re.sub(r"[^A-Za-z0-9_.-]", "_", topic_key.strip()) if topic_key else ""
+    lock_name = f"claude-topic-{safe_topic}.turn.lock" if safe_topic else "claude-session.turn.lock"
+    lock = project_dir / ".coord" / "mailbox" / "delivery" / lock_name
     lock.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout + 5
     fd = None
@@ -241,12 +338,14 @@ def _deliver_to_claude(
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
     session: str = "",
+    topic_key: str = "",
 ) -> DeliverResult:
+    shard_key = topic_key or session
     try:
-        with _claude_turn(project_dir, timeout):
+        with _claude_turn(project_dir, timeout, topic_key=shard_key):
             return _deliver_to_claude_locked(
                 message, project_dir=project_dir, runner=runner, timeout=timeout, allowed_tools=allowed_tools,
-                session=session,
+                session=session, topic_key=topic_key,
             )
     except TimeoutError as exc:
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
@@ -260,6 +359,7 @@ def _deliver_to_claude_locked(
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
     session: str = "",
+    topic_key: str = "",
 ) -> DeliverResult:
     claude_bin = shutil.which("claude")
     if not claude_bin:
@@ -269,12 +369,14 @@ def _deliver_to_claude_locked(
     session_id = ""
     resume = False
     window_cwd = ""
+    safe_topic = re.sub(r"[^A-Za-z0-9_.-]", "_", topic_key.strip()) if topic_key else ""
     if session:  # U115: a card window is an existing session; the default delivery session file is left alone
         from v7_harness.coord.windows import claude_session
 
         (session_id, window_cwd), resume = claude_session(session), True
     elif project_dir:
-        session_path = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.json"
+        sess_filename = f"claude-session-{safe_topic}.json" if safe_topic else "claude-session.json"
+        session_path = project_dir / ".coord" / "mailbox" / "delivery" / sess_filename
         session_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             state = json.loads(session_path.read_text(encoding="utf-8"))
@@ -334,7 +436,7 @@ def _deliver_to_claude_locked(
             if rc == 0 and resume:
                 session_path = None
             break
-        if rc != 0 and "already in use" in stderr.lower() and session_id and not session:
+        if rc != 0 and "already in use" in stderr.lower() and session_id:
             fresh_id = str(uuid.uuid4())
             retry_argv = [
                 "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
@@ -1167,6 +1269,7 @@ def _deliver_unlocked(
     window: str = "",
     identity_digest: str | None = None,
     wants_turn: bool | None = None,
+    coalesce_burst: bool = False,
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -1234,7 +1337,28 @@ def _deliver_unlocked(
                                  message_id, digest, str(accepted))
         # The claim serializes competing dispatchers. The original is returned
         # to inbox after the attempt; only recipient coord ack may settle it.
-        envelope = f"[UAOS relay id={message_id} digest={digest}]\n{message}"
+        from v7_harness.coord.windows import normalize_topic_key
+        topic_key = normalize_topic_key(card) if card else ""
+        if coalesce_burst and topic_key and target in ("codex", "claude"):
+            batch_info = coalesce_topic_relay(
+                project, target=target, topic_key=topic_key, message_id=message_id, actor=actor, message=message
+            )
+            return DeliverResult(
+                False, target, "COALESCED_INTO_TOPIC_BATCH", (), json.dumps(batch_info, ensure_ascii=False),
+                message_id, digest, str(batch_info["receipt_path"]),
+            )
+        coalesced = drain_coalesced_topic(project, target=str(target or ""), topic_key=topic_key) if topic_key else None
+        batch_header = ""
+        if coalesced and coalesced.get("items"):
+            prev_items = [it for it in coalesced["items"] if it.get("message_id") != message_id]
+            if prev_items:
+                summary_lines = [f"- [{it['message_id']}] ({it['actor']}): {it['delta']}" for it in prev_items]
+                batch_header = (
+                    f"[UAOS topic-batch topic={topic_key} coalesced_count={len(prev_items) + 1}]\n"
+                    + "\n".join(summary_lines)
+                    + "\n---\n"
+                )
+        envelope = f"[UAOS relay id={message_id} digest={digest}]\n{batch_header}{message}"
         if window:
             envelope += f"\nNative receiver {window}: after disposition, run coord ack --id {message_id} --consumer {window}."
         if target != "claude":
@@ -1263,7 +1387,8 @@ def _deliver_unlocked(
         elif target == "claude":
             prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
                 "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
-            result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window)
+            result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window,
+                                        topic_key=topic_key)
         else:
             result = DeliverResult(False, str(target), f"UNKNOWN_TARGET:{target}", (), "")
 
@@ -1307,6 +1432,7 @@ def deliver(
     verdict_requested: bool | None = None,
     verdict: str | None = None,
     delta: str | None = None,
+    coalesce_burst: bool = False,
 ) -> DeliverResult:
     """Serialize the complete publish-to-dispatch transaction per message.
 
@@ -1451,7 +1577,8 @@ def deliver(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", identity_digest=digest, wants_turn=wants_turn)
+                                 card=card, window=window or "", identity_digest=digest, wants_turn=wants_turn,
+                                 coalesce_burst=coalesce_burst)
     finally:
         _release_guard(guard, owner)
 
