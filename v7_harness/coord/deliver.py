@@ -421,10 +421,12 @@ RELEASE_WAIT_S = 5.0
 
 def _payload(actor: str, message: str, digest: str, target: str | None, card: str = "",
              window: str | None = None, *, wake_class: str | None = None, verdict_requested: bool | None = None,
-             verdict: str | None = None, delta: str | None = None) -> dict[str, Any]:
+             verdict: str | None = None, delta: str | None = None, in_reply_to: str = "") -> dict[str, Any]:
     """The one published body: the same bytes from every caller, so publish stays idempotent."""
     body = {"kind": "HANDOFF", "actor": actor, "message": message, "digest": digest,
             "requested_target": target or "auto"}
+    if in_reply_to:  # U277: names the letter this one answers; written only when given (old bytes unchanged)
+        body["in_reply_to"] = in_reply_to
     if card:  # U115: only a card letter carries these keys, so a letter without --card keeps today's bytes
         body.update(card=card, window=window)
     elif window and target != "antigravity":  # U214: an explicit native thread binds the letter to that receiver
@@ -918,14 +920,18 @@ def _queue_dir(project: Path, tool: str) -> Path:
 
 
 def _queue_until_active(project: Path, tool: str, *, message_id: str, digest: str, actor: str, message: str,
-                        card: str, thread: str) -> DeliverResult:
+                        card: str, thread: str, verdict_requested: bool = False) -> DeliverResult:
     """U134-C (2026-10-03): a letter to a LIMITED/ABSENT codex/claude came back `mailbox_only` PUBLISHED with ok=true
     and nothing re-sent it when the tool returned (relay_18758c37 never reached Codex). It is now queued, and the
-    tool's next ACTIVE heartbeat with dispatch (presence.mark -> dispatch_queued) sends it."""
+    tool's next ACTIVE heartbeat with dispatch (presence.mark -> dispatch_queued) sends it.
+    U277 L1: a verdict request is marked on its queued record, so the stall scan counts it as a wait."""
     marker = _queue_dir(project, tool) / f"{message_id}.json"
+    record = {"message_id": message_id, "actor": actor, "message": message, "card": card,
+              "thread": thread, "attempts": 0, "digest": digest}
+    if verdict_requested:
+        record["verdict_requested"] = True
     try:
-        _write_receipt(marker, {"message_id": message_id, "actor": actor, "message": message, "card": card,
-                                "thread": thread, "attempts": 0, "digest": digest})
+        _write_receipt(marker, record)
     except FileExistsError:
         pass  # the same letter sent again stays one queued letter
     return DeliverResult(False, tool, "QUEUED_UNTIL_ACTIVE", (), "", message_id, digest, str(marker))
@@ -1294,6 +1300,25 @@ def _deliver_unlocked(
             pass
 
 
+_PR_URL_RE = re.compile(r"https?://\S+/pull/\d+")
+_SHA_RE = re.compile(r"\b[0-9a-fA-F]{40}\b")
+
+
+def _first(pattern: re.Pattern[str], text: str) -> str:
+    match = pattern.search(text or "")
+    return match.group(0) if match else ""
+
+
+def _repo_url(root: Path) -> str:
+    """The remote a request was made in (a binding field, U277). "" when git is unavailable."""
+    try:
+        done = subprocess.run(["git", "-C", str(root), "config", "--get", "remote.origin.url"], capture_output=True,
+                              text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
 def deliver(
     project: Path,
     *,
@@ -1307,6 +1332,63 @@ def deliver(
     verdict_requested: bool | None = None,
     verdict: str | None = None,
     delta: str | None = None,
+    subject: str = "",
+    head: str = "",
+    session: str = "",
+    in_reply_to: str = "",
+) -> DeliverResult:
+    """U277 rev 2: a verdict request is registered durably before anything is published or dispatched.
+
+    A registry failure is a refusal (REQUEST_TRACKING_FAILED): nothing is sent, so no letter waits unrecorded.
+    The request's delivery fact (DISPATCHED or QUEUED) is written after the letter's own outcome.
+    """
+    from v7_harness.coord.requests import RequestError, mark_delivered, register
+
+    root = Path(project).resolve()
+    tracked: dict[str, str] = {}
+    subject_val = subject or _first(_PR_URL_RE, message)
+    head_val = (head or _first(_SHA_RE, message)).lower()
+    session_val = session or os.environ.get("CLAUDE_SESSION_ID", "")
+
+    def track(message_id: str, to: str) -> None:
+        tracked["id"] = message_id
+        register(root, request_id=message_id, requester=actor, target=to, card=card, subject=subject_val,
+                 head=head_val, requester_session=session_val, repo=_repo_url(root))
+        tracked["ok"] = "1"
+
+    try:
+        result = _deliver_impl(root, message=message, actor=actor, target=target, thread=thread, runner=runner,
+                               card=card, wake_class=wake_class, verdict_requested=verdict_requested,
+                               verdict=verdict, delta=delta, in_reply_to=in_reply_to,
+                               _track=track if verdict_requested is True else None,
+                               audit=verdict_requested is True)
+    except RequestError as exc:
+        return DeliverResult(False, target or "mailbox_only", exc.code, (), str(exc), tracked.get("id", ""), "")
+    if tracked.get("ok"):
+        delivery = "DISPATCHED" if result.reason in ("DISPATCHED", "SENT") else "QUEUED"
+        try:
+            mark_delivered(root, tracked["id"], delivery)
+        except (RequestError, OSError, ValueError):
+            pass  # the registry keeps PENDING_DELIVERY; reconcile reads the mailbox receipts later
+    return result
+
+
+def _deliver_impl(
+    project: Path,
+    *,
+    message: str,
+    actor: str,
+    target: str | None = None,
+    thread: str = "",
+    runner: Any = None,
+    card: str = "",
+    wake_class: str | None = None,
+    verdict_requested: bool | None = None,
+    verdict: str | None = None,
+    delta: str | None = None,
+    in_reply_to: str = "",
+    _track: Any = None,
+    audit: bool = False,
 ) -> DeliverResult:
     """Serialize the complete publish-to-dispatch transaction per message.
 
@@ -1360,7 +1442,9 @@ def deliver(
         first = next((line.strip() for line in message.splitlines() if line.strip()), "")
         wake_class, delta = "ACTIONABLE", first[:DELTA_LIMIT]
         explicit = {"wake_class": wake_class, "delta": delta}  # stored fields, so the id is v3 (see _digest)
-    digest = _digest(actor, message, card, window, requested_target, explicit)
+    # U277: a reply names the letter it answers, so it is its own id even when its text repeats an earlier letter.
+    id_fields = {**explicit, "in_reply_to": in_reply_to} if in_reply_to else explicit
+    digest = _digest(actor, message, card, window, requested_target, id_fields)
     message_id = "relay_" + digest[:32]
     if explicit.get("wake_class") or explicit.get("verdict_requested") is True or explicit.get("verdict"):
         # U155 (C6 class): a letter that declares a wake intent with malformed fields (ACTIONABLE without delta, a
@@ -1373,6 +1457,9 @@ def deliver(
             return DeliverResult(False, target or "mailbox_only", "INVALID_INTENT", (), diag, message_id, digest)
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
+    if _track is not None:
+        # U277 rev 2: the request is recorded before the marker, the publish and any dispatch (a failure sends nothing).
+        _track(message_id, requested_target or target or "")
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
     wants_turn = _wants_wake(message, wake_class=explicit.get("wake_class"), verdict=explicit.get("verdict"),
                              verdict_requested=explicit.get("verdict_requested"))
@@ -1384,7 +1471,8 @@ def deliver(
     # U48-D0 re-review (Claude, 2026-09-27): publish before the guard. A guard left by a crashed dispatcher used to
     # return IN_FLIGHT before any publish, so the message never reached the inbox. Publish is idempotent by id+bytes.
     box.publish(message_id, _payload(actor, message, digest, requested_target, card, window, wake_class=wake_class,
-                                     verdict_requested=verdict_requested, verdict=verdict, delta=delta))
+                                     verdict_requested=verdict_requested, verdict=verdict, delta=delta,
+                                     in_reply_to=in_reply_to))
     # U169: one wake rule for the sound and the Antigravity auto-answer: an explicit class wins, else the text decides.
     wants_turn = explicit.get("wake_class") == "ACTIONABLE" or (explicit.get("wake_class") is None
                                                                 and _requires_wake(message))
@@ -1414,7 +1502,7 @@ def deliver(
             from v7_harness.coord.agy_dispatch import dispatch
             # U199: a verdict request is the commit-gate audit; its answer is never held back by the daily cap
             row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run,
-                           card=card, audit=verdict_requested is True)
+                           card=card, audit=audit)
             detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
             unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
@@ -1425,7 +1513,8 @@ def deliver(
                              str(box.inbox_dir / f"{message_id}.json"))
     if target is None and queued_for:
         return _queue_until_active(project, queued_for, message_id=message_id, digest=digest, actor=actor,
-                                   message=message, card=card, thread=thread)
+                                   message=message, card=card, thread=thread,
+                                   verdict_requested=verdict_requested is True)
     if target is None:
         return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
     guard = box.root / "delivery" / "guards" / f"{message_id}.lock"

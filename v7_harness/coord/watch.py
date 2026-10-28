@@ -61,14 +61,18 @@ def watch_file(project: Path, tool: str) -> Path:
 
 
 def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, moment: float,
-          wakes_session: bool = False) -> None:
+          wakes_session: bool = False, *, session: str = "", process_created: int | None = None) -> None:
     live_for = max(LIVE_SCANS * interval_s, LIVE_MIN_S)
     for tool in tools:
         target = watch_file(project, tool)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        # U277: the lease names its session and process identity, so a verdict request's stop hold can tell this
+        # session's live watcher from a foreign one (watcher_wakes_for).
         tmp.write_text(json.dumps({"tool": tool, "token": token, "pid": os.getpid(),
-                                   "expires_at": moment + live_for, "wakes_session": wakes_session}),
+                                   "expires_at": moment + live_for, "wakes_session": wakes_session,
+                                   "session": session, "adapter": "claude-bg-task" if wakes_session else "",
+                                   "process_created": process_created}),
                        encoding="utf-8")
         try:
             replace_with_retry(tmp, target)
@@ -106,6 +110,30 @@ def watcher_wakes(project: Path, tool: str) -> bool:
     except (OSError, ValueError):
         return False
     return watcher_live(project, tool) and isinstance(record, dict) and record.get("wakes_session") is True
+
+
+WAKE_ADAPTERS = ("claude-bg-task", "claude-async-rewake")
+
+
+def watcher_wakes_for(project: Path, tool: str, session: str | None, *, now: float | None = None) -> bool:
+    """U277 (docs 5.6): a live watcher that wakes its session, owned by a live process, for `session`.
+
+    A lease of another session never satisfies the stop hold. An empty session on either side is not compared
+    (no session to compare: the lease is accepted, as the stop gate's other checks are lenient on UNKNOWN)."""
+    moment = time.time() if now is None else now
+    try:
+        record = json.loads(watch_file(project, tool).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(record, dict) or not watcher_live(project, tool, now=moment):
+        return False
+    if record.get("wakes_session") is not True or record.get("adapter") not in WAKE_ADAPTERS:
+        return False
+    pid, created = record.get("pid"), record.get("process_created")
+    if not isinstance(pid, int) or isinstance(pid, bool) or created is None or process_identity(pid) != created:
+        return False
+    lease_session = str(record.get("session") or "")
+    return not (session and lease_session and lease_session != session)
 
 
 def _addressed(payload: Any, tools: tuple[str, ...]) -> bool:
@@ -427,10 +455,41 @@ def _schedule_ready_wake(project: Path, tools: tuple[str, ...], clock: Callable[
     return None
 
 
+def _request_wake(project: Path, tools: tuple[str, ...], session: str | None, now: float,
+                  started_at: float) -> dict[str, Any] | None:
+    """U277 rev 2 (docs 5.4): an exact answer to a verdict request this tool made wakes the session once. The registry
+    CAS (claim_wake) makes one watcher the winner; a fuzzy hint wakes once and closes nothing. A registry error keeps
+    the watch running: the next scan looks again."""
+    from v7_harness.coord import requests
+
+    try:
+        transitions = requests.scan(project, now=now)
+        for row in requests.answered(project):
+            if row.get("requester") not in tools:
+                continue
+            request_id = str(row["request_id"])
+            if requests.claim_wake(project, request_id, session=session or "", now=now, started_at=started_at):
+                return {"reason": "REQUEST_ANSWERED", "id": request_id, "request_id": request_id,
+                        "outcome": row.get("outcome", ""), "event_id": row.get("answer_ref", ""),
+                        "requested_target": row.get("requester")}
+        for item in transitions:
+            if item.get("type") != "HINT" or item.get("requester") not in tools:
+                continue
+            bound = str(item.get("requester_session") or "")
+            if session and bound and bound != session:
+                continue
+            return {"reason": "REQUEST_HINT", "id": item["request_id"], "request_id": item["request_id"],
+                    "event_id": item["event_id"], "requested_target": item.get("requester")}
+    except (OSError, ValueError, requests.RequestError):
+        return None
+    return None
+
+
 def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_TIMEOUT_S,
           interval_s: float = DEFAULT_INTERVAL_S, clock: Callable[[], float] | None = None,
           sleep: Callable[[float], None] | None = None, wakes_session: bool = False,
-          policy: str = "legacy", native_session: str | None = None) -> dict[str, Any] | None:
+          policy: str = "legacy", native_session: str | None = None,
+          requester_session: str | None = None) -> dict[str, Any] | None:
     """Return the first letter addressed to one of `tools` that was not in the inbox when the watch began.
 
     Letters already waiting are what `coord inbox` shows at session start; the watch reports only new ones, so a
@@ -462,13 +521,21 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     seen = set() if structured else set(box.list_inbox())
     deadline = clock() + timeout_s
     next_stall_scan = deadline - timeout_s  # the first scan runs at once; no extra clock read (U117 test counts them)
+    started_at = deadline - timeout_s  # the watch's start, without an extra clock read (see above)
     try:
         while True:
             if native_session:
                 from .continuity import _desk_matches
                 if not _desk_matches(Path(project), native_session):
                     return None
-            _beat(project, tools, token, interval_s, clock(), wakes_session)
+            now = clock()  # one read serves the beat and the request scan (U117 test counts clock reads)
+            _beat(project, tools, token, interval_s, now, wakes_session,
+                  session=requester_session or "", process_created=mine["process_created"])
+            if not native_session:
+                # U277: every scan, not on the stall cadence; a request answered while this watch sleeps wakes it.
+                woken = _request_wake(Path(project), tools, requester_session, now, started_at)
+                if woken is not None:
+                    return woken
             # U94-R1: decide on the name first and read a letter's file only when its id is new to this watch.
             for message_id in box.list_inbox():
                 if message_id in seen:
