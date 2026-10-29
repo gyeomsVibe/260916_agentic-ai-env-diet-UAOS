@@ -746,9 +746,10 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                 excludes=source_excludes,
                 pilot_allowed_scopes=config.allowed_scopes,
                 bundle=None,
+                staging_dir=workspace.staging_dir,
             )
             _mediator_signal = med_eval["signal"]
-            if _mediator_signal == "YELLOW_SCOPED_REBASE":
+            if _mediator_signal in ("YELLOW_SCOPED_REBASE", "GREEN_3WAY_AST_HUNK_MERGED"):
                 _disjoint_companion_paths = list(med_eval.get("disjoint_companion_paths") or [])
                 source_changed = []
             else:
@@ -830,8 +831,9 @@ def run_pilot(config: PilotConfig) -> dict[str, Any]:
                         excludes=source_excludes,
                         pilot_allowed_scopes=config.allowed_scopes,
                         bundle=bundle,
+                        staging_dir=workspace.staging_dir,
                     )
-                    if med_eval["signal"] == "YELLOW_SCOPED_REBASE" and med_eval.get("rebased_bundle") is not None:
+                    if med_eval["signal"] in ("YELLOW_SCOPED_REBASE", "GREEN_3WAY_AST_HUNK_MERGED") and med_eval.get("rebased_bundle") is not None:
                         bundle = med_eval["rebased_bundle"]
                         bundle_id = bundle.bundle_id
                         try:

@@ -135,6 +135,20 @@ def _wants_wake(message: str, *, wake_class: str | None = None, verdict: str | N
     return _requires_wake(message)
 
 
+def _declines_turn(message: str, fields: dict[str, Any]) -> bool:
+    """U282: the letter itself says it needs no turn. An untagged letter without a marker is not a decline."""
+    if fields.get("wake_class") == "ACTIONABLE" or fields.get("verdict") or fields.get("verdict_requested") is True:
+        return False
+    # wake_class ACK_ONLY never gets here (classify refuses it as INVALID_INTENT); the marker is the text token.
+    if fields.get("wake_class") == "NOTICE" or fields.get("verdict_requested") is False:
+        return True
+    # A marker declines only when no wake token stands beside it: losing a real request costs more than one turn
+    # (Codex judge REVISE: "ACTIONABLE_DELTA verdict_requested=yes ...; previous status ACK_ONLY" was silenced).
+    upper = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()
+    stripped = _NEGATED_RE.sub(" ", upper)
+    return bool(_ACK_RE.search(upper)) and not any(pattern.search(stripped) for pattern in _WAKE_RES)
+
+
 # ── 비밀 검사 ────────────────────────────────────────────────
 def _check_secrets(text: str) -> None:
     for pat in SECRET_PATTERNS:
@@ -1311,9 +1325,12 @@ def deliver(
     if target is None:
         from v7_harness.coord.presence import read as read_presence
         from v7_harness.coord.watch import watcher_live
-        if read_presence(desk, "codex")["state"] == "ACTIVE":
+        # U282 R1: auto routing never picks the sender; Codex mailed itself twice (relay_6a3014c5, relay_f0722b8d).
+        sender = actor.lower()
+        if sender != "codex" and read_presence(desk, "codex")["state"] == "ACTIVE":
             target = "codex"
-        elif read_presence(desk, "claude")["state"] == "ACTIVE" or watcher_live(desk, "claude"):
+        elif sender != "claude" and (read_presence(desk, "claude")["state"] == "ACTIVE"
+                                     or watcher_live(desk, "claude")):
             target = "claude"
     # U113: a relay queued into a LIMITED tool's thread waits there and costs one paid turn per letter when it returns
     # (7 relays piled up in Codex's thread on 2026-10-01); its hooks show the inbox instead (desk delta, U103).
@@ -1401,6 +1418,11 @@ def deliver(
             detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
             unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
+    if "codex" in (target, queued_for) and _declines_turn(message, explicit):
+        # U282 R2: every `codex queue` item is a paid Codex turn (~140k context); a letter that asks for nothing stays
+        # in the inbox, which Codex's hooks show as desk delta (U103), and is never queued for a later ACTIVE turn.
+        return DeliverResult(False, "codex", "QUEUED_NOTICE", (), "", message_id, digest,
+                             str(box.inbox_dir / f"{message_id}.json"))
     if target is None and queued_for:
         return _queue_until_active(project, queued_for, message_id=message_id, digest=digest, actor=actor,
                                    message=message, card=card, thread=thread)

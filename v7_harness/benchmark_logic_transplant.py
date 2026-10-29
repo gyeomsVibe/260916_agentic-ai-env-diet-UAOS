@@ -406,10 +406,27 @@ def select_rea_analysis_tier(
     """REA transplant: decide between Tier 1 (Always-On Default) and Tier 2 (On-Demand RE Bridge)."""
     raw = (target_path_or_desc or "").strip()
     lower = raw.lower().replace("\\", "/")
-    ext = Path(raw).suffix.lower()
+    target_p = Path(raw)
+    ext = target_p.suffix.lower()
 
-    is_library_target = "/.work/library/" in lower or lower.startswith(".work/library/")
+    is_library_target = (
+        "/.work/library/" in lower
+        or lower.startswith(".work/library/")
+        or "/.antigravity_cockpit" in lower
+        or "cockpit tools" in lower
+        or "program files" in lower
+    )
     is_binary_or_capture = ext in TIER2_BINARY_EXTENSIONS
+    if not is_binary_or_capture and not is_library_target and target_p.is_dir():
+        try:
+            for idx, child in enumerate(target_p.iterdir()):
+                if idx >= 40:
+                    break
+                if child.suffix.lower() in TIER2_BINARY_EXTENSIONS:
+                    is_binary_or_capture = True
+                    break
+        except OSError:
+            pass
     activate_tier2 = bool(force_reverse_engineering or is_library_target or is_binary_or_capture)
 
     tier1_modules = [
@@ -563,6 +580,17 @@ def collect_live_five_chip_telemetry(
         wait_transparency=wait_trans,
     )
     rea_tier = select_rea_analysis_tier(target_path, force_reverse_engineering=force_reverse_engineering)
+    if rea_tier.get("tier2_on_demand_active"):
+        from v7_harness.rea_bridge import execute_auto_reverse_engineering_pipeline
+
+        cand_target = Path(target_path)
+        if not cand_target.is_absolute():
+            cand_target = desk / cand_target
+        if cand_target.exists():
+            rea_tier["auto_executed_result"] = execute_auto_reverse_engineering_pipeline(
+                project_root=desk,
+                target_path=cand_target,
+            )
     return {
         "schema": "uaos.u251_live_bundle.v1",
         "five_chip_telemetry": five_chip,

@@ -261,6 +261,121 @@ class TestU273ZeroWaitFlagman(unittest.TestCase):
             rc = cli_main(["coord", "flagman-pulse", "--project", str(root)])
             self.assertEqual(rc, 0)
 
+    def test_u275_critic_redteam_staging_3way_merge_and_call_arity_gate(self) -> None:
+        from v7_harness.disjoint_mediator import (
+            ensure_independent_flagman_daemon,
+            evaluate_scoped_divergence,
+            flagman_autonomous_3way_hunk_merge,
+        )
+
+        # 1. Step 2 Red-Team Gate: Worker A adds required arg `y` to `alpha(x, y)` while Worker B calls `alpha(1)`
+        base_code = (
+            "def alpha(x: int) -> int:\n"
+            "    return x + 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return alpha(1)\n"
+        )
+        ours_code = (
+            "def alpha(x: int, y: int) -> int:\n"
+            "    return x + y\n\n\n"
+            "def beta() -> int:\n"
+            "    return alpha(1)\n"
+        )
+        theirs_code = (
+            "def alpha(x: int) -> int:\n"
+            "    return x + 1\n\n\n"
+            "def beta() -> int:\n"
+            "    return alpha(1) * 2\n"
+        )
+        res_arity = flagman_autonomous_3way_hunk_merge(
+            base_code, ours_code, theirs_code, file_path="v7_harness/mod.py"
+        )
+        self.assertFalse(res_arity["ok"])
+        self.assertEqual(res_arity["signal"], "RED_AST_CALL_ARITY_MISMATCH")
+        self.assertEqual(res_arity["conflicting_symbols"], ["alpha(arity<2)"])
+
+        # 2. Step 1 End-to-End Staging 3-Way AST Merge inside evaluate_scoped_divergence
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            stg = Path(tmp) / "stg"
+            (src / "v7_harness").mkdir(parents=True)
+            (stg / "v7_harness").mkdir(parents=True)
+
+            base_mod = (
+                "def fn_one() -> int:\n"
+                "    return 1\n\n\n"
+                "def fn_two() -> int:\n"
+                "    return 2\n"
+            )
+            (src / "v7_harness" / "rsi.py").write_text(base_mod, encoding="utf-8")
+            base_manifest = build_manifest(src)
+
+            # Worker A (staging) edits fn_one; Worker B (source) concurrently edits fn_two in the SAME file!
+            (stg / "v7_harness" / "rsi.py").write_text(
+                base_mod.replace("return 1", "return 100"), encoding="utf-8"
+            )
+            (src / "v7_harness" / "rsi.py").write_text(
+                base_mod.replace("return 2", "return 200"), encoding="utf-8"
+            )
+
+            target_manifest = build_manifest(stg)
+            bundle = create_patch_bundle(
+                base_manifest=base_manifest,
+                target_manifest=target_manifest,
+                base_dir=src,
+                target_dir=stg,
+            )
+
+            med = evaluate_scoped_divergence(
+                base_manifest=base_manifest,
+                source_dir=src,
+                excludes=[],
+                pilot_allowed_scopes=["v7_harness/rsi.py"],
+                bundle=bundle,
+                staging_dir=stg,
+                base_texts={"v7_harness/rsi.py": base_mod},
+            )
+            self.assertEqual(med["signal"], "GREEN_3WAY_AST_HUNK_MERGED")
+            self.assertEqual(med["flagman_action"], "AUTONOMOUS_3WAY_AST_HUNK_MERGE")
+            self.assertEqual(med["ast_merged_paths"], ["v7_harness/rsi.py"])
+            merged_stg = (stg / "v7_harness" / "rsi.py").read_text(encoding="utf-8")
+            self.assertIn("return 100", merged_stg)
+            self.assertIn("return 200", merged_stg)
+
+            # 3. Step 3 Daemon check (observe mode without spawning in unit test temp dir)
+            d_obs = ensure_independent_flagman_daemon(src, spawn_if_stopped=False)
+            self.assertTrue(d_obs["ok"])
+            self.assertEqual(d_obs["paid_tokens"], 0)
+
+
+
+    def test_detect_and_heal_claude_oauth_401_hang(self) -> None:
+        """Verify Flagman detects 401 OAuth expired + bridge-session zombie hang in Claude jsonl."""
+        from v7_harness.disjoint_mediator import detect_and_heal_claude_oauth_401_hang
+        import json, os, time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proj_dir = root / ".claude" / "projects" / "test-proj"
+            proj_dir.mkdir(parents=True, exist_ok=True)
+            sess_file = proj_dir / "80c0f8e3-f0ee-4565-8a4d-b054da5a0946.jsonl"
+            lines = [
+                json.dumps({"type": "assistant", "error": "authentication_error", "message": {"content": [{"type": "text", "text": "401 OAuth access token has expired. Re-authenticate to continue."}]}}),
+                json.dumps({"type": "bridge-session", "sessionUrl": "https://claude.ai/code/session_01"}),
+            ]
+            sess_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            old_time = time.time() - 300.0
+            os.utime(sess_file, (old_time, old_time))
+
+            res = detect_and_heal_claude_oauth_401_hang(
+                root,
+                claude_projects_root=root / ".claude" / "projects",
+                auto_heal=False,
+            )
+            self.assertEqual(res["healed_count"], 1)
+            self.assertEqual(res["healed_sessions"][0]["session_id"], "80c0f8e3-f0ee-4565-8a4d-b054da5a0946")
+            self.assertEqual(res["healed_sessions"][0]["reason"], "CLAUDE_OAUTH_401_RELOGIN_STREAM_HANG")
+
 
 if __name__ == "__main__":
     unittest.main()

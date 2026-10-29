@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>UAOS-RSI 3-Tool Token & Capacity Dashboard</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased p-3">
+  <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
+    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2">
+      <div>
+        <h2 class="text-base font-semibold">⚡ UAOS-RSI 3대 도구 실시간 토큰·한도 및 협업 스케줄 계기판</h2>
+        <p class="text-xs text-[var(--muted-foreground)]" id="subtitle">실측 트랜스크립트·장부 기반 5시간 롤링 예산 및 가용 카드 시뮬레이터</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="conductor-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--secondary)] text-[var(--secondary-foreground)]"></span>
+        <span id="offload-badge" class="px-2.5 py-1 rounded-full text-xs font-medium border border-[var(--border)]"></span>
+        <button id="hud-toggle-btn" class="px-2.5 py-1 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-80">🎯 Tier-2 HUD 위젯 모드 전환</button>
+      </div>
+    </div>
+
+    <div id="contextual-hud-bar" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 px-3 py-2 text-xs font-mono flex flex-wrap items-center justify-between gap-2"></div>
+    <div id="macro-dashboard-container" class="space-y-3">
+    <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-5 gap-2"></div>
+    <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
+    <div id="gauges-grid" class="grid grid-cols-1 md:grid-cols-5 gap-2.5"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+      <div class="border border-[var(--border)] rounded-lg p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold">📈 가용 예산 대비 소비 토큰 (동적 비교 그래프)</span>
+          <select id="window-select" class="text-xs bg-[var(--background)] border border-[var(--border)] rounded px-2 py-0.5">
+            <option value="window_5h">최근 5시간 (롤링 한도)</option>
+            <option value="window_24h">최근 24시간</option>
+            <option value="window_7d">최근 7일</option>
+          </select>
+        </div>
+        <div id="bars-container" class="space-y-2 pt-1"></div>
+      </div>
+
+      <div class="border border-[var(--border)] rounded-lg p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold">🗓️ 용량 연동 마스터·협업 스케줄 시뮬레이터</span>
+          <span class="text-xs text-[var(--muted-foreground)]" id="sched-count"></span>
+        </div>
+        <div id="schedule-list" class="space-y-1.5 text-xs"></div>
+      </div>
+    </div>
+    </div>
+  </div>
+
+  <script>
+    const SNAP = {"schema": "uaos-capacity-snapshot-v1", "generated_at": "2026-10-27T08:44:25.760169Z", "timestamp": 1793090665.7601688, "project": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet", "units_note": "effective_budget_tokens are measured from local transcripts/ledgers (OpenTelemetry gen_ai.usage.*); provider_quota_snapshot is observed UI/transcript rate-limit percentage and is never converted to tokens.", "offload_efficiency_24h": {"total_calls_24h": 2674, "raw_step_calls_24h": 5485, "ollama_plus_haiku_calls_24h": 144, "offload_share_pct": 5.4}, "engines": {"codex": {"engine": "codex", "role": "Conductor & Final Independent Judge", "presence_state": "UNKNOWN", "quota_reset_ready": false, "wake_on_reset_ready": false, "status_tier": "HEALTHY", "budget_cap_5h_tokens": 7000000, "budget_cap_7d_tokens": 175000000, "used_5h_effective_tokens": 4090061, "used_5h_raw_tokens": 29258199, "usable_remaining_5h_tokens": 2909939, "active_burst_reserve_tokens": 0, "budget_utilization_5h_pct": 58.4, "used_7d_effective_tokens": 77692789, "used_7d_raw_tokens": 618387201, "usable_remaining_7d_tokens": 97307211, "budget_utilization_7d_pct": 44.4, "avg_card_cost_tokens": 45000, "usable_cards_capacity": 64, "provider_quota_snapshot": {"used_percent": 62.0, "remaining_percent": 38.0, "pre_reset_used_percent": 62.0, "window_minutes": 300, "resets_at": "2026-10-27T09:31:53Z", "reset_in_seconds": 2847, "quota_reset_ready": false, "observed_at": "2026-10-27T07:18:27.541000Z", "origin": "native_transcript", "window_5h_quota": {"used_percent": 62.0, "remaining_percent": 38.0, "pre_reset_used_percent": 62.0, "window_minutes": 300, "resets_at": "2026-10-27T09:31:53Z", "reset_in_seconds": 2847, "quota_reset_ready": false, "observed_at": "2026-10-27T07:18:27.541000Z", "origin": "native_transcript"}, "window_7d_quota": {"used_percent": 57.0, "remaining_percent": 43.0, "pre_reset_used_percent": 57.0, "window_minutes": 10080, "resets_at": "2026-11-02T07:59:40Z", "reset_in_seconds": 515714, "quota_reset_ready": false, "observed_at": "2026-10-27T07:17:29.234000Z", "origin": "native_transcript"}}, "subscription_plan": {"plan_name": "ChatGPT Plus ($20/월) · GPT-5.4 Codex Astra", "short_plan": "Plus $20 (Astra)", "offload_policy": "핵심 키포인트(아키텍처·보안·최종판정) 집중 + 일반검수 위임(U257)", "total_5h_tokens": 7000000, "used_5h_effective_tokens": 4090061, "used_5h_raw_tokens": 29258199, "remaining_5h_tokens": 2909939, "utilization_5h_pct": 58.4, "total_24h_tokens": 25000000, "used_24h_effective_tokens": 20568223, "used_24h_raw_tokens": 167508566, "remaining_24h_tokens": 4431777, "utilization_24h_pct": 82.3, "total_7d_tokens": 175000000, "used_7d_effective_tokens": 77692789, "used_7d_raw_tokens": 618387201, "remaining_7d_tokens": 97307211, "utilization_7d_pct": 44.4, "quota_5h_ui_pct": 62.0, "quota_7d_ui_pct": 57.0, "resets_at_5h": "2026-10-27T09:31:53Z", "resets_at_7d": "2026-11-02T07:59:40Z", "reset_in_seconds_5h": 2847, "quota_reset_ready": false, "wake_on_reset_ready": false, "predictive_exhaustion": {"burn_rate_tok_per_hr": 818012.2, "predicted_tta_min": 213.4, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}}, "predictive_exhaustion": {"burn_rate_tok_per_hr": 818012.2, "predicted_tta_min": 213.4, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}, "window_5h": {"calls": 215, "uncached_input_tokens": 1000431, "cache_read_tokens": 28166784, "cache_write_tokens": 0, "output_tokens": 90984, "raw_total_tokens": 29258199, "effective_budget_tokens": 4090061}, "window_24h": {"calls": 887, "uncached_input_tokens": 2695064, "cache_read_tokens": 164333568, "cache_write_tokens": 0, "output_tokens": 479934, "raw_total_tokens": 167508566, "effective_budget_tokens": 20568223}, "window_7d": {"calls": 3314, "uncached_input_tokens": 11330266, "cache_read_tokens": 605106304, "cache_write_tokens": 0, "output_tokens": 1950631, "raw_total_tokens": 618387201, "effective_budget_tokens": 77692789}}, "claude": {"engine": "claude", "role": "Co-Conductor & Deep Implementer/Reviewer", "presence_state": "UNKNOWN", "quota_reset_ready": false, "wake_on_reset_ready": false, "status_tier": "HEALTHY", "budget_cap_5h_tokens": 15000000, "budget_cap_7d_tokens": 180000000, "used_5h_effective_tokens": 2247758, "used_5h_raw_tokens": 11848635, "usable_remaining_5h_tokens": 12752242, "active_burst_reserve_tokens": 0, "budget_utilization_5h_pct": 15.0, "used_7d_effective_tokens": 67678574, "used_7d_raw_tokens": 468073461, "usable_remaining_7d_tokens": 112321426, "budget_utilization_7d_pct": 37.6, "avg_card_cost_tokens": 45000, "usable_cards_capacity": 283, "provider_quota_snapshot": null, "subscription_plan": {"plan_name": "Claude Code 구독제 (Opus/Sonnet 20% + Haiku 30% + Ollama 50%)", "short_plan": "Claude Sub (5:3:2)", "offload_policy": "올라마 50% : Haiku 5.5 30% : Opus/Sonnet 20% 이원 분리 병렬(U271)", "total_5h_tokens": 15000000, "used_5h_effective_tokens": 2247758, "used_5h_raw_tokens": 11848635, "remaining_5h_tokens": 12752242, "utilization_5h_pct": 15.0, "total_24h_tokens": 45000000, "used_24h_effective_tokens": 21467046, "used_24h_raw_tokens": 149990871, "remaining_24h_tokens": 23532954, "utilization_24h_pct": 47.7, "total_7d_tokens": 180000000, "used_7d_effective_tokens": 67678574, "used_7d_raw_tokens": 468073461, "remaining_7d_tokens": 112321426, "utilization_7d_pct": 37.6, "quota_5h_ui_pct": null, "quota_7d_ui_pct": null, "resets_at_5h": null, "resets_at_7d": null, "reset_in_seconds_5h": null, "quota_reset_ready": false, "wake_on_reset_ready": false, "predictive_exhaustion": {"burn_rate_tok_per_hr": 449551.6, "predicted_tta_min": 1702.0, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}}, "predictive_exhaustion": {"burn_rate_tok_per_hr": 449551.6, "predicted_tta_min": 1702.0, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}, "window_5h": {"calls": 101, "uncached_input_tokens": 202, "cache_read_tokens": 10994749, "cache_write_tokens": 807412, "output_tokens": 46272, "raw_total_tokens": 11848635, "effective_budget_tokens": 2247758}, "window_24h": {"calls": 1124, "uncached_input_tokens": 2248, "cache_read_tokens": 145179461, "cache_write_tokens": 4274648, "output_tokens": 534514, "raw_total_tokens": 149990871, "effective_budget_tokens": 21467046}, "window_7d": {"calls": 3405, "uncached_input_tokens": 6838, "cache_read_tokens": 452583723, "cache_write_tokens": 13734478, "output_tokens": 1748422, "raw_total_tokens": 468073461, "effective_budget_tokens": 67678574}}, "antigravity": {"engine": "antigravity", "role": "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon", "presence_state": "ACTIVE", "quota_reset_ready": false, "wake_on_reset_ready": false, "status_tier": "HEALTHY", "budget_cap_5h_tokens": 75000000, "budget_cap_7d_tokens": 600000000, "used_5h_effective_tokens": 20414906, "used_5h_raw_tokens": 125926928, "usable_remaining_5h_tokens": 54585094, "active_burst_reserve_tokens": 0, "budget_utilization_5h_pct": 27.2, "used_7d_effective_tokens": 153992888, "used_7d_raw_tokens": 756228230, "usable_remaining_7d_tokens": 446007112, "budget_utilization_7d_pct": 25.7, "avg_card_cost_tokens": 30043, "usable_cards_capacity": 1816, "provider_quota_snapshot": null, "subscription_plan": {"plan_name": "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon", "short_plan": "AI Ultra 5x (Argon)", "offload_policy": "5x 대용량 주력 실행·교차검증·1순위 자율병합 + 올라마 0토큰 선행", "total_5h_tokens": 75000000, "used_5h_effective_tokens": 20414906, "used_5h_raw_tokens": 125926928, "remaining_5h_tokens": 54585094, "utilization_5h_pct": 27.2, "total_24h_tokens": 220000000, "used_24h_effective_tokens": 83218269, "used_24h_raw_tokens": 482531387, "remaining_24h_tokens": 136781731, "utilization_24h_pct": 37.8, "total_7d_tokens": 600000000, "used_7d_effective_tokens": 153992888, "used_7d_raw_tokens": 756228230, "remaining_7d_tokens": 446007112, "utilization_7d_pct": 25.7, "quota_5h_ui_pct": null, "quota_7d_ui_pct": null, "resets_at_5h": null, "resets_at_7d": null, "reset_in_seconds_5h": null, "quota_reset_ready": false, "wake_on_reset_ready": false, "predictive_exhaustion": {"burn_rate_tok_per_hr": 4082981.2, "predicted_tta_min": 802.1, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}}, "predictive_exhaustion": {"burn_rate_tok_per_hr": 4082981.2, "predicted_tta_min": 802.1, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}, "window_5h": {"calls": 940, "uncached_input_tokens": 6337860, "cache_read_tokens": 118858675, "cache_write_tokens": 0, "output_tokens": 730393, "raw_total_tokens": 125926928, "effective_budget_tokens": 20414906}, "window_24h": {"calls": 3330, "uncached_input_tokens": 30060957, "cache_read_tokens": 449742751, "cache_write_tokens": 0, "output_tokens": 2727679, "raw_total_tokens": 482531387, "effective_budget_tokens": 83218269}, "window_7d": {"calls": 5306, "uncached_input_tokens": 73461557, "cache_read_tokens": 678540927, "cache_write_tokens": 0, "output_tokens": 4225746, "raw_total_tokens": 756228230, "effective_budget_tokens": 153992888}}, "haiku": {"engine": "haiku", "role": "Low-Cost Multi-Agent Sub-Orchestrator (claude-haiku-5-5)", "presence_state": "ACTIVE", "quota_reset_ready": false, "wake_on_reset_ready": false, "status_tier": "HEALTHY", "budget_cap_5h_tokens": 6000000, "budget_cap_7d_tokens": 60000000, "used_5h_effective_tokens": 317049, "used_5h_raw_tokens": 1495519, "usable_remaining_5h_tokens": 5682951, "active_burst_reserve_tokens": 0, "budget_utilization_5h_pct": 5.3, "used_7d_effective_tokens": 2927028, "used_7d_raw_tokens": 11628150, "usable_remaining_7d_tokens": 57072972, "budget_utilization_7d_pct": 4.9, "avg_card_cost_tokens": 5000, "usable_cards_capacity": 1136, "provider_quota_snapshot": null, "subscription_plan": {"plan_name": "Claude Haiku 5.5 경량 서브오케스트레이터 (건당 12K 상한)", "short_plan": "Haiku 5.5 (30% 분담)", "offload_policy": "tests/*·docs/* 물리 분리 병렬(DISJOINT_PARALLEL_OVERLAP)", "total_5h_tokens": 6000000, "used_5h_effective_tokens": 317049, "used_5h_raw_tokens": 1495519, "remaining_5h_tokens": 5682951, "utilization_5h_pct": 5.3, "total_24h_tokens": 18000000, "used_24h_effective_tokens": 1390102, "used_24h_raw_tokens": 5697400, "remaining_24h_tokens": 16609898, "utilization_24h_pct": 7.7, "total_7d_tokens": 60000000, "used_7d_effective_tokens": 2927028, "used_7d_raw_tokens": 11628150, "remaining_7d_tokens": 57072972, "utilization_7d_pct": 4.9, "quota_5h_ui_pct": null, "quota_7d_ui_pct": null, "resets_at_5h": null, "resets_at_7d": null, "reset_in_seconds_5h": null, "quota_reset_ready": false, "wake_on_reset_ready": false, "predictive_exhaustion": {"burn_rate_tok_per_hr": 63409.8, "predicted_tta_min": 5377.4, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}}, "predictive_exhaustion": {"burn_rate_tok_per_hr": 63409.8, "predicted_tta_min": 5377.4, "exhaustion_risk": "SAFE", "preemptive_handoff_recommended": false}, "window_5h": {"calls": 22, "uncached_input_tokens": 46, "cache_read_tokens": 1375898, "cache_write_tokens": 102464, "output_tokens": 17111, "raw_total_tokens": 1495519, "effective_budget_tokens": 317049}, "window_24h": {"calls": 70, "uncached_input_tokens": 172, "cache_read_tokens": 5101025, "cache_write_tokens": 519304, "output_tokens": 76899, "raw_total_tokens": 5697400, "effective_budget_tokens": 1390102}, "window_7d": {"calls": 149, "uncached_input_tokens": 331, "cache_read_tokens": 10368141, "cache_write_tokens": 1079515, "output_tokens": 180163, "raw_total_tokens": 11628150, "effective_budget_tokens": 2927028}}, "ollama": {"engine": "ollama", "role": "0-Paid-Token Local Calculator (qwen2.5-coder:7b)", "presence_state": "ACTIVE", "quota_reset_ready": false, "wake_on_reset_ready": false, "status_tier": "UNLIMITED_LOCAL", "budget_cap_5h_tokens": null, "budget_cap_7d_tokens": null, "used_5h_effective_tokens": 103438, "used_5h_raw_tokens": 89782, "usable_remaining_5h_tokens": null, "active_burst_reserve_tokens": 0, "budget_utilization_5h_pct": 0.0, "used_7d_effective_tokens": 2146607, "used_7d_raw_tokens": 1938081, "usable_remaining_7d_tokens": null, "budget_utilization_7d_pct": 0.0, "avg_card_cost_tokens": 15820, "usable_cards_capacity": 999, "provider_quota_snapshot": null, "subscription_plan": {"plan_name": "Ollama 로컬 0토큰 전자계산기 (qwen2.5-coder:7b)", "short_plan": "로컬 0원 (50% 분담)", "offload_policy": "250줄+ 탐색(local_read_map)·초안(local_draft)·20~30줄 코드패치 0토큰", "total_5h_tokens": null, "used_5h_effective_tokens": 103438, "used_5h_raw_tokens": 89782, "remaining_5h_tokens": null, "utilization_5h_pct": 0.0, "total_24h_tokens": null, "used_24h_effective_tokens": 304734, "used_24h_raw_tokens": 261342, "remaining_24h_tokens": null, "utilization_24h_pct": 0.0, "total_7d_tokens": null, "used_7d_effective_tokens": 2146607, "used_7d_raw_tokens": 1938081, "remaining_7d_tokens": null, "utilization_7d_pct": 0.0, "quota_5h_ui_pct": null, "quota_7d_ui_pct": null, "resets_at_5h": null, "resets_at_7d": null, "reset_in_seconds_5h": null, "quota_reset_ready": false, "wake_on_reset_ready": false, "predictive_exhaustion": {"burn_rate_tok_per_hr": 20687.6, "predicted_tta_min": null, "exhaustion_risk": "UNLIMITED_LOCAL", "preemptive_handoff_recommended": false}}, "predictive_exhaustion": {"burn_rate_tok_per_hr": 20687.6, "predicted_tta_min": null, "exhaustion_risk": "UNLIMITED_LOCAL", "preemptive_handoff_recommended": false}, "window_5h": {"calls": 26, "uncached_input_tokens": 82954, "cache_read_tokens": 0, "cache_write_tokens": 0, "output_tokens": 6828, "raw_total_tokens": 89782, "effective_budget_tokens": 103438}, "window_24h": {"calls": 74, "uncached_input_tokens": 239646, "cache_read_tokens": 0, "cache_write_tokens": 0, "output_tokens": 21696, "raw_total_tokens": 261342, "effective_budget_tokens": 304734}, "window_7d": {"calls": 943, "uncached_input_tokens": 1833818, "cache_read_tokens": 0, "cache_write_tokens": 0, "output_tokens": 104263, "raw_total_tokens": 1938081, "effective_budget_tokens": 2146607}}}, "schedule_recommendation": {"recommended_conductor": "antigravity", "ranked_paid_tools": ["antigravity", "claude", "codex"], "wake_ready_tools": [], "argon_tier_mode": "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON", "argon_used_5h_share_pct": 76.3, "argon_remaining_5h_share_pct": 77.7, "post_schedule_remaining_tokens": {"codex": 0, "claude": 0, "antigravity": 54585094}, "phase_assignments": [], "subworker_optimization": {"schema": "uaos-subworker-optimization-v1", "antigravity_boost_plan": {"engine": "antigravity", "boost_active": false, "utilization_5h_pct": 27.2, "read_map_line_threshold": 150, "code_slice_line_limit": 20, "mandatory_local_read_map_files": [], "mandatory_local_draft_tasks": ["commit_msg", "pr_body", "doc_summary", "stage1_brief"], "estimated_saved_paid_tokens": 0, "target_offload_ratio": {"ollama_pct": 60.0, "haiku_pct": 0.0, "paid_core_pct": 40.0}, "paid_argon_reserved_for": ["stage0_web_deep_research", "complex_multi_file_architecture", "independent_counterexample_review_and_merge"]}, "three_tool_ollama_boost": {"antigravity": {"active": false, "utilization_5h_pct": 27.2, "calls_5h": 940, "slice_line_limit": 20, "mandatory_read_map_lines": 150, "target_ollama_offload_pct": 60.0, "haiku_policy": "QUARANTINED_NO_API_SPEND"}, "claude": {"active": false, "utilization_5h_pct": 15.0, "calls_5h": 101, "slice_line_limit": 20, "mandatory_read_map_lines": 150, "target_ollama_offload_pct": 50.0, "haiku_policy": "ACTIVE_DISJOINT_SUBAGENT_12K_CAP"}, "codex": {"active": false, "utilization_5h_pct": 58.4, "calls_5h": 215, "slice_line_limit": 20, "mandatory_read_map_lines": 150, "target_ollama_offload_pct": 60.0, "haiku_policy": "QUARANTINED_NO_API_SPEND"}}, "claude_internal_subworker_balance": {"current_5h_ratio": {"ollama_pct": 17.4, "haiku_pct": 14.8, "opus_sonnet_pct": 67.8}, "target_golden_ratio": {"ollama_pct": 50.0, "haiku_pct": 30.0, "opus_sonnet_pct": 20.0}, "deficit_delta_pct": {"ollama_delta_pct": 32.6, "haiku_delta_pct": 15.2, "paid_core_delta_pct": -47.8}, "next_recommended_worker_tier": "ollama", "haiku_preflight_cap_tokens": 12000, "max_concurrent_ollama": 1, "max_concurrent_subagents": 2, "disjoint_lanes": {"ollama_cli": "v7_harness/*.py single-file code slices (<=30 lines), local_read_map, local_draft", "haiku_5_5": "tests/test_*.py regression runner & docs/* index sync (disjoint from Ollama code paths)", "claude_opus_sonnet": "Core architecture synthesis & cross-tool independent review (author != judge)"}}}}, "sub_process_schedule": {"schema": "uaos-sub-process-schedule-v1", "showing_recent_completed_dag": true, "total_active_cards": 3, "total_sub_processes": 15, "preemptive_handoff_tools": [], "wake_ready_tools": [], "fluid_rebalance_events": [], "disjoint_parallel_policy": {"ollama_50pct_lane": "v7_harness/*.py (20~30 line slice, 0 paid tokens)", "haiku_30pct_lane": "tests/*, docs/* (<=12,000 tokens, disjoint from v7_harness/*.py)", "paid_20pct_lane": "codex / claude / antigravity (architecture, cross-review, merge)"}, "card_sub_schedules": [{"phase_id": "U273", "card_state": "DONE", "parallel_slot": 1, "assigned_executor": "antigravity", "original_executor": "antigravity", "executor_exhaustion_risk": "SAFE", "preemptive_handoff_target": null, "assigned_verifier": "claude", "fallback_verifier": "codex", "verifier_exhaustion_risk": "SAFE", "quality_invariant": "antigravity != claude", "estimated_total_paid_tokens": 18000, "sub_processes": [{"sub_id": "U273:SP1_RESEARCH_DRAFT", "step_index": 1, "stage_name": "Stage 0~1 선행 리서치·초안", "state": "DONE", "depends_on": [], "primary_worker": "ollama", "supervisor_tool": "antigravity", "fallback_tool": "codex", "allowed_paths": [".work/cards/U273_research.md"], "estimated_paid_tokens": 1800, "offload_mode": "ollama:local_search+local_draft (0 paid tokens)"}, {"sub_id": "U273:SP2_MIA_DESIGN_AUDIT", "step_index": 2, "stage_name": "Stage 2~8 MIA 세부설계·반례감사", "state": "DONE", "depends_on": ["U273:SP1_RESEARCH_DRAFT"], "primary_worker": "ollama", "supervisor_tool": "antigravity", "counterexample_auditor": "claude", "fallback_tool": "codex", "allowed_paths": [".work/cards/U273_frame.md", ".work/cards/U273_manual.md"], "estimated_paid_tokens": 2700, "offload_mode": "ollama:local_read_map + peer counterexample audit"}, {"sub_id": "U273:SP3_CODE_EXECUTION", "step_index": 3, "stage_name": "Stage 9 이원 분리 병렬 구현(5:3:2)", "state": "DONE", "depends_on": ["U273:SP2_MIA_DESIGN_AUDIT"], "primary_worker": "ollama", "parallel_companion_worker": "ollama", "supervisor_tool": "antigravity", "preemptive_handoff_to": null, "disjoint_lanes": {"code_lane": {"worker": "ollama", "allow": ["v7_harness/*.py"], "max_changed_lines": 20}, "test_doc_lane": {"worker": "ollama", "allow": ["tests/*", "docs/*"], "budget_cap_tokens": 0}}, "estimated_paid_tokens": 7200, "offload_mode": "DISJOINT_PARALLEL (ollama 20L code || ollama tests/docs)"}, {"sub_id": "U273:SP4_INDEPENDENT_VERIFY", "step_index": 4, "stage_name": "Stage 10 독립 인수검증·교차판정", "state": "DONE", "depends_on": ["U273:SP3_CODE_EXECUTION"], "primary_worker": "claude", "executor_excluded": "antigravity", "fallback_verifier": "codex", "quality_gate": "author(antigravity) != judge(claude) + uaos card audit", "estimated_paid_tokens": 4500, "offload_mode": "ollama:gate_log_summary + deterministic unittest"}, {"sub_id": "U273:SP5_MERGE_AND_RUNTIME", "step_index": 5, "stage_name": "무승인 PR 병합·런타임 실가동", "state": "DONE", "depends_on": ["U273:SP4_INDEPENDENT_VERIFY"], "primary_worker": "antigravity", "fallback_tool": "codex", "quality_gate": "CI attestation + same-head PASS relay + runtime_install --apply", "estimated_paid_tokens": 1800, "offload_mode": "deterministic merge_route + runtime_install"}]}, {"phase_id": "U274", "card_state": "DONE", "parallel_slot": 2, "assigned_executor": "antigravity", "original_executor": "antigravity", "executor_exhaustion_risk": "SAFE", "preemptive_handoff_target": null, "assigned_verifier": "claude", "fallback_verifier": "codex", "verifier_exhaustion_risk": "SAFE", "quality_invariant": "antigravity != claude", "estimated_total_paid_tokens": 18000, "sub_processes": [{"sub_id": "U274:SP1_RESEARCH_DRAFT", "step_index": 1, "stage_name": "Stage 0~1 선행 리서치·초안", "state": "DONE", "depends_on": [], "primary_worker": "ollama", "supervisor_tool": "antigravity", "fallback_tool": "codex", "allowed_paths": [".work/cards/U274_research.md"], "estimated_paid_tokens": 1800, "offload_mode": "ollama:local_search+local_draft (0 paid tokens)"}, {"sub_id": "U274:SP2_MIA_DESIGN_AUDIT", "step_index": 2, "stage_name": "Stage 2~8 MIA 세부설계·반례감사", "state": "DONE", "depends_on": ["U274:SP1_RESEARCH_DRAFT"], "primary_worker": "ollama", "supervisor_tool": "antigravity", "counterexample_auditor": "claude", "fallback_tool": "codex", "allowed_paths": [".work/cards/U274_frame.md", ".work/cards/U274_manual.md"], "estimated_paid_tokens": 2700, "offload_mode": "ollama:local_read_map + peer counterexample audit"}, {"sub_id": "U274:SP3_CODE_EXECUTION", "step_index": 3, "stage_name": "Stage 9 이원 분리 병렬 구현(5:3:2)", "state": "DONE", "depends_on": ["U274:SP2_MIA_DESIGN_AUDIT"], "primary_worker": "ollama", "parallel_companion_worker": "ollama", "supervisor_tool": "antigravity", "preemptive_handoff_to": null, "disjoint_lanes": {"code_lane": {"worker": "ollama", "allow": ["v7_harness/*.py"], "max_changed_lines": 20}, "test_doc_lane": {"worker": "ollama", "allow": ["tests/*", "docs/*"], "budget_cap_tokens": 0}}, "estimated_paid_tokens": 7200, "offload_mode": "DISJOINT_PARALLEL (ollama 20L code || ollama tests/docs)"}, {"sub_id": "U274:SP4_INDEPENDENT_VERIFY", "step_index": 4, "stage_name": "Stage 10 독립 인수검증·교차판정", "state": "DONE", "depends_on": ["U274:SP3_CODE_EXECUTION"], "primary_worker": "claude", "executor_excluded": "antigravity", "fallback_verifier": "codex", "quality_gate": "author(antigravity) != judge(claude) + uaos card audit", "estimated_paid_tokens": 4500, "offload_mode": "ollama:gate_log_summary + deterministic unittest"}, {"sub_id": "U274:SP5_MERGE_AND_RUNTIME", "step_index": 5, "stage_name": "무승인 PR 병합·런타임 실가동", "state": "DONE", "depends_on": ["U274:SP4_INDEPENDENT_VERIFY"], "primary_worker": "antigravity", "fallback_tool": "codex", "quality_gate": "CI attestation + same-head PASS relay + runtime_install --apply", "estimated_paid_tokens": 1800, "offload_mode": "deterministic merge_route + runtime_install"}]}, {"phase_id": "U275", "card_state": "DONE", "parallel_slot": 3, "assigned_executor": "antigravity", "original_executor": "antigravity", "executor_exhaustion_risk": "SAFE", "preemptive_handoff_target": null, "assigned_verifier": "claude", "fallback_verifier": "codex", "verifier_exhaustion_risk": "SAFE", "quality_invariant": "antigravity != claude", "estimated_total_paid_tokens": 18000, "sub_processes": [{"sub_id": "U275:SP1_RESEARCH_DRAFT", "step_index": 1, "stage_name": "Stage 0~1 선행 리서치·초안", "state": "DONE", "depends_on": [], "primary_worker": "ollama", "supervisor_tool": "antigravity", "fallback_tool": "codex", "allowed_paths": [".work/cards/U275_research.md"], "estimated_paid_tokens": 1800, "offload_mode": "ollama:local_search+local_draft (0 paid tokens)"}, {"sub_id": "U275:SP2_MIA_DESIGN_AUDIT", "step_index": 2, "stage_name": "Stage 2~8 MIA 세부설계·반례감사", "state": "DONE", "depends_on": ["U275:SP1_RESEARCH_DRAFT"], "primary_worker": "ollama", "supervisor_tool": "antigravity", "counterexample_auditor": "claude", "fallback_tool": "codex", "allowed_paths": [".work/cards/U275_frame.md", ".work/cards/U275_manual.md"], "estimated_paid_tokens": 2700, "offload_mode": "ollama:local_read_map + peer counterexample audit"}, {"sub_id": "U275:SP3_CODE_EXECUTION", "step_index": 3, "stage_name": "Stage 9 이원 분리 병렬 구현(5:3:2)", "state": "DONE", "depends_on": ["U275:SP2_MIA_DESIGN_AUDIT"], "primary_worker": "ollama", "parallel_companion_worker": "ollama", "supervisor_tool": "antigravity", "preemptive_handoff_to": null, "disjoint_lanes": {"code_lane": {"worker": "ollama", "allow": ["v7_harness/*.py"], "max_changed_lines": 20}, "test_doc_lane": {"worker": "ollama", "allow": ["tests/*", "docs/*"], "budget_cap_tokens": 0}}, "estimated_paid_tokens": 7200, "offload_mode": "DISJOINT_PARALLEL (ollama 20L code || ollama tests/docs)"}, {"sub_id": "U275:SP4_INDEPENDENT_VERIFY", "step_index": 4, "stage_name": "Stage 10 독립 인수검증·교차판정", "state": "DONE", "depends_on": ["U275:SP3_CODE_EXECUTION"], "primary_worker": "claude", "executor_excluded": "antigravity", "fallback_verifier": "codex", "quality_gate": "author(antigravity) != judge(claude) + uaos card audit", "estimated_paid_tokens": 4500, "offload_mode": "ollama:gate_log_summary + deterministic unittest"}, {"sub_id": "U275:SP5_MERGE_AND_RUNTIME", "step_index": 5, "stage_name": "무승인 PR 병합·런타임 실가동", "state": "DONE", "depends_on": ["U275:SP4_INDEPENDENT_VERIFY"], "primary_worker": "antigravity", "fallback_tool": "codex", "quality_gate": "CI attestation + same-head PASS relay + runtime_install --apply", "estimated_paid_tokens": 1800, "offload_mode": "deterministic merge_route + runtime_install"}]}]}, "wait_transparency": {"status": "ALL_DONE", "active_or_waiting_count": 0, "headline": "✅ 전 프로세스 완료 (대기 중인 작업 0건)", "items": []}, "cockpit_telemetry": {"available": true, "db_path": "C:\\Users\\Kimyoongyeom\\.antigravity_cockpit\\codex_session_usage.sqlite", "synced_files": 40, "synced_files_count": 40, "total_events": 2164, "events_count": 2164, "input_tokens": 336388149, "cached_input_tokens": 301997568, "output_tokens": 1080132, "cache_hit_pct": 89.8}, "five_chip_telemetry": {"schema": "uaos.five_chip_telemetry.v1", "read_only": true, "chips": {"1_todos_schedule": {"total": 129, "done": 129, "remaining": 0, "remaining_non_auto": 0, "active": 0, "review": 0, "ready": 0, "blocked": 0, "all_done": true, "headline": "✅ 전 프로세스 완료 (대기 중인 작업 0건)"}, "2_three_tool_seats": {"mode": "SOLE_SURVIVOR_AUTONOMOUS", "conductor": "antigravity", "active_paid_tools": ["antigravity"], "reassigned_cards": [], "deferred_sole_survivor_reviews": [], "seats": [{"tool": "codex", "seat_id": "seat-codex-conductor", "role": "Conductor & Final Judge (Plus Astra Keypoint Focus)", "pod": "orchestration-core", "state": "UNKNOWN", "active_cards": [], "non_interruptive_mode": true, "used_5h_effective_tokens": 4090061, "usable_remaining_5h_tokens": 2909939, "usable_cards_capacity": 64, "status_tier": "HEALTHY"}, {"tool": "claude", "seat_id": "seat-claude-subconductor", "role": "Sub-Conductor & Deep Implementer", "pod": "implementation-pod", "state": "UNKNOWN", "active_cards": [], "non_interruptive_mode": true, "used_5h_effective_tokens": 2247758, "usable_remaining_5h_tokens": 12752242, "usable_cards_capacity": 283, "status_tier": "HEALTHY"}, {"tool": "antigravity", "seat_id": "seat-antigravity-executor", "role": "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon", "pod": "verification-and-desk-pod", "state": "ACTIVE", "active_cards": [], "non_interruptive_mode": true, "used_5h_effective_tokens": 20414906, "usable_remaining_5h_tokens": 54585094, "usable_cards_capacity": 1816, "status_tier": "HEALTHY"}, {"tool": "haiku", "seat_id": "seat-haiku-suborchestrator", "role": "Low-Cost Multi-Agent Sub-Orchestrator (claude-haiku-5-5)", "pod": "sub-orchestrator-pod", "state": "ACTIVE", "active_cards": [], "non_interruptive_mode": true, "used_5h_effective_tokens": 317049, "usable_remaining_5h_tokens": 5682951, "usable_cards_capacity": 1136, "status_tier": "HEALTHY"}, {"tool": "ollama", "seat_id": "seat-ollama-calculator", "role": "Zero-Paid-Token Local Calculator (qwen2.5-coder:7b)", "pod": "local-calculator-pod", "state": "ACTIVE", "active_cards": [], "non_interruptive_mode": true, "used_5h_effective_tokens": 103438, "usable_remaining_5h_tokens": null, "usable_cards_capacity": 999, "status_tier": "UNLIMITED_LOCAL"}]}, "3_background_watchers": {"watchers": ["coord watch --target codex", "coord watch --target claude", "coord watch --target antigravity"], "watcher_count": 3, "foreground_wait_limit_s": 5.0, "wait_decision": {"action": "CONTINUE_WAIT", "claimed_phase": null, "foreground_wait_s": 0.0}, "wait_status": "ALL_DONE"}, "4_changed_files_diff": {"file_count": 0, "lines_added": 0, "lines_removed": 0, "files": []}, "5_quota_and_reset_timer": {"presence_states": {"codex": "UNKNOWN", "claude": "UNKNOWN", "antigravity": "ACTIVE"}, "reset_at": {"codex": "2026-10-27T09:31:53Z"}, "used_5h_effective_tokens": {"codex": 4090061, "claude": 2247758, "antigravity": 20414906}, "usable_remaining_5h_tokens": {"codex": 2909939, "claude": 12752242, "antigravity": 54585094}, "provider_used_percent": {"codex": 62.0, "claude": null, "antigravity": null}, "auto_resume_on_reset": true}}}, "compact_head": {"schema": "uaos-capacity-head-v1", "ts": 1793090665, "conductor": "antigravity", "mode": "GOOGLE_AI_ULTRA_5X_GEMINI_4_ARGON", "rem_5h": {"codex": 2909939, "claude": 12752242, "antigravity": 54585094}, "cards_5h": {"codex": 64, "claude": 283, "antigravity": 1816}, "offload_pct": 5.4, "wait_status": "ALL_DONE"}, "contextual_hud_widget": "[HUD 위젯] 🎯품질게이트:PASS(독립검증·인수100%) | ⚡지휘:ANTIGRAVITY(5석·대기0건) | 🔋5h가용카드:ag=1816장·cl=283장·cx=64장 | 🧮0원오프로드:5.4%·캐시89.8% | 🔄워처:3개"};
+    const ENGINES_ORDER = ["codex", "claude", "antigravity", "haiku", "ollama"];
+    const LABELS = {
+      codex: "Codex (조율·판정)",
+      claude: "Claude Code (부지휘)",
+      antigravity: "Antigravity (Google AI Ultra 5x · Gemini 4 Argon)",
+      haiku: "Haiku 5.5 (경량 분담)",
+      ollama: "Ollama CLI (0원 계산기)"
+    };
+
+    function fmt(n) {
+      if (n === null || n === undefined) return "∞ (무제한)"; if (n === "UNKNOWN") return "미계측(UNKNOWN)"; return Number(n).toLocaleString();
+    }
+
+    function renderAll(winKey) {
+      const sched = SNAP.schedule_recommendation || {};
+      const off = SNAP.offload_efficiency_24h || {};
+      const wt = SNAP.wait_transparency || {};
+      const fc = ((SNAP.five_chip_telemetry || {}).chips) || {};
+      const chipBar = document.getElementById("five-chip-bar");
+      if (chipBar) {
+        const c1 = fc["1_todos_schedule"] || {};
+        const c2 = fc["2_three_tool_seats"] || {};
+        const c3 = fc["3_background_watchers"] || {};
+        const c4 = fc["4_changed_files_diff"] || {};
+        const c5 = fc["5_quota_and_reset_timer"] || {};
+        const wDec = (c3.wait_decision || {}).action || "CONTINUE_WAIT";
+        const chipItems = [
+          { title: "① 할 일 · 마스터 일정 (Todos)", val: `${c1.done ?? 0} / ${c1.total ?? 0} 완료`, sub: `남은 ${c1.remaining ?? 0}건 (진행 ${c1.active ?? 0} · 검수 ${c1.review ?? 0})` },
+          { title: "② 3대 도구+로컬 좌석 (OpenRig)", val: String(c2.mode || "THREE_TOOL_NORMAL"), sub: `지휘: ${String(c2.conductor || "antigravity").toUpperCase()} · 좌석 ${(c2.seats || []).length}석` },
+          { title: "③ 백그라운드 워처 · 5초 선점", val: `워처 ${(c3.watchers || []).length}개 가동`, sub: `판정: ${wDec} (한도 ${c3.foreground_wait_limit_s ?? 5.0}s)` },
+          { title: "④ 실시간 변경 파일 Diff", val: `${c4.file_count ?? 0}개 파일 변경`, sub: `+${c4.lines_added ?? 0} / -${c4.lines_removed ?? 0} lines` },
+          { title: "⑤ 쿼터 · 리셋 타이머", val: `자동 재개 ${c5.auto_resume_on_reset ? "ON" : "OFF"}`, sub: `리셋 등록: ${Object.keys(c5.reset_at || {}).length}개 도구` }
+        ];
+        chipBar.innerHTML = chipItems.map(item => `
+          <div class="border border-[var(--border)] rounded-lg p-2 bg-[var(--secondary)]/20 flex flex-col justify-between">
+            <span class="text-[11px] text-[var(--muted-foreground)] font-medium">${item.title}</span>
+            <span class="text-xs font-semibold text-[var(--foreground)] mt-0.5">${item.val}</span>
+            <span class="text-[11px] text-[var(--muted-foreground)] mt-0.5">${item.sub}</span>
+          </div>
+        `).join("");
+      }
+      const wb = document.getElementById("wait-banner");
+      if (wb) {
+        wb.textContent = "🔍 실시간 대기·진행 상태: " + (wt.headline || "상태 정보 없음");
+      }
+      const hudBar = document.getElementById("contextual-hud-bar");
+      if (hudBar) {
+        const cTel = SNAP.cockpit_telemetry || {};
+        const cacheBadge = cTel.available ? ` | Cockpit 캐시적중: ${cTel.cache_hit_pct}% (${cTel.total_events}건)` : "";
+        hudBar.textContent = (SNAP.contextual_hud_widget || "[HUD 위젯] 가동 중") + cacheBadge;
+      }
+      document.getElementById("conductor-badge").textContent =
+        "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | Gemini 4 Argon (Google AI Ultra 5x) 5h 점유: " + (sched.argon_used_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_used_5h_share_pct ?? "UNKNOWN") + "%") + " (가용점유 " + (sched.argon_remaining_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_remaining_5h_share_pct ?? "UNKNOWN") + "%") + ")";
+      document.getElementById("offload-badge").textContent =
+        "Ollama+Haiku 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
+
+      const gaugesGrid = document.getElementById("gauges-grid");
+      gaugesGrid.innerHTML = "";
+      const barsContainer = document.getElementById("bars-container");
+      barsContainer.innerHTML = "";
+
+      let maxTokens = 1;
+      ENGINES_ORDER.forEach(eng => {
+        const info = (SNAP.engines || {})[eng] || {};
+        const w = info[winKey] || {};
+        if ((w.effective_budget_tokens || 0) > maxTokens) maxTokens = w.effective_budget_tokens;
+      });
+
+      ENGINES_ORDER.forEach(eng => {
+        const info = (SNAP.engines || {})[eng] || {};
+        const w = info[winKey] || {};
+        const pct = Number(info.budget_utilization_5h_pct || 0);
+        const state = info.presence_state || "ACTIVE";
+        const rem = info.usable_remaining_5h_tokens;
+        const cards = info.usable_cards_capacity;
+        const q = info.provider_quota_snapshot;
+        const sub = info.subscription_plan || {};
+        const qText = (q && q.used_percent !== null && q.used_percent !== undefined)
+          ? ` | UI 5h:${q.used_percent}%` : "";
+        const q7Text = (sub.quota_7d_ui_pct !== null && sub.quota_7d_ui_pct !== undefined)
+          ? `·7d:${sub.quota_7d_ui_pct}%` : "";
+        const subTotal5h = sub.total_5h_tokens;
+        const subTotal7d = sub.total_7d_tokens;
+        const subPct7d = Number(sub.utilization_7d_pct || 0);
+
+        const card = document.createElement("div");
+        card.className = "border border-[var(--border)] rounded-lg p-2.5 flex flex-col justify-between space-y-1.5";
+        card.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold">${LABELS[eng] || eng}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">${state}${info.quota_reset_ready ? "·RESET" : ""}</span>
+          </div>
+          <div class="text-[11px] text-[var(--muted-foreground)] font-medium">${sub.plan_name || ""}</div>
+          <div class="text-xs text-[var(--muted-foreground)]">
+            5h 총한도 대비: <strong class="text-[var(--foreground)]">${fmt(w.effective_budget_tokens || 0)}</strong> / ${subTotal5h ? fmt(subTotal5h) : "∞"} tok
+          </div>
+          <div class="text-xs text-[var(--muted-foreground)]">
+            5h 잔여(예산): <strong class="text-[var(--foreground)]">${rem === null ? "무제한(0원)" : fmt(rem) + " tok"}</strong>
+          </div>
+          <div class="text-[11px] text-[var(--muted-foreground)]">
+            7d 주간 총량 대비: <strong class="text-[var(--foreground)]">${fmt(sub.used_7d_effective_tokens || 0)}</strong> / ${subTotal7d ? fmt(subTotal7d) : "∞"} tok (${subPct7d}%)
+          </div>
+          <div class="w-full bg-[var(--secondary)] h-2 rounded-full overflow-hidden">
+            <div class="bg-[var(--primary)] h-2 rounded-full" style="width: ${rem === null ? 15 : Math.min(100, Math.max(4, pct))}%"></div>
+          </div>
+          <div class="flex items-center justify-between text-xs">
+            <span>5h: ${rem === null ? "0%" : pct + "%"}${qText}${q7Text}</span>
+            <span class="font-semibold">${rem === null ? "∞ 카드" : "가용 " + cards + "장"}</span>
+          </div>
+        `;
+        gaugesGrid.appendChild(card);
+
+        const relPct = Math.min(100, Math.max(3, Math.round(((w.effective_budget_tokens || 0) / maxTokens) * 100)));
+        const barRow = document.createElement("div");
+        barRow.className = "space-y-0.5";
+        barRow.innerHTML = `
+          <div class="flex justify-between text-xs">
+            <span>${LABELS[eng] || eng} (${w.calls || 0} calls)</span>
+            <span>유효 ${fmt(w.effective_budget_tokens || 0)} / 원본 ${fmt(w.raw_total_tokens || 0)} tok</span>
+          </div>
+          <div class="w-full bg-[var(--secondary)] h-2 rounded-full overflow-hidden">
+            <div class="bg-[var(--primary)] h-2 rounded-full" style="width: ${relPct}%"></div>
+          </div>
+        `;
+        barsContainer.appendChild(barRow);
+      });
+
+      const assigns = sched.phase_assignments || [];
+      const subSched = SNAP.sub_process_schedule || {};
+      const subCards = subSched.card_sub_schedules || [];
+      document.getElementById("sched-count").textContent = `활성·대기 ${assigns.length}개 카드 · 세부공정 ${subSched.total_sub_processes ?? 0}개`;
+      const schedList = document.getElementById("schedule-list");
+      schedList.innerHTML = "";
+      if (assigns.length === 0) {
+        schedList.innerHTML = `<div class="text-[var(--muted-foreground)]">모든 활성 단계가 DONE 상태입니다. 새 카드 생성 시 가용 토큰 최다 도구에 자동 배정됩니다.</div>`;
+      } else {
+        assigns.forEach(a => {
+          const row = document.createElement("div");
+          row.className = "border border-[var(--border)] rounded p-2 flex flex-col gap-0.5";
+          const cs = subCards.find(c => c.phase_id === a.phase_id) || {};
+          const spList = (cs.sub_processes || []).map(sp => `SP${sp.step_index}(${sp.primary_worker}:${sp.state})`).join(" → ");
+          const hoBadge = cs.preemptive_handoff_target ? ` | 선제인계대기: ${String(cs.preemptive_handoff_target).toUpperCase()}` : "";
+          row.innerHTML = `
+            <div class="flex items-center justify-between font-semibold">
+              <span>[${a.phase_id}] 상태: ${a.state}</span>
+              <span>실행: ${String(cs.assigned_executor || a.assigned_owner).toUpperCase()} → 독립검증: ${String(cs.assigned_verifier || a.assigned_reviewer).toUpperCase()}${hoBadge}</span>
+            </div>
+            <div class="text-[var(--muted-foreground)]">
+              예상 유료 토큰: ${fmt(a.estimated_paid_tokens)} (${a.sizing_action}) | 오프로드: ${(a.local_offload || []).join(", ")}
+            </div>
+            <div class="text-[11px] text-[var(--foreground)] pt-0.5">
+              🔄 세부 프로세스 DAG: ${spList || "SP1~SP5 자동생성"}
+            </div>
+          `;
+          schedList.appendChild(row);
+        });
+      }
+    }
+
+    document.getElementById("window-select").addEventListener("change", (e) => renderAll(e.target.value));
+    const hudBtn = document.getElementById("hud-toggle-btn");
+    const macroBox = document.getElementById("macro-dashboard-container");
+    if (hudBtn && macroBox) {
+      hudBtn.addEventListener("click", () => {
+        const hidden = macroBox.classList.toggle("hidden");
+        hudBtn.textContent = hidden ? "📊 Tier-1 전체 대시보드 펼치기" : "🎯 Tier-2 HUD 위젯 모드 전환";
+      });
+    }
+    renderAll("window_5h");
+  </script>
+</body>
+</html>

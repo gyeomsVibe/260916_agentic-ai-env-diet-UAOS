@@ -97,7 +97,12 @@ def plan_rows(path: Path) -> dict[str, str]:
         pass
     return rows
 
-def absence_items(root: Path, since: float, tool: str) -> list[str]:
+def absence_items(
+    root: Path,
+    since: float,
+    tool: str,
+    seen_uncommitted: set[str] | None = None,
+) -> list[str]:
     root = Path(root)
     tool = canonical(tool)
     items: list[str] = []
@@ -107,9 +112,17 @@ def absence_items(root: Path, since: float, tool: str) -> list[str]:
         args.extend(["--invert-grep", f"--grep={TRAILERS[tool]}"])
     for line in _git(root, *args):
         items.append(f"commit {line}")
-    # Uncommitted
-    for line in _git(root, "status", "--porcelain", "--untracked-files=no"):
-        items.append(f"uncommitted {line.strip()}")
+    # Uncommitted (U275: filter by file mtime > since or unseen status line so stale dirty files do not flood every turn)
+    for line in _git(root, "-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=no"):
+        entry = f"uncommitted {line.strip()}"
+        rel_part = line[3:].split(" -> ")[-1].strip().strip('"')
+        target = root / rel_part
+        if target.exists():
+            if _mtime(target) <= since:
+                continue
+        elif seen_uncommitted is not None and entry in seen_uncommitted:
+            continue
+        items.append(entry)
     # Leases
     presence = root / ".coord" / "presence"
     if presence.is_dir():
@@ -364,7 +377,12 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
     items[1:1] = urgent_items
     if hidden:
         items.insert(min(len(items), MAX_LINES - 1), (f"UNACKED_BACKLOG {hidden} letter(s) to {tool}: run coord inbox, dispose, coord ack", None))
-    items.extend((item, None) for item in absence_items(project, since, tool))
+    seen_uncom = (
+        {s for s in cursor.get("uncommitted", []) if isinstance(s, str)}
+        if had_cursor and isinstance(cursor.get("uncommitted"), list)
+        else None
+    )
+    items.extend((item, None) for item in absence_items(project, since, tool, seen_uncommitted=seen_uncom))
     for actor, group in events.items():
         items.append((f"{len(group)} run event(s) from {actor}, newest {group[-1].stem}: {summary_of(group[-1])}", None))
     shown = [letter for _text, letter in items[:MAX_LINES] if letter is not None]
@@ -380,10 +398,16 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
 
     def ack() -> None:
         # The cursor first (atomic), then the receipts: a crash between them is completed by the next hook (recovery).
+        cur_uncom = [
+            f"uncommitted {l.strip()}"
+            for l in _git(project, "-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=no")
+        ]
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-        tmp.write_text(json.dumps({"since": now, "plan": rows, "unshown": unshown}, ensure_ascii=False),
-                       encoding="utf-8")
+        tmp.write_text(
+            json.dumps({"since": now, "plan": rows, "unshown": unshown, "uncommitted": cur_uncom}, ensure_ascii=False),
+            encoding="utf-8",
+        )
         os.replace(tmp, path)
         ack_receipts(project, tool, shown + recovered)
         notice_ack()

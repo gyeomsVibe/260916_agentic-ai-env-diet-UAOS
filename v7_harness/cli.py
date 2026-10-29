@@ -580,6 +580,7 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
         collect_capacity_snapshot,
         refresh_capacity_zero_token,
         render_compact_status_line,
+        render_contextual_hud_widget,
         render_html_dashboard,
         render_terminal_dashboard,
     )
@@ -612,6 +613,8 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
         print(json.dumps(snap.get("compact_head"), ensure_ascii=False, separators=(",", ":")))
     elif args.format == "compact":
         print(render_compact_status_line(snap))
+    elif args.format == "hud":
+        print(render_contextual_hud_widget(snap))
     else:
         print(render_terminal_dashboard(snap))
     return 0
@@ -972,13 +975,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_coord_cap = p_coord_subs.add_parser(
         "capacity",
-        help="U256/U265: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, compact head, and dashboard",
+        help="U256/U265/U276: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, compact head, HUD widget, and dashboard",
     )
     p_coord_cap.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_cap.add_argument("--format", choices=["json", "table", "head", "compact"], default="table")
+    p_coord_cap.add_argument("--format", choices=["json", "table", "head", "compact", "hud"], default="table")
     p_coord_cap.add_argument("--debounce", type=float, default=0.0, help="Debounce interval in seconds for 0-paid-token refresh")
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
+
+    p_coord_rea = p_coord_subs.add_parser(
+        "rea-audit",
+        help="U275: Automatically execute REA static reverse-engineering + retained bundle + obligation ledger on a target",
+    )
+    p_coord_rea.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_rea.add_argument("--target", required=True, help="Target file (.exe/.dll/.sqlite) or directory (.work/library/<repo>)")
+    p_coord_rea.set_defaults(func=cmd_coord_rea_audit)
 
     p_coord_tp = p_coord_subs.add_parser(
         "transplant-status",
@@ -1452,8 +1463,9 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
     # U134-C: QUEUED_UNTIL_ACTIVE waits for the target's next ACTIVE turn; also not a failure.
+    # U282: QUEUED_NOTICE is a letter to Codex that asks for no turn, left in the inbox; also not a failure.
     ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY",
-                           "QUEUED_UNTIL_ACTIVE")
+                           "QUEUED_UNTIL_ACTIVE", "QUEUED_NOTICE")
     print(json.dumps({"ok": ok, "target": result.target, "reason": result.reason,
                       "message_id": result.message_id, "digest": result.digest,
                       "receipt": result.receipt, "output": result.output[:500]}, ensure_ascii=False))
@@ -2142,6 +2154,18 @@ def cmd_coord_stall(args: argparse.Namespace) -> int:
     result = scan(Path(args.project), args.tool)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result.get("blocked") or result.get("error") else 0
+
+
+def cmd_coord_rea_audit(args: argparse.Namespace) -> int:
+    """U275: Automatically run REA static reverse-engineering + retained analysis view + epistemic ledger."""
+    from .rea_bridge import execute_auto_reverse_engineering_pipeline
+
+    res = execute_auto_reverse_engineering_pipeline(
+        project_root=Path(args.project),
+        target_path=Path(args.target),
+    )
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    return 0 if res.get("ok") else 1
 
 
 def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
