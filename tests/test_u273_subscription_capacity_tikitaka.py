@@ -267,8 +267,12 @@ class TestU272SubscriptionCapacityAndParallelTikiTaka(unittest.TestCase):
         html_out = self.root / ".work" / "u272_dash.html"
         CP.render_html_dashboard(snap, html_out)
         html_text = html_out.read_text(encoding="utf-8")
-        self.assertIn("5h 총한도 대비:", html_text)
-        self.assertIn("7d 주간 총량 대비:", html_text)
+        # U286 (user receipt 2026-10-29: "5h 총한도 대비: 6.57M / 7.00M" read as neither used nor usable):
+        # the same 5 h and weekly totals now say which number is which.
+        self.assertIn("5시간 한도", html_text)
+        self.assertIn("이번 주(7일) 한도", html_text)
+        self.assertIn("쓴 양", html_text)
+        self.assertIn("남은 양", html_text)
 
 
 if __name__ == "__main__":

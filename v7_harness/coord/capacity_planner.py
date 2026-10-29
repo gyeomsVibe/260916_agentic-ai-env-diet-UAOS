@@ -25,6 +25,7 @@ import tempfile
 import time
 from typing import Any
 
+from .agy_accounts import antigravity_accounts
 from .hook_context import shared_desk
 from .next_card import TERMINAL
 from .presence import TOOLS, read_all as read_all_presence
@@ -1201,6 +1202,10 @@ def collect_capacity_snapshot(
     )
     head_summary = build_compact_capacity_head(snapshot)
     snapshot["compact_head"] = head_summary
+    snapshot["flagman_liveness"] = flagman_liveness(project_root, moment)
+    # U286 v4: per-account Antigravity facts (registry + 429 log); a test home never reads the real APPDATA
+    snapshot["antigravity_accounts"] = antigravity_accounts(
+        desk, appdata=(home / "AppData" / "Roaming") if home else None, persist=persist)
     snapshot["contextual_hud_widget"] = render_contextual_hud_widget(snapshot)
 
     if persist:
@@ -1417,6 +1422,15 @@ def build_capacity_aware_schedule(
         t for t in PAID_TOOLS
         if bool((engines.get(t) or {}).get("wake_on_reset_ready"))
     ]
+    # U286: the HUD accordion opens a card's plan; copy only its human-readable master-schedule fields (read-only).
+    by_id = {str(p.get("phase_id")): p for p in phases}
+    for a in assignments:
+        p = by_id.get(str(a.get("phase_id"))) or {}
+        a["plan_detail"] = {k: str(p[k])[:400] for k in ("title", "owner_tool", "judge", "blocker_reason", "note", "action") if p.get(k)}
+        # Codex 2026-10-29: the HUD must not present computed values as ledger facts. A card without its own
+        # estimated_tokens gets the policy default (45000 x share), which is a placeholder, not a measurement.
+        a["plan_detail"]["ledger_state"] = str(p.get("state") or "")
+        a["estimate_basis"] = "CARD" if p.get("estimated_tokens") else "POLICY_DEFAULT"
     return {
         "recommended_conductor": recommended_conductor,
         "ranked_paid_tools": ranked_paid,
@@ -1961,6 +1975,100 @@ def render_compact_status_line(snapshot: dict[str, Any]) -> str:
 
 
 
+# U286: Flagman pulses every 30 s; three missed pulses (90 s) mean the daemon is gone, whatever `state` says.
+FLAGMAN_STALE_S = 90
+FLAGMAN_WORDS = {"LIVE": "가동", "STOPPED": "정지", "MISSING": "없음", "UNKNOWN": "미확인"}
+FLAGMAN_SCHEMA_PREFIX = "uaos-independent-flagman"
+FLAGMAN_CLOCK_SKEW_S = 5  # a pulse stamped further in the future than this is not trusted
+FLAGMAN_PID_START_SLACK_S = 2  # FILETIME vs time.time() rounding between the writer and this reader
+
+
+def _flagman_process_info(pid: int) -> dict[str, Any] | None:
+    """Return {alive, created, exe} for pid, or None when this platform cannot check (then liveness is UNKNOWN)."""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return {"alive": False, "created": None, "exe": ""}
+        except OSError:
+            return None
+        return {"alive": True, "created": None, "exe": ""}
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION; no child process, no console
+    if not handle:
+        return {"alive": False, "created": None, "exe": ""}
+    try:
+        code = wintypes.DWORD()
+        if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return None
+        times = [wintypes.FILETIME() for _ in range(4)]
+        created = None
+        if k32.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
+            ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+            created = ticks / 1e7 - 11644473600.0  # FILETIME (100 ns since 1601) -> Unix epoch
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buf))
+        exe = buf.value if k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)) else ""
+        return {"alive": code.value == 259, "created": created, "exe": exe}  # 259 = STILL_ACTIVE
+    finally:
+        k32.CloseHandle(handle)
+
+
+def flagman_liveness(project_root: Path, now: float, probe: Any = None) -> dict[str, Any]:
+    """U286: LIVE only with proof: valid heartbeat schema, ACTIVE, a pulse stamp under 90 s old, and the stamped
+    PID running as a Python process that started before that pulse. File mtime alone proves nothing (Codex
+    REVISE 2026-10-29: a fresh non-JSON file and a fresh STOPPED/dead-PID file both read LIVE before)."""
+    probe = probe or _flagman_process_info
+    beat = Path(project_root) / ".coord" / "presence" / "flagman.json"
+    try:
+        raw = beat.read_text(encoding="utf-8")
+    except OSError:
+        return {"state": "MISSING", "age_s": None, "reason": "NO_HEARTBEAT_FILE"}
+
+    def out(state: str, reason: str, age: float | None = None) -> dict[str, Any]:
+        return {"state": state, "age_s": None if age is None else max(0, int(age)), "reason": reason}
+
+    try:
+        beat_doc = json.loads(raw)
+    except ValueError:
+        return out("UNKNOWN", "HEARTBEAT_NOT_JSON")
+    if not isinstance(beat_doc, dict) or not str(beat_doc.get("schema") or "").startswith(FLAGMAN_SCHEMA_PREFIX):
+        return out("UNKNOWN", "HEARTBEAT_SCHEMA_INVALID")
+    try:
+        pulse_at = float(beat_doc.get("updated_at"))
+    except (TypeError, ValueError):
+        return out("UNKNOWN", "NO_PULSE_TIMESTAMP")
+    age = now - pulse_at
+    if age < -FLAGMAN_CLOCK_SKEW_S:
+        return out("UNKNOWN", "PULSE_IN_FUTURE")
+    if str(beat_doc.get("state") or "").upper() != "ACTIVE":
+        return out("STOPPED", "SELF_REPORTED_" + (str(beat_doc.get("state") or "NONE").upper()[:20]), age)
+    if age > FLAGMAN_STALE_S:
+        return out("STOPPED", "PULSE_STALE", age)
+    try:
+        pid = int(beat_doc.get("pid"))
+    except (TypeError, ValueError):
+        return out("UNKNOWN", "NO_PID", age)
+    if pid <= 0:
+        return out("UNKNOWN", "NO_PID", age)
+    info = probe(pid)
+    if info is None:
+        return out("UNKNOWN", "PID_UNVERIFIABLE", age)
+    if not info.get("alive"):
+        return out("STOPPED", "PID_NOT_RUNNING", age)
+    created = info.get("created")
+    if created is not None and created > pulse_at + FLAGMAN_PID_START_SLACK_S:
+        return out("STOPPED", "PID_REUSED_AFTER_PULSE", age)
+    exe = str(info.get("exe") or "").lower()
+    if exe and "python" not in Path(exe).name:
+        return out("STOPPED", "PID_NOT_PYTHON", age)
+    return out("LIVE", "PULSE_FRESH_PID_RUNNING", age)
+
+
 def render_contextual_hud_widget(snapshot: dict[str, Any]) -> str:
     """Tier-2 Micro Contextual Heads-Up Display (HUD) Widget inspired by Cockpit Tools floating_card_window.rs.
     Designed for inline prompt/workspace context (<195 chars) with Quality Gate first (author != judge).
@@ -2002,8 +2110,9 @@ def render_contextual_hud_widget(snapshot: dict[str, Any]) -> str:
     else:
         q_state = "PASS(독립검증·인수100%)"
 
+    flag = FLAGMAN_WORDS.get(str((snapshot.get("flagman_liveness") or {}).get("state")), "미확인")
     return (
-        f"[HUD 위젯] 🎯품질게이트:{q_state} "
+        f"[HUD 위젯] 🚩신호수:{flag} | 🎯품질게이트:{q_state} "
         f"| ⚡지휘:{cond}({seats_cnt}석·대기{rem_cards}건) "
         f"| 🔋5h가용카드:ag={_c(cards.get('antigravity'))}·cl={_c(cards.get('claude'))}·cx={_c(cards.get('codex'))} "
         f"| 🧮0원오프로드:{off_pct}%{cache_str} | 🔄워처:{w_cnt}개"
@@ -2174,8 +2283,37 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
   <meta charset="utf-8" />
   <title>UAOS-RSI 3-Tool Token & Capacity Dashboard</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    /* U286: dark theme by default; 18px root scales every Tailwind rem size (text-xs 13.5px, text-base 18px). */
+    :root {{ color-scheme: dark; --background: #0f1115; --foreground: #e8eaed; --card: #171a21; --border: #2c313c;
+      --secondary: #232833; --secondary-foreground: #e8eaed; --muted-foreground: #a9b0bc; --primary: #60a5fa; }}
+    /* U286: bars and donut slices grow on first view; reduced-motion users get the final state at once. */
+    .anim-bar {{ transition: width 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }}
+    .ring {{ transition: stroke-dasharray 1.2s cubic-bezier(0.2, 0.8, 0.2, 1); }}
+    .ring-count {{ transition: stroke-dasharray 1s linear; }}
+    .flow-strip {{ animation: flow-drift var(--dur) linear infinite; }}
+    .flow-strip.still {{ animation: none; }}
+    @keyframes flow-drift {{ from {{ background-position: 0 0; }} to {{ background-position: var(--gap) 0; }} }}
+    .tool-head:hover {{ background: rgba(255, 255, 255, 0.03); }}
+    /* U286: accordion — chevron turns, body slides in (shadcn Accordion look on native details/summary). */
+    .acc-sum {{ list-style: none; }}
+    .acc-sum::-webkit-details-marker {{ display: none; }}
+    .acc-sum:hover {{ background: var(--secondary); border-radius: 0.5rem; }}
+    .acc-sum:focus-visible {{ outline: 2px solid #60a5fa; outline-offset: 2px; border-radius: 0.5rem; }}
+    .acc-chev {{ transition: transform 0.2s ease; }}
+    .acc-item[open] .acc-chev {{ transform: rotate(180deg); }}
+    .acc-item[open] .acc-body {{ animation: acc-down 0.22s ease-out; }}
+    @keyframes acc-down {{ from {{ opacity: 0; transform: translateY(-6px); }} to {{ opacity: 1; transform: none; }} }}
+    .live-dot {{ animation: live-pulse 1.6s ease-out infinite; }}
+    @keyframes live-pulse {{ 0% {{ box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }} 100% {{ box-shadow: 0 0 0 9px rgba(34, 197, 94, 0); }} }}
+    body.no-motion .anim-bar, body.no-motion .ring {{ transition: none; }} body.no-motion .live-dot, body.no-motion .flow-strip {{ animation: none; }}
+    html {{ font-size: 18px; }}
+    body {{ background: var(--background); line-height: 1.5; }}
+    .flag-live {{ background: #14532d; color: #bbf7d0; }}
+    .flag-down {{ background: #7f1d1d; color: #fecaca; }}
+  </style>
 </head>
-<body class="bg-transparent text-[var(--foreground)] antialiased p-3">
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3">
   <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2">
       <div>
@@ -2183,39 +2321,40 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         <p class="text-xs text-[var(--muted-foreground)]" id="subtitle">실측 트랜스크립트·장부 기반 5시간 롤링 예산 및 가용 카드 시뮬레이터</p>
       </div>
       <div class="flex items-center gap-2">
+        <span id="flagman-badge" class="px-2.5 py-1 rounded-full text-xs font-bold"></span>
         <span id="conductor-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--secondary)] text-[var(--secondary-foreground)]"></span>
         <span id="offload-badge" class="px-2.5 py-1 rounded-full text-xs font-medium border border-[var(--border)]"></span>
-        <button id="hud-toggle-btn" class="px-2.5 py-1 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-80">🎯 Tier-2 HUD 위젯 모드 전환</button>
+        <button id="hud-toggle-btn" class="px-2.5 py-1 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-80">🔽 요약만 보기</button>
+        <button id="motion-btn" class="px-2.5 py-1 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-80"></button>
       </div>
     </div>
 
-    <div id="contextual-hud-bar" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 px-3 py-2 text-xs font-mono flex flex-wrap items-center justify-between gap-2"></div>
-    <div id="macro-dashboard-container" class="space-y-3">
-    <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-5 gap-2"></div>
-    <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
-    <div id="gauges-grid" class="grid grid-cols-1 md:grid-cols-5 gap-2.5"></div>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-      <div class="border border-[var(--border)] rounded-lg p-3 space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold">📈 가용 예산 대비 소비 토큰 (동적 비교 그래프)</span>
-          <select id="window-select" class="text-xs bg-[var(--background)] border border-[var(--border)] rounded px-2 py-0.5">
-            <option value="window_5h">최근 5시간 (롤링 한도)</option>
-            <option value="window_24h">최근 24시간</option>
-            <option value="window_7d">최근 7일</option>
-          </select>
+    <div id="contextual-hud-bar" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 p-2 flex flex-wrap items-center gap-2"></div>
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+      <section class="border border-[var(--border)] rounded-lg p-3 space-y-2" aria-labelledby="budget-title">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="budget-title" class="text-base font-semibold">🎛️ 도구 콘솔 — 지금 얼마나 남았나</h2>
+          <span class="text-xs text-[var(--muted-foreground)]">원 = 5시간 한도 중 남은 양 · 막대 = 이번 주 남은 양 · 흐르는 점 = 최근 5시간 작업량 · 누르면 상세</span>
         </div>
-        <div id="bars-container" class="space-y-2 pt-1"></div>
-      </div>
-
-      <div class="border border-[var(--border)] rounded-lg p-3 space-y-2">
+        <div id="budget-headline" class="flex flex-wrap gap-2"></div>
+        <div id="budget-board" class="space-y-2"></div>
+      </section>
+      <div id="macro-dashboard-container" class="space-y-3">
+      <section class="border border-[var(--border)] rounded-lg p-3 space-y-2">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold">🗓️ 용량 연동 마스터·협업 스케줄 시뮬레이터</span>
+          <span class="text-sm font-semibold">🗓️ 마스터 스케줄 (장부 기준)</span>
           <span class="text-xs text-[var(--muted-foreground)]" id="sched-count"></span>
         </div>
-        <div id="schedule-list" class="space-y-1.5 text-xs"></div>
+        <div id="schedule-list" class="space-y-2 text-sm"></div>
+      </section>
+      <details class="rounded-lg border border-[var(--border)] p-2">
+        <summary class="acc-sum cursor-pointer text-sm font-semibold px-1 py-1">📟 운영 칩 · 대기 상태</summary>
+        <div class="space-y-2 pt-2">
+          <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+          <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
+        </div>
+      </details>
       </div>
-    </div>
     </div>
   </div>
 
@@ -2234,7 +2373,221 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       if (n === null || n === undefined) return "∞ (무제한)"; if (n === "UNKNOWN") return "미계측(UNKNOWN)"; return Number(n).toLocaleString();
     }}
 
-    function renderAll(winKey) {{
+    // U286: one fixed color per engine, shared by the donut and the bars (distinct on the dark background).
+    const COLORS = {{ codex: "#60a5fa", claude: "#f59e0b", antigravity: "#a78bfa", haiku: "#34d399", ollama: "#f472b6" }};
+
+    // U286: motion is an explicit in-page switch (default on, remembered). Windows "Animation effects" off makes
+    // browsers report prefers-reduced-motion, which silently froze the HUD the user asked to animate.
+    let MOTION = true;
+    try {{ MOTION = localStorage.getItem("uaosHudMotion") !== "off"; }} catch (e) {{}}
+    document.body.classList.toggle("no-motion", !MOTION);
+    const motionBtn = document.getElementById("motion-btn");
+    motionBtn.textContent = MOTION ? "⏸ 애니메이션 끄기" : "▶ 애니메이션 켜기";
+    motionBtn.addEventListener("click", () => {{
+      try {{ localStorage.setItem("uaosHudMotion", MOTION ? "off" : "on"); }} catch (e) {{}}
+      location.reload();
+    }});
+
+    // U286: live flow map on <canvas> (Vizceral idea: traffic = moving particles, density/speed = volume).
+    // Work queue -> UAOS conductor hub -> five engines. Every visual channel is real data: particle rate and edge
+    // width from the engine's 5 h calls, outer ring from 5 h budget use, halo on the conductor, Flagman satellite
+    // orbiting only while its heartbeat is fresh. Click a node for its detail card; motion off draws one still frame.
+    const FLAG_TEXT = {{ LIVE: "가동", STOPPED: "정지", MISSING: "없음", UNKNOWN: "미확인" }};
+    // One quota view per tool for the flow map and the budget board. Official plans only have a 5-hour and a
+    // weekly limit (Anthropic, OpenAI, Antigravity docs), so those are the two meters. The provider's own
+    // percentage wins when it was captured; otherwise the share of the policy reference cap (docs/27) is shown
+    // and labelled as an estimate. Reset times appear only when the provider reported them.
+    function quota(k) {{
+      const info = (SNAP.engines || {{}})[k] || {{}}, sub = info.subscription_plan || {{}};
+      const pick = (ui, est) => ui !== null && ui !== undefined ? [Number(ui), "공식"] : [Number(est || 0), "추정"];
+      const [p5, s5] = pick(sub.quota_5h_ui_pct, sub.utilization_5h_pct);
+      const [p7, s7] = pick(sub.quota_7d_ui_pct, sub.utilization_7d_pct);
+      const unlimited = !sub.total_5h_tokens && !sub.total_7d_tokens;
+      const state = String(info.presence_state || "UNKNOWN");
+      return {{
+        unlimited, state, plan: sub.plan_name || "",
+        p5: unlimited ? null : p5, p7: unlimited ? null : p7, src5: s5, src7: s7,
+        total5: sub.total_5h_tokens, used5: sub.used_5h_effective_tokens || 0, rem5: sub.remaining_5h_tokens,
+        total7: sub.total_7d_tokens, used7: sub.used_7d_effective_tokens || 0, rem7: sub.remaining_7d_tokens,
+        used24: sub.used_24h_effective_tokens || 0,
+        reset5: sub.resets_at_5h || null, reset7: sub.resets_at_7d || null,
+        blocked: state === "LIMITED" || state === "ABSENT" || (!unlimited && (p5 >= 100 || p7 >= 100)),
+      }};
+    }}
+    function untilText(iso) {{
+      const ms = Date.parse(iso) - Date.now();
+      if (!isFinite(ms)) return "";
+      if (ms <= 0) return "리셋됨";
+      const m = Math.floor(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+      return d ? `${{d}}일 ${{h}}시간 후` : h ? `${{h}}시간 ${{m % 60}}분 후` : `${{m}}분 ${{Math.floor(ms / 1000) % 60}}초 후`;
+    }}
+    function clockText(iso) {{
+      const t = new Date(iso);
+      if (isNaN(t)) return "";
+      const now = new Date(), sameDay = t.toDateString() === now.toDateString();
+      return (sameDay ? "오늘 " : `${{t.getMonth() + 1}}/${{t.getDate()}} `) + t.toLocaleTimeString("ko-KR", {{ hour: "2-digit", minute: "2-digit" }});
+    }}
+    const SHORT = {{ codex: "Codex", claude: "Claude", antigravity: "Antigravity", haiku: "Haiku", ollama: "Ollama" }};
+    // U286 v4 tool console (user 2026-10-29: the lanes and the budget cards said the same thing twice, both static and
+    // hard to read; "a donut and a bar together"; "I want to see each part move"). One card per tool, read left to right:
+    // ring = what REMAINS of the 5 h limit (a blocked tool's ring instead drains in real time toward its captured reset),
+    // bars = this week's remainder and the last 24 h spend, a flowing strip = 5 h calls (speed and density from calls,
+    // still when blocked). Motion is calm: steady linear drift and eased value changes, no glow, flash or rotation
+    // (WCAG 2.3.1), and the in-page switch stops it (WCAG 2.2.2). Antigravity adds one chip per account.
+    const FUEL = (left) => left === null ? "#64748b" : left <= 5 ? "#ef4444" : left <= 20 ? "#f59e0b" : "#22c55e";
+    const WEEK_MS = 7 * 24 * 3600 * 1000, FIVE_H_MS = 5 * 3600 * 1000;
+    function agyView() {{
+      const v = SNAP.antigravity_accounts || {{}};
+      const accs = v.accounts || [], waits = v.unassigned_waits || [];
+      if (!accs.length) return null;
+      const blocked = accs.filter(a => a.blocked).length + waits.length;
+      const free = Math.max(0, accs.length - blocked);
+      const backs = accs.filter(a => a.blocked && a.resets_at).map(a => a.resets_at).concat(waits.map(w => w.resets_at));  // a date-only weekly reset has no time, so it never drives a countdown
+      const first = backs.filter(t => Date.parse(t) > Date.now()).sort((a, b) => Date.parse(a) - Date.parse(b))[0] || null;
+      const weekly = accs.map(a => a.weekly_reset_date).filter(Boolean).sort()[0] || null;
+      return {{ v, accs, waits, blocked, free, first, weekly }};
+    }}
+    function renderConsole() {{
+      const board = document.getElementById("budget-board");
+      const headline = document.getElementById("budget-headline");
+      if (!board || !headline) return;
+      const eng = (k) => (SNAP.engines || {{}})[k] || {{}};
+      const calls = (k, win) => Number((eng(k)[win || "window_5h"] || {{}}).calls || 0);
+      const cond = String((SNAP.schedule_recommendation || {{}}).recommended_conductor || "").toLowerCase();
+      const tok = (v) => v === null || v === undefined ? "-" : (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
+      const name = (e) => SHORT[e] || e;
+      let prev = {{}};
+      try {{ prev = JSON.parse(sessionStorage.getItem("uaosHudPrev:console") || "{{}}"); }} catch (e) {{}}
+      const next = {{}};
+      const maxCalls = Math.max(1, ...ENGINES_ORDER.map(k => calls(k)));
+      const max24 = Math.max(1, ...ENGINES_ORDER.map(k => quota(k).used24));
+      const agy = agyView();
+      // the ring: pathLength 100, so stroke-dasharray "<pct> 100" fills pct percent of the circle
+      const ring = (id, pct, color, big, small, countdown) => {{
+        next[id] = pct;
+        return `<svg viewBox="0 0 120 120" class="w-[118px] h-[118px] shrink-0" aria-hidden="true">
+            <circle cx="60" cy="60" r="50" fill="none" stroke="var(--secondary)" stroke-width="11"></circle>
+            <circle class="ring${{countdown ? " ring-count" : ""}}" cx="60" cy="60" r="50" fill="none" stroke="${{color}}" stroke-width="11"
+              stroke-linecap="round" pathLength="100" transform="rotate(-90 60 60)" stroke-dasharray="${{prev[id] ?? 0}} 100"
+              data-p="${{pct}}"${{countdown ? ` data-at="${{countdown.at}}" data-win="${{countdown.win}}"` : ""}}></circle>
+            <text x="60" y="58" text-anchor="middle" font-size="${{big.length > 5 ? 16 : big.length > 3 ? 21 : 25}}" font-weight="800" fill="${{color}}">${{big}}</text>
+            ${{small.split(" · ").map((t, i) => `<text x="60" y="${{78 + i * 14}}" text-anchor="middle" font-size="12" fill="#a9b0bc">${{t}}</text>`).join("")}}</svg>`;
+      }};
+      const bar = (id, pct, color, label, right) => {{
+        next[id] = pct;
+        return `<div><div class="flex justify-between gap-2 text-xs"><span class="text-[var(--muted-foreground)]">${{label}}</span><span>${{right}}</span></div>
+            <div class="h-2.5 rounded-full bg-[var(--secondary)] overflow-hidden mt-0.5">
+              <div class="anim-bar h-2.5 rounded-full" style="width:${{prev[id] ?? 0}}%;background:${{color}}" data-w="${{pct}}"></div></div></div>`;
+      }};
+      // flowing strip: one bead per 26 px; more calls = denser and faster, blocked = frozen and grey
+      const flow = (k, color, blocked) => {{
+        const n = calls(k) ? Math.log10(1 + calls(k)) / Math.log10(1 + maxCalls) : 0;
+        const gap = Math.round(40 - 22 * n), dur = (6 - 4 * n).toFixed(2);
+        const c = blocked ? "#4b5563" : color;
+        return `<div class="flex items-center gap-2 text-xs"><span class="shrink-0 whitespace-nowrap text-[var(--muted-foreground)]">5시간 호출 <b class="text-[var(--foreground)]">${{fmt(calls(k))}}</b></span>
+            <div class="flow-strip flex-1 h-2 rounded-full ${{n && !blocked ? "" : "still"}}" style="--gap:${{gap}}px;--dur:${{dur}}s;background-color:var(--secondary);
+              background-image:${{n ? `radial-gradient(circle at 5px 50%, ${{c}} 3.5px, transparent 4px)` : "none"}};background-size:${{gap}}px 100%"></div></div>`;
+      }};
+      // U286 v4 (user 2026-10-29: "show it on click, only what is needed"): one line per account inside the card's
+      // click-open detail; the evidence source moves to the hover title instead of a line of its own.
+      const chip = (a) => {{
+        const state = a.blocked && a.resets_at
+          ? `<span style="color:#f87171">⛔ ${{clockText(a.resets_at)}} 복귀</span>`
+          : a.weekly_reset_date ? `<span>주간 리셋 ${{a.weekly_reset_date.slice(5).replace("-", "/")}}</span>`
+          : `<span class="text-[var(--muted-foreground)]">막힘 기록 없음</span>`;
+        const src = (a.blocked ? a.reset_source : a.weekly_reset_source) || "";
+        return `<div class="flex justify-between gap-3 py-1 border-b border-[var(--border)] text-sm" title="출처: ${{src}}">
+            <span class="truncate"><b>${{a.email.split("@")[0]}}</b> <span class="text-xs text-[var(--muted-foreground)]">${{a.kind === "subscription" ? "구독" : "무료"}}${{a.signed_in ? " · <span style='color:#93c5fd'>로그인 중</span>" : ""}}</span></span>${{state}}</div>`;
+      }};
+      const free = [], stuck = [];
+      board.innerHTML = ENGINES_ORDER.map(k => {{
+        const q = quota(k), color = COLORS[k], info = eng(k);
+        let blocked = q.blocked, back = q.p5 >= 100 && q.reset5 ? q.reset5 : q.p7 >= 100 && q.reset7 ? q.reset7 : q.reset5;
+        let donut, bars, extra = "", note = "";
+        if (k === "antigravity" && agy) {{
+          blocked = agy.free === 0 || q.state === "LIMITED" || q.state === "ABSENT";
+          back = agy.first;
+          if (agy.weekly && (!back || agy.weekly < back.slice(0, 10))) note = ` · 구독 주간 리셋 ${{agy.weekly.slice(5).replace("-", "/")}}(날짜만)`;
+          const pct = Math.round(100 * agy.free / agy.accs.length);
+          donut = blocked && back
+            ? ring("r-" + k, 0, "#ef4444", untilText(back).replace(" 후", ""), "복귀까지", {{ at: back, win: WEEK_MS }})
+            : ring("r-" + k, pct, FUEL(pct), `${{agy.free}}/${{agy.accs.length}}`, "막힘 없는 계정");
+          bars = `<div class="text-sm">계정 ${{agy.accs.length}}개 중 <b style="color:${{agy.free ? "#4ade80" : "#f87171"}}">사용 가능 ${{agy.free}}</b> · 막힘 ${{agy.accs.length - agy.free}} <span class="text-xs text-[var(--muted-foreground)]">▸ 누르면 계정별 복귀 시각</span></div>`
+            + bar("w24-" + k, Math.round(100 * q.used24 / max24), color, "최근 24시간 쓴 양 (장부)", `<b>${{tok(q.used24)}}</b> 토큰`);
+          const firstWait = agy.waits.map(w => w.resets_at).sort()[0];
+          extra = `<div class="agy-accounts">${{agy.accs.map(chip).join("")}}${{agy.waits.length ? `<div class="flex justify-between gap-3 py-1 border-b border-[var(--border)] text-sm" title="429 로그에 계정명이 없어 로그인 세션 단위로만 확인됨"><span class="text-[var(--muted-foreground)]">계정 미식별 대기 ${{agy.waits.length}}건</span><span style="color:#f87171">가장 빠른 복귀 ${{clockText(firstWait)}}</span></div>` : ""}}</div>`;
+        }} else if (q.unlimited) {{
+          donut = ring("r-" + k, 100, "#64748b", "∞", "한도 없음 · 0원");
+          bars = `<div class="text-xs text-[var(--muted-foreground)]">로컬 계산기 — 토큰 비용 없음, 항상 사용 가능</div>`;
+        }} else {{
+          const left5 = Math.max(0, Math.round(100 - q.p5)), left7 = Math.max(0, Math.round(100 - q.p7));
+          donut = blocked && back
+            ? ring("r-" + k, 0, "#ef4444", untilText(back).replace(" 후", ""), "복귀까지", {{ at: back, win: q.p5 >= 100 ? FIVE_H_MS : WEEK_MS }})
+            : ring("r-" + k, left5, FUEL(left5), `${{left5}}%`, `5시간 남음 · ${{q.src5}}`);
+          bars = bar("w7-" + k, left7, FUEL(left7), `이번 주 남음 <b style="color:${{FUEL(left7)}}">${{left7}}%</b> <span>(${{q.src7}})</span>`,
+              `쓴 <b>${{tok(q.used7)}}</b> · 남은 <b>${{tok(q.rem7)}}</b> / ${{tok(q.total7)}}`)
+            + bar("w24-" + k, Math.round(100 * q.used24 / max24), color, "최근 24시간 쓴 양", `<b>${{tok(q.used24)}}</b> 토큰`);
+        }}
+        (blocked ? stuck : free).push({{ k, back, note }});
+        const pill = blocked
+          ? `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#ef444422;color:#f87171">⛔ 막힘 · ${{back ? `${{clockText(back)}} 복귀` : "복귀 시각 미수집"}}${{note}}</span>`
+          : `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#22c55e22;color:#4ade80">${{k === cond ? "● 지휘 중" : "✅ 사용 가능"}}</span>`;
+        const row = (l, v) => `<div class="flex justify-between gap-3 border-b border-[var(--border)] py-1"><span class="text-[var(--muted-foreground)]">${{l}}</span><b class="text-right">${{v}}</b></div>`;
+        const detail = row("역할", info.role || "-")
+          + row("호출 5시간 · 24시간 · 7일", `${{calls(k)}} · ${{calls(k, "window_24h")}} · ${{calls(k, "window_7d")}}`)
+          + (q.unlimited ? "" : row("5시간 한도: 쓴 양 · 남은 양 / 한도", `${{tok(q.used5)}} · ${{tok(q.rem5)}} / ${{tok(q.total5)}} (${{q.src5}})`)
+            + row("이번 주(7일) 한도: 쓴 양 · 남은 양 / 한도", `${{tok(q.used7)}} · ${{tok(q.rem7)}} / ${{tok(q.total7)}} (${{q.src7}})`)
+            + row("이번 주 리셋", q.reset7 ? `${{clockText(q.reset7)}} · <span class="countdown" data-at="${{q.reset7}}">${{untilText(q.reset7)}}</span>` : "리셋 시각 미수집")
+            + row("5시간 리셋", q.reset5 ? `${{clockText(q.reset5)}} · <span class="countdown" data-at="${{q.reset5}}">${{untilText(q.reset5)}}</span>` : "리셋 시각 미수집"))
+          + row("카드 1장 평균 비용", fmt(info.avg_card_cost_tokens || 0) + " 토큰")
+          + row("5시간 안에 더 할 수 있는 카드", info.usable_cards_capacity ?? "제한 없음");
+        return `<div class="tool-card rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 space-y-2" data-eng="${{k}}">
+            <button type="button" class="tool-head w-full text-left flex items-center gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#60a5fa] rounded-md" aria-expanded="false">
+              ${{donut}}
+              <div class="flex-1 min-w-0 space-y-1.5">
+                <div class="flex flex-wrap items-center justify-between gap-2"><span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full" style="background:${{color}}"></span>
+                  <b class="text-base">${{name(k)}}${{k === cond ? " ★" : ""}}</b><span class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</span></span>${{pill}}</div>
+                ${{bars}}
+                ${{flow(k, color, blocked)}}
+              </div>
+            </button>
+            <details class="acc-item tool-detail border-t border-[var(--border)]">
+              <summary class="acc-sum flex items-center justify-between gap-2 cursor-pointer px-1 py-1.5 text-sm font-medium">
+                <span>${{extra ? "계정별 복귀 시각 · 상세" : "상세"}}</span><span class="acc-chev shrink-0 text-[var(--muted-foreground)]">▾</span></summary>
+              <div class="acc-body text-sm space-y-2 pt-1">${{extra}}<div>${{detail}}</div></div>
+            </details>
+          </div>`;
+      }}).join("");
+      board.querySelectorAll(".tool-head").forEach(h => h.addEventListener("click", () => {{
+        // the whole card head opens the same shadcn-style accordion as its own trigger row
+        const d = h.closest(".tool-card").querySelector(".tool-detail");
+        d.open = !d.open;
+        h.setAttribute("aria-expanded", String(d.open));
+      }}));
+      window.uaosSelectTool = (k) => {{
+        const card = board.querySelector(`.tool-card[data-eng="${{k}}"]`);
+        if (!card) return;
+        card.querySelector(".tool-detail").open = true;
+        card.scrollIntoView({{ behavior: MOTION ? "smooth" : "auto", block: "nearest" }});
+      }};
+      headline.innerHTML = `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#22c55e1f;color:#4ade80">✅ 지금 쓸 수 있음: ${{free.map(f => name(f.k)).join(" · ") || "없음"}}</span>`
+        + stuck.map(s => `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#ef44441f;color:#f87171">⛔ ${{name(s.k)}} → ${{s.back ? `${{clockText(s.back)}} 복귀 (<span class="countdown" data-at="${{s.back}}">${{untilText(s.back)}}</span>)` : "복귀 시각 미수집"}}${{s.note || ""}}</span>`).join("");
+      requestAnimationFrame(() => requestAnimationFrame(() => {{
+        board.querySelectorAll(".anim-bar").forEach(b => {{ b.style.width = b.dataset.w + "%"; }});
+        board.querySelectorAll(".ring").forEach(r => {{ r.setAttribute("stroke-dasharray", r.dataset.p + " 100"); }});
+        tickRings();
+      }}));
+      try {{ sessionStorage.setItem("uaosHudPrev:console", JSON.stringify(next)); }} catch (e) {{}}
+    }}
+    // a blocked tool's ring holds the share of its wait still ahead, so it visibly drains toward the reset
+    function tickRings() {{
+      document.querySelectorAll(".ring-count").forEach(r => {{
+        const left = Date.parse(r.dataset.at) - Date.now(), win = Number(r.dataset.win) || WEEK_MS;
+        r.setAttribute("stroke-dasharray", Math.max(0, Math.min(100, 100 * left / win)).toFixed(2) + " 100");
+      }});
+    }}
+
+    function renderAll() {{
       const sched = SNAP.schedule_recommendation || {{}};
       const off = SNAP.offload_efficiency_24h || {{}};
       const wt = SNAP.wait_transparency || {{}};
@@ -2256,9 +2609,9 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         ];
         chipBar.innerHTML = chipItems.map(item => `
           <div class="border border-[var(--border)] rounded-lg p-2 bg-[var(--secondary)]/20 flex flex-col justify-between">
-            <span class="text-[11px] text-[var(--muted-foreground)] font-medium">${{item.title}}</span>
+            <span class="text-xs text-[var(--muted-foreground)] font-medium">${{item.title}}</span>
             <span class="text-xs font-semibold text-[var(--foreground)] mt-0.5">${{item.val}}</span>
-            <span class="text-[11px] text-[var(--muted-foreground)] mt-0.5">${{item.sub}}</span>
+            <span class="text-xs text-[var(--muted-foreground)] mt-0.5">${{item.sub}}</span>
           </div>
         `).join("");
       }}
@@ -2270,126 +2623,125 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       if (hudBar) {{
         const cTel = SNAP.cockpit_telemetry || {{}};
         const cacheBadge = cTel.available ? ` | Cockpit 캐시적중: ${{cTel.cache_hit_pct}}% (${{cTel.total_events}}건)` : "";
-        hudBar.textContent = (SNAP.contextual_hud_widget || "[HUD 위젯] 가동 중") + cacheBadge;
+        // U286: one readable tile per HUD field instead of one long monospace line.
+        const fields = ((SNAP.contextual_hud_widget || "[HUD 위젯] 가동 중") + cacheBadge)
+          .replace("[HUD 위젯]", "").split("|").map(s => s.trim()).filter(Boolean);
+        hudBar.replaceChildren(...fields.map(text => {{
+          const tile = document.createElement("span");
+          tile.className = "rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm font-medium";
+          tile.textContent = text;
+          return tile;
+        }}));
       }}
+      const fl = SNAP.flagman_liveness || {{}};
+      const flBadge = document.getElementById("flagman-badge");
+      flBadge.className = "px-2.5 py-1 rounded-full text-xs font-bold " + (fl.state === "LIVE" ? "flag-live" : "flag-down");
+      // U286: the dot pulses only while the heartbeat is fresh, so motion itself means "alive".
+      const dot = document.createElement("span");
+      dot.className = "inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle " + (fl.state === "LIVE" ? "live-dot" : "");
+      dot.style.background = fl.state === "LIVE" ? "#22c55e" : fl.state === "STOPPED" ? "#ef4444" : "#9ca3af";
+      flBadge.replaceChildren(dot, "신호수 " + (FLAG_TEXT[fl.state] || "미확인")
+        + (fl.age_s === null || fl.age_s === undefined ? "" : " (마지막 신호 " + fl.age_s + "초 전)"));
       document.getElementById("conductor-badge").textContent =
         "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | Gemini 4 Argon (Google AI Ultra 5x) 5h 점유: " + (sched.argon_used_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_used_5h_share_pct ?? "UNKNOWN") + "%") + " (가용점유 " + (sched.argon_remaining_5h_share_pct === "UNKNOWN" ? "UNKNOWN" : (sched.argon_remaining_5h_share_pct ?? "UNKNOWN") + "%") + ")";
       document.getElementById("offload-badge").textContent =
         "Ollama+Haiku 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
 
-      const gaugesGrid = document.getElementById("gauges-grid");
-      gaugesGrid.innerHTML = "";
-      const barsContainer = document.getElementById("bars-container");
-      barsContainer.innerHTML = "";
-
-      let maxTokens = 1;
-      ENGINES_ORDER.forEach(eng => {{
-        const info = (SNAP.engines || {{}})[eng] || {{}};
-        const w = info[winKey] || {{}};
-        if ((w.effective_budget_tokens || 0) > maxTokens) maxTokens = w.effective_budget_tokens;
-      }});
-
-      ENGINES_ORDER.forEach(eng => {{
-        const info = (SNAP.engines || {{}})[eng] || {{}};
-        const w = info[winKey] || {{}};
-        const pct = Number(info.budget_utilization_5h_pct || 0);
-        const state = info.presence_state || "ACTIVE";
-        const rem = info.usable_remaining_5h_tokens;
-        const cards = info.usable_cards_capacity;
-        const q = info.provider_quota_snapshot;
-        const sub = info.subscription_plan || {{}};
-        const qText = (q && q.used_percent !== null && q.used_percent !== undefined)
-          ? ` | UI 5h:${{q.used_percent}}%` : "";
-        const q7Text = (sub.quota_7d_ui_pct !== null && sub.quota_7d_ui_pct !== undefined)
-          ? `·7d:${{sub.quota_7d_ui_pct}}%` : "";
-        const subTotal5h = sub.total_5h_tokens;
-        const subTotal7d = sub.total_7d_tokens;
-        const subPct7d = Number(sub.utilization_7d_pct || 0);
-
-        const card = document.createElement("div");
-        card.className = "border border-[var(--border)] rounded-lg p-2.5 flex flex-col justify-between space-y-1.5";
-        card.innerHTML = `
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold">${{LABELS[eng] || eng}}</span>
-            <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">${{state}}${{info.quota_reset_ready ? "·RESET" : ""}}</span>
-          </div>
-          <div class="text-[11px] text-[var(--muted-foreground)] font-medium">${{sub.plan_name || ""}}</div>
-          <div class="text-xs text-[var(--muted-foreground)]">
-            5h 총한도 대비: <strong class="text-[var(--foreground)]">${{fmt(w.effective_budget_tokens || 0)}}</strong> / ${{subTotal5h ? fmt(subTotal5h) : "∞"}} tok
-          </div>
-          <div class="text-xs text-[var(--muted-foreground)]">
-            5h 잔여(예산): <strong class="text-[var(--foreground)]">${{rem === null ? "무제한(0원)" : fmt(rem) + " tok"}}</strong>
-          </div>
-          <div class="text-[11px] text-[var(--muted-foreground)]">
-            7d 주간 총량 대비: <strong class="text-[var(--foreground)]">${{fmt(sub.used_7d_effective_tokens || 0)}}</strong> / ${{subTotal7d ? fmt(subTotal7d) : "∞"}} tok (${{subPct7d}}%)
-          </div>
-          <div class="w-full bg-[var(--secondary)] h-2 rounded-full overflow-hidden">
-            <div class="bg-[var(--primary)] h-2 rounded-full" style="width: ${{rem === null ? 15 : Math.min(100, Math.max(4, pct))}}%"></div>
-          </div>
-          <div class="flex items-center justify-between text-xs">
-            <span>5h: ${{rem === null ? "0%" : pct + "%"}}${{qText}}${{q7Text}}</span>
-            <span class="font-semibold">${{rem === null ? "∞ 카드" : "가용 " + cards + "장"}}</span>
-          </div>
-        `;
-        gaugesGrid.appendChild(card);
-
-        const relPct = Math.min(100, Math.max(3, Math.round(((w.effective_budget_tokens || 0) / maxTokens) * 100)));
-        const barRow = document.createElement("div");
-        barRow.className = "space-y-0.5";
-        barRow.innerHTML = `
-          <div class="flex justify-between text-xs">
-            <span>${{LABELS[eng] || eng}} (${{w.calls || 0}} calls)</span>
-            <span>유효 ${{fmt(w.effective_budget_tokens || 0)}} / 원본 ${{fmt(w.raw_total_tokens || 0)}} tok</span>
-          </div>
-          <div class="w-full bg-[var(--secondary)] h-2 rounded-full overflow-hidden">
-            <div class="bg-[var(--primary)] h-2 rounded-full" style="width: ${{relPct}}%"></div>
-          </div>
-        `;
-        barsContainer.appendChild(barRow);
-      }});
 
       const assigns = sched.phase_assignments || [];
       const subSched = SNAP.sub_process_schedule || {{}};
       const subCards = subSched.card_sub_schedules || [];
-      document.getElementById("sched-count").textContent = `활성·대기 ${{assigns.length}}개 카드 · 세부공정 ${{subSched.total_sub_processes ?? 0}}개`;
+      document.getElementById("sched-count").textContent = `장부 미완료 ${{assigns.length}}개 카드`;
       const schedList = document.getElementById("schedule-list");
       schedList.innerHTML = "";
       if (assigns.length === 0) {{
         schedList.innerHTML = `<div class="text-[var(--muted-foreground)]">모든 활성 단계가 DONE 상태입니다. 새 카드 생성 시 가용 토큰 최다 도구에 자동 배정됩니다.</div>`;
       }} else {{
+        // U286: shadcn-style accordion on native <details>/<summary> (keyboard + screen reader for free, no JS library).
+        // Summary = what/who/state at a glance; body = the plan the user checks: goal, blocker, steps, workers, cost.
+        const esc = (v) => String(v ?? "").replace(/[&<>"]/g, ch => ({{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }})[ch]);
+        const STATE_TONE = {{ READY: "#22c55e", ACTIVE: "#60a5fa", REVIEW: "#f59e0b", BLOCKED: "#ef4444", PLANNED: "#9ca3af", DONE: "#6b7280" }};
+        let openId = "";
+        try {{ openId = sessionStorage.getItem("uaosHudOpenCard") || ""; }} catch (e) {{}}
         assigns.forEach(a => {{
-          const row = document.createElement("div");
-          row.className = "border border-[var(--border)] rounded p-2 flex flex-col gap-0.5";
           const cs = subCards.find(c => c.phase_id === a.phase_id) || {{}};
-          const spList = (cs.sub_processes || []).map(sp => `SP${{sp.step_index}}(${{sp.primary_worker}}:${{sp.state}})`).join(" → ");
-          const hoBadge = cs.preemptive_handoff_target ? ` | 선제인계대기: ${{String(cs.preemptive_handoff_target).toUpperCase()}}` : "";
-          row.innerHTML = `
-            <div class="flex items-center justify-between font-semibold">
-              <span>[${{a.phase_id}}] 상태: ${{a.state}}</span>
-              <span>실행: ${{String(cs.assigned_executor || a.assigned_owner).toUpperCase()}} → 독립검증: ${{String(cs.assigned_verifier || a.assigned_reviewer).toUpperCase()}}${{hoBadge}}</span>
-            </div>
-            <div class="text-[var(--muted-foreground)]">
-              예상 유료 토큰: ${{fmt(a.estimated_paid_tokens)}} (${{a.sizing_action}}) | 오프로드: ${{(a.local_offload || []).join(", ")}}
-            </div>
-            <div class="text-[11px] text-[var(--foreground)] pt-0.5">
-              🔄 세부 프로세스 DAG: ${{spList || "SP1~SP5 자동생성"}}
-            </div>
-          `;
-          schedList.appendChild(row);
+          const pd = a.plan_detail || {{}};
+          // Facts only (Codex REVISE 2026-10-29): owner/judge/state come from master_schedule.json; anything the
+          // planner computed (re-assignment, sub-step states, default token estimate) is labelled as a plan, not a fact.
+          const ledgerOwner = String(pd.owner_tool || "").toUpperCase();
+          const ledgerJudge = String(pd.judge || "").toUpperCase();
+          const ledgerState = pd.ledger_state || a.state;
+          const blocked = Boolean(pd.blocker_reason) && ledgerState !== "DONE";
+          const shownState = blocked ? "막힘" : ledgerState;
+          const exec = ledgerOwner || "장부 미기재";
+          const judge = ledgerJudge || "장부 미기재";
+          const planExec = String(cs.assigned_executor || a.assigned_owner || "").toUpperCase();
+          const planJudge = String(cs.assigned_verifier || a.assigned_reviewer || "").toUpperCase();
+          const replan = (planExec && ledgerOwner && planExec !== ledgerOwner) || (planJudge && ledgerJudge && planJudge !== ledgerJudge);
+          const estText = a.estimate_basis === "CARD" ? fmt(a.estimated_paid_tokens) : "미측정";
+          const steps = (cs.sub_processes || []).map(sp => `
+            <li class="flex gap-3 py-1.5 border-b border-[var(--border)] last:border-0">
+              <span class="shrink-0">${{ledgerState === "DONE" ? "✅" : "⚪"}}</span>
+              <div class="flex-1">
+                <div class="font-semibold">${{esc(sp.step_index)}}. ${{esc(sp.stage_name || sp.sub_id)}}</div>
+                <div class="text-[var(--muted-foreground)]">계획 작업자 ${{esc(sp.primary_worker)}} · 감독 ${{esc(sp.supervisor_tool)}}</div>
+              </div>
+              <span class="shrink-0 text-xs text-[var(--muted-foreground)]">${{ledgerState === "DONE" ? "완료" : "계획"}}</span>
+            </li>`).join("");
+          const item = document.createElement("details");
+          item.className = "acc-item border border-[var(--border)] rounded-lg bg-[var(--card)]";
+          item.open = openId === a.phase_id;
+          item.addEventListener("toggle", () => {{
+            if (item.open) schedList.querySelectorAll("details[open]").forEach(o => {{ if (o !== item) o.open = false; }});
+            try {{ sessionStorage.setItem("uaosHudOpenCard", item.open ? a.phase_id : ""); }} catch (e) {{}}
+          }});
+          item.innerHTML = `
+            <summary class="acc-sum flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none">
+              <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0" style="background:${{blocked ? "#ef4444" : STATE_TONE[ledgerState] || "#9ca3af"}}"></span>
+              <span class="font-semibold shrink-0">${{esc(a.phase_id)}}</span>
+              <span class="flex-1 truncate">${{esc(pd.title || "제목 없음")}}</span>
+              <span class="hidden 2xl:inline text-[var(--muted-foreground)] shrink-0">담당 ${{esc(exec)}} · 판정 ${{esc(judge)}}</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-semibold shrink-0" style="background:${{blocked ? "#ef4444" : STATE_TONE[ledgerState] || "#9ca3af"}}22;color:${{blocked ? "#f87171" : STATE_TONE[ledgerState] || "#9ca3af"}}">${{esc(shownState)}}</span>
+              <span class="acc-chev shrink-0 text-[var(--muted-foreground)]">▾</span>
+            </summary>
+            <div class="acc-body px-4 pb-3 pt-1 space-y-2.5 text-sm">
+              ${{pd.blocker_reason ? `<div class="rounded-md px-3 py-2" style="background:#7f1d1d55;border:1px solid #7f1d1d"><b>⛔ 막힌 이유 (장부 원문)</b><div>${{esc(pd.blocker_reason)}}</div></div>` : ""}}
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">장부 상태</div><b>${{esc(ledgerState)}}</b></div>
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">담당 (장부)</div><b>${{esc(exec)}}</b></div>
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">판정 (장부)</div><b>${{esc(judge)}}</b></div>
+                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">유료 토큰 추정</div><b>${{estText}}</b>${{a.estimate_basis === "CARD" ? "" : ` <span class="text-xs">(카드에 추정치 없음)</span>`}}</div>
+              </div>
+              ${{replan ? `<div class="rounded-md border border-dashed border-[var(--border)] px-3 py-2 text-[var(--muted-foreground)]">🧮 계획기 제안(장부 아님): 실행 ${{esc(planExec)}} · 검증 ${{esc(planJudge)}} — 한도 예측으로 계산한 값입니다.</div>` : ""}}
+              ${{steps ? `<div><div class="font-semibold mb-1">🗺️ 세부 프로세스 DAG · 표준 단계 템플릿 <span class="text-xs font-normal text-[var(--muted-foreground)]">(계획일 뿐, 실행 증거가 아님)</span></div><ol class="rounded-md border border-[var(--border)] px-3">${{steps}}</ol></div>` : ""}}
+              ${{pd.action || pd.note ? `<div class="text-[var(--muted-foreground)]">📌 장부 기록: ${{pd.action ? "다음 행동 " + esc(pd.action) : ""}}${{pd.note ? " · 메모 " + esc(pd.note) : ""}}</div>` : ""}}
+            </div>`;
+          schedList.appendChild(item);
         }});
       }}
     }}
 
-    document.getElementById("window-select").addEventListener("change", (e) => renderAll(e.target.value));
+    // U286: reset countdowns tick every second between the 30 s snapshot reloads (pure clock math, no new data).
+    setInterval(() => {{ document.querySelectorAll(".countdown").forEach(el => {{ el.textContent = untilText(el.dataset.at); }}); tickRings(); }}, 1000);
     const hudBtn = document.getElementById("hud-toggle-btn");
     const macroBox = document.getElementById("macro-dashboard-container");
     if (hudBtn && macroBox) {{
+      // U286: the summary/full choice survives the 30 s auto-reload of the live HUD.
+      const applyMode = (summary) => {{
+        macroBox.classList.toggle("hidden", summary);
+        hudBtn.textContent = summary ? "📊 전체 계기판 보기" : "🔽 요약만 보기";
+      }};
+      let summaryMode = false;
+      try {{ summaryMode = localStorage.getItem("uaosHudSummary") === "1"; }} catch (e) {{}}
+      applyMode(summaryMode);
       hudBtn.addEventListener("click", () => {{
-        const hidden = macroBox.classList.toggle("hidden");
-        hudBtn.textContent = hidden ? "📊 Tier-1 전체 대시보드 펼치기" : "🎯 Tier-2 HUD 위젯 모드 전환";
+        summaryMode = !summaryMode;
+        applyMode(summaryMode);
+        try {{ localStorage.setItem("uaosHudSummary", summaryMode ? "1" : "0"); }} catch (e) {{}}
       }});
     }}
-    renderAll("window_5h");
+    renderAll();
+    renderConsole();
   </script>
 </body>
 </html>
