@@ -11,6 +11,8 @@ Status: PROPOSAL — no implementation until Codex agrees owning source + fixed 
 | E3 | P1 | Claude user-desk registry is stale: `user_desk_claude.json` thread `65bc016a`, generation 21, at 2026-10-28; live user desk today is `1bb821b6` (worktree session). Registration does not follow a desk opened in a `.claude/worktrees/*` checkout | `.coord/presence/user_desk_claude.json`, `deliver.py:851-913` |
 | E4 | P1 | The interactive route works when armed: `coord watch --target claude --wakes-session` woke this desk on relay_542a1842 (NEW_LETTER, ACTIONABLE) while the headless attempt for the same letter failed. Failure = watcher not armed at send time, then fallback to E1 | `deliver.py:1194-1202`, watch log |
 | E5 | P2 | Claude -> Codex deliver returns `CLI_NOT_FOUND` from Git Bash (`codex` not on PATH); letter stays in inbox, receipt FAILED | `relay_a706f514` receipt |
+| E5b | P1 | Cause confirmed: Codex Desktop ships `codex.exe` in `%LOCALAPPDATA%/OpenAI/Codex/bin/<build>/`, not on PATH; with that dir prepended `coord deliver` returned DISPATCHED (relay_fa75fe2a). 6 Claude->Codex letters sat unread before. Fix: resolve codex via that install dir when `shutil.which` fails (`deliver.py:175`), and same for `windows.py:153` | live run 2026-10-31 |
+| E6 | P1 | Letters for the U287 author landed in the shared claude inbox and the stop-gate forced this non-author desk to ack them | relay_4be1e0c9 etc. |
 
 ## Root cause
 Delivery treats "no armed watcher" as "no desk" and spends a paid headless turn in a default/forked session, instead of routing to the registered user desk and waiting for it. Desk registration (E3) is not worktree-aware, so the router cannot see the live desk.
