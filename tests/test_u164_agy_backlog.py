@@ -49,7 +49,8 @@ def _child_drain(project: str, calls: str, start, done) -> None:
         time.sleep(0.5)  # hold the letter long enough for the other process to contend
         return SimpleNamespace(returncode=0, stdout=_envelope(), stderr=b"")
 
-    with mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name):
+    with mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name), \
+            mock.patch.object(agy_dispatch, "DAILY_CAP", 20):  # U290: a spawned child does not inherit Base's patch
         start.wait(10)
         rows = agy_dispatch.drain_backlog(Path(project), now=DAY2, runner=runner)
     done.put([row.get("state") for row in rows])
@@ -65,7 +66,8 @@ def _child_dispatch(project: str, calls: str, message_id: str, start, done) -> N
             return SimpleNamespace(returncode=0, stdout=_envelope(), stderr=b"")
         return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
-    with mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name):
+    with mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name), \
+            mock.patch.object(agy_dispatch, "DAILY_CAP", 20):  # U290: a spawned child does not inherit Base's patch
         start.wait(10)
         row = agy_dispatch.dispatch(Path(project), message_id=message_id, actor="claude",
                                     message=f"ACTIONABLE_DELTA audit {message_id}", runner=runner, now=DAY2)
@@ -77,7 +79,8 @@ def _child_crash(project: str, message_id: str) -> None:
     def runner(argv, **kwargs):
         os._exit(3)
 
-    with mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name):
+    with mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name), \
+            mock.patch.object(agy_dispatch, "DAILY_CAP", 20):  # U290: a spawned child does not inherit Base's patch
         agy_dispatch.dispatch(Path(project), message_id=message_id, actor="claude", message="ACTIONABLE_DELTA crash",
                               runner=runner, now=DAY2)
 
@@ -95,6 +98,9 @@ class Base(unittest.TestCase):
         os.environ.pop("UAOS_AGY_AUTO", None)
         self._which = mock.patch("v7_harness.coord.deliver.shutil.which", side_effect=lambda name: name)
         self._which.start()
+        # U290: the shipped default has no daily cap (윤겸스 2026-11-01); these tests keep the opt-in cap path working.
+        self._cap = mock.patch.object(agy_dispatch, "DAILY_CAP", 20)
+        self._cap.start()
         presence.mark(self.project, "claude", "ACTIVE")
         beat = watch_file(self.project, "claude")
         beat.parent.mkdir(parents=True, exist_ok=True)
@@ -104,6 +110,7 @@ class Base(unittest.TestCase):
         self.fail_runs = False
 
     def tearDown(self):
+        self._cap.stop()
         self._which.stop()
         self._env.stop()
         self._tmp.cleanup()
@@ -124,7 +131,8 @@ class Base(unittest.TestCase):
     def backlog(self) -> Path:
         return self.project / ".coord" / "mailbox" / "delivery" / "agy_backlog"
 
-    def fill_cap(self, ts: float, count: int = agy_dispatch.DAILY_CAP) -> None:
+    def fill_cap(self, ts: float, count: int | None = None) -> None:
+        count = agy_dispatch.DAILY_CAP if count is None else count
         self.ledger.parent.mkdir(parents=True, exist_ok=True)
         with open(self.ledger, "a", encoding="utf-8") as handle:
             for _ in range(count):

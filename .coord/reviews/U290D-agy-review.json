@@ -1,0 +1,27 @@
+{
+  "task_id": "U290D",
+  "reviewer": "agy",
+  "author_worker": "ollama",
+  "bundle_id": "bd5484d5f0606ad533ecd3bc292a5f237dbc938d61df316cc7572be040be631e",
+  "advisory": true,
+  "verdict": "PASS",
+  "counterexamples": [],
+  "evidence_lines": [
+    "v7_harness/coord/agy_dispatch.py:22 DAILY_CAP: int | None = None",
+    "v7_harness/coord/agy_dispatch.py:155 def _cap_spent(project: Path, now: float) -> bool:",
+    "v7_harness/coord/notify.py:31 DAILY_LIMIT: int | None = None",
+    "v7_harness/coord/notify.py:197 if DAILY_LIMIT is not None and sent_today >= DAILY_LIMIT:",
+    "v7_harness/coord/wait_reason.py:109 if DAILY_CAP is not None:"
+  ],
+  "cost_gate": "WITHIN",
+  "usage": {
+    "input_tokens": 21854,
+    "output_tokens": 242,
+    "thinking_tokens": 80,
+    "cache_read_tokens": 0,
+    "total_tokens": 22096
+  },
+  "elapsed_s": 20,
+  "error": "",
+  "judge_conversation_id": "21d88e2b-3ec2-46be-a7fe-595c3825b804"
+}
