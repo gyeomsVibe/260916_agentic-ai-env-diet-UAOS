@@ -11,9 +11,9 @@
 
 ## 요약
 
-- 전체 지점: 53
+- 전체 지점: 52
 - GAP: 0
-- CALLER_INPUT: 33
+- CALLER_INPUT: 32
 - GUARDED: 3
 - FIXED: 13
 - PASS_THROUGH: 4
@@ -36,7 +36,6 @@
 | `v7_harness/coord/day_brief.py:45` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:168` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/deliver.py:308` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/deliver.py:1301` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:42` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/merge_route.py:61` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/next_card.py:53` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
@@ -90,7 +89,6 @@
 - `v7_harness/coord/day_brief.py:45` DIRECT `subprocess.run`
 - `v7_harness/coord/deliver.py:168` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/deliver.py:308` INDIRECT `execute -> subprocess.run`
-- `v7_harness/coord/deliver.py:1301` DIRECT `subprocess.run`
 - `v7_harness/coord/desk_delta.py:42` DIRECT `subprocess.run`
 - `v7_harness/coord/merge_route.py:61` INDIRECT `runner -> subprocess.run`
 - `v7_harness/coord/next_card.py:53` DIRECT `subprocess.run`

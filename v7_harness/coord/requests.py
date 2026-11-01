@@ -7,6 +7,9 @@ replace. A wake is at-least-once; `ack` is the only close and it is idempotent.
 
 Records live in `shared_desk(project)/.coord/requests/<id>.json` (a linked worktree shares the main desk, U59).
 ACKED and CANCELLED records move to `requests/closed/`; nothing is deleted.
+
+The session binding is a routing key, not actor authentication. No remote-derived value (git remote URL) is ever
+read or stored; a binding names the checkout it was made in (`origin_checkout`) instead (U277-C1 D1-D3).
 """
 
 from __future__ import annotations
@@ -47,8 +50,10 @@ RECONCILE_WINDOW_S = 600.0  # two dispatch timeouts (DISPATCH_TIMEOUT_S = 300 s)
 SKEW_S = 300.0  # clock skew tolerance for hints; exact answers are never time-filtered
 LOCK_WAIT_S = 10.0
 LOCK_STALE_S = 30.0
-BINDING_FIELDS = ("request_id", "project_root", "repo", "requester", "requester_session", "target", "card",
-                  "subject", "head")
+BINDING_VERSION = 2  # v1 records carried a remote-derived `repo`; v2 never does (U277-C1 D1)
+LEGACY_QUARANTINED = "LEGACY_QUARANTINED"
+BINDING_FIELDS = ("binding_version", "request_id", "project_root", "origin_checkout", "requester",
+                  "requester_session", "target", "card", "subject", "head")
 _ID_RE = re.compile(r"[A-Za-z0-9_.-]+")
 _SHA_RE = re.compile(r"[0-9a-f]{40}")
 _PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
@@ -256,12 +261,12 @@ def _mutate(project: Path, request_id: str, fn: Callable[[dict[str, Any]], dict[
 
 
 def register(project: Path, *, request_id: str, requester: str, target: str, card: str, subject: str = "",
-             head: str = "", requester_session: str = "", repo: str = "", now: float | None = None) -> dict[str, Any]:
+             head: str = "", requester_session: str = "", now: float | None = None) -> dict[str, Any]:
     """Durably record a verdict request before anything is sent. Same id and binding: no-op. Different: refused."""
     _safe_id(request_id)
     moment = _now(now)
-    binding = {"request_id": request_id, "project_root": _project_root(project), "repo": repo or "",
-               "requester": requester, "requester_session": requester_session or "", "target": target,
+    binding = {"binding_version": BINDING_VERSION, "request_id": request_id, "project_root": _project_root(project),
+               "origin_checkout": str(Path(project).resolve()), "requester": requester, "requester_session": requester_session or "", "target": target,
                "card": card or "", "subject": subject or "", "head": (head or "").strip().lower()}
     digest = _binding_hash(binding)
     with _locked(project, request_id):
@@ -294,7 +299,13 @@ def mark_delivered(project: Path, request_id: str, delivery: str) -> dict[str, A
 
 def get(project: Path, request_id: str) -> dict[str, Any] | None:
     try:
-        return _load(_path(project, request_id)) or _load(_path(project, request_id, closed=True))
+        open_path, closed_path = _path(project, request_id), _path(project, request_id, closed=True)
+        row = _load(open_path) or _load(closed_path)
+        if (row is not None and _is_legacy(row)) or (row is None and (open_path.parent / "quarantine" /
+                                                                      open_path.name).is_file()):
+            _quarantine_legacy(project, request_id)
+            row = _load(open_path) or _load(closed_path)
+        return row
     except RequestError:
         return None
 
@@ -315,10 +326,51 @@ def open_requests(project: Path, requester: str) -> list[dict[str, Any]]:
     return open_for(project, requester)
 
 
+def _is_legacy(row: dict[str, Any]) -> bool:
+    """A v1 record that may hold a remote-derived value (U277-C1 D4): no binding_version and a non-empty repo."""
+    return "binding_version" not in row and bool(row.get("repo") or row.get("repo_url"))
+
+
+def _quarantine_legacy(project: Path, request_id: str) -> None:
+    """Move a legacy row (open or closed) to requests/quarantine/ unchanged, then write a stub without the remote keys
+    where it was and append one BLOCKED event. Idempotent under the request lock; a crash after the move is finished by
+    the next caller from the quarantined copy (U277-C1 D5)."""
+    qdir = _base(project) / "quarantine"
+    qpath = qdir / f"{_safe_id(request_id)}.json"
+    with _locked(project, request_id):
+        source = next((p for p in (_path(project, request_id), _path(project, request_id, closed=True))
+                       if (_load(p) or {}) and _is_legacy(_load(p) or {})), None)
+        qdir.mkdir(parents=True, exist_ok=True)
+        (qdir / ".gitignore").write_text("*\n", encoding="utf-8")
+        if source is not None:
+            os.replace(source, qpath)
+        row = _load(qpath)
+        if row is None:
+            return
+        closed = row.get("state") in (ACKED, CANCELLED)
+        target = _path(project, request_id, closed=closed)
+        if _load(target) is None:
+            stub = {k: v for k, v in row.items() if k not in ("repo", "repo_url")}
+            stub.update(state=LEGACY_QUARANTINED, binding_version=1, quarantined_at=time.time())
+            _write(target, stub)
+        ref = f"request:{request_id}"
+        if not any(e.get("kind") == "BLOCKED" and ref in (e.get("refs") or []) for e in stream.read_events(project)):
+            stream.append_event(project, actor=str(row.get("requester") or "claude"), kind="BLOCKED",
+                                step=str(row.get("card") or "U277"), summary="legacy request quarantined; re-issue it",
+                                refs=[ref])
+
+
 def _rows(project: Path) -> list[dict[str, Any]]:
     base = _base(project)
     if not base.is_dir():
         return []
+    qdir = base / "quarantine"
+    # A quarantined copy without its stub is a crash after the move; finish it before reading (U277-C1 D5).
+    pending = [path.stem for path in sorted(qdir.glob("*.json")) if _load(base / path.name) is None
+               and _load(base / "closed" / path.name) is None] if qdir.is_dir() else []
+    pending += [path.stem for path in sorted(base.glob("*.json")) if _is_legacy(_load(path) or {})]
+    for request_id in pending:
+        _quarantine_legacy(project, request_id)
     return [row for row in (_load(path) for path in sorted(base.glob("*.json"))) if row is not None]
 
 
@@ -660,6 +712,8 @@ def _settle(project: Path, request_id: str, session: str | None, *, states: tupl
     outcome: dict[str, str] = {}
 
     def fn(cur: dict[str, Any]) -> dict[str, Any] | None:
+        if cur.get("state") == LEGACY_QUARANTINED:
+            raise RequestError("REQUEST_QUARANTINED", f"{request_id} is a quarantined legacy request; re-issue it")
         _check_session(cur, session, code)
         if cur.get("state") in (ACKED, CANCELLED):
             outcome["out"] = "ALREADY"
