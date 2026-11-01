@@ -22,7 +22,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-JUDGE_TOOL = {"agy": "antigravity", "codex": "codex"}
+JUDGE_TOOL = {"agy": "antigravity", "codex": "codex", "claude": "claude"}
+ALL_TOOLS = ("codex", "claude", "antigravity")
 # U47-J6: `codex exec` answers headlessly (codex-cli 0.157.1, 2026-09-27), so Codex judges without a person relaying
 # a letter. The re-review of that day asked for this route first, agy second, and REVIEW (no approval) when neither
 # answers. Codex's desk state does not gate its own judgement; only agy acts *for* an away Codex.
@@ -121,6 +122,34 @@ def codex_away(desk: dict[str, Any]) -> tuple[bool, str]:
     return False, f"CODEX_JUDGES: codex is {state}; while Codex is active or unknown it judges (default logic)"
 
 
+def tool_away(desk: dict[str, Any], tool_name: str) -> tuple[bool, str]:
+    """Return (True, reason) when `tool_name` is explicitly LIMITED or ABSENT on the desk."""
+    canon = JUDGE_TOOL.get(tool_name, tool_name)
+    state = (desk.get(canon) or {}).get("state") or "UNKNOWN"
+    if state in ("LIMITED", "ABSENT"):
+        return True, f"{canon} {state}"
+    return False, f"{canon.upper()}_ACTIVE_OR_UNKNOWN: {canon} is {state}"
+
+
+def two_tool_quorum_active(desk: dict[str, Any], away_tool: str, judge_tool: str) -> bool:
+    """U291: True when `away_tool` is LIMITED/ABSENT and BOTH remaining tools in ALL_TOOLS are explicitly ACTIVE."""
+    away_canon = JUDGE_TOOL.get(away_tool, away_tool)
+    judge_canon = JUDGE_TOOL.get(judge_tool, judge_tool)
+    if away_canon not in ALL_TOOLS or judge_canon not in ALL_TOOLS or away_canon == judge_canon:
+        return False
+    is_away, _ = tool_away(desk, away_canon)
+    if not is_away:
+        return False
+    remaining = [t for t in ALL_TOOLS if t != away_canon]
+    return all((desk.get(t) or {}).get("state") == "ACTIVE" for t in remaining)
+
+
+def build_claude_command(runs: Path, schema: Path) -> list[str]:
+    """Read-only `claude -p` in the run folder returning structured JSON matching `schema`."""
+    schema_inline = schema.read_text(encoding="utf-8") if schema.is_file() else json.dumps(VERDICT_SCHEMA)
+    return ["claude", "-p", "--output-format", "json", "--json-schema", schema_inline, "--allowedTools", "Read", "--max-budget-usd", "0.50"]
+
+
 def judge_prompt(task_id: str, bundle_id: str, manual_text: str, diff: str, acceptance_exit: Any,
                  acceptance_tail: str) -> str:
     from .review import MAX_DIFF_CHARS
@@ -183,25 +212,45 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     work_dir, source, manual_path = Path(work_dir).resolve(), Path(source).resolve(), Path(manual_path).resolve()
     manual_text = manual_path.read_text(encoding="utf-8")
     contract = parse_contract(manual_text) or {}
+    from .coord.agy_moderator import is_codex_exclusive_keypoint
+    from .coord.hook_context import shared_desk
+
+    active_desk = desk if desk is not None else read_all(Path(shared_desk(Path(project or source).resolve())))
+    named_judge_raw = str(contract.get("judge") or "")
+    named_judge = JUDGE_TOOL.get(named_judge_raw, named_judge_raw)
+    is_keypoint = is_codex_exclusive_keypoint({**contract, "files": contract.get("allow") or []})
+    if is_keypoint and judge != "codex":
+        raise JudgeRefused("KEYPOINT_NEEDS_CODEX: codex-exclusive keypoint contracts require judge=codex")
+    acting_for: str | None = None
+    quorum_when_codex_active = False
     if judge == "codex":
         why = "codex judges its own contract (U47-J6)"
+        if named_judge and named_judge != "codex" and two_tool_quorum_active(active_desk, named_judge, "codex"):
+            acting_for = named_judge
+            why = f"codex acting for {named_judge} under 2-tool quorum (U291)"
     else:
-        from .coord.agy_moderator import is_codex_exclusive_keypoint
-        from .coord.hook_context import shared_desk
         routine_ok = (
             str(contract.get("routine_approval") or "").strip().lower() in ("true", "1", "yes")
-            and not is_codex_exclusive_keypoint({**contract, "files": contract.get("allow") or []})
+            and not is_keypoint
         )
+        away, away_why = codex_away(active_desk)
         if routine_ok:
             why = "u257_routine_cross_approval"
+        elif away:
+            why = away_why
+            acting_for = "codex"
+        elif named_judge and named_judge != "codex" and two_tool_quorum_active(active_desk, named_judge, JUDGE_TOOL[judge]):
+            quorum_when_codex_active = True
+            acting_for = named_judge
+            why = f"{JUDGE_TOOL[judge]} acting for {named_judge} under 2-tool quorum (U291)"
         else:
-            away, why = codex_away(desk if desk is not None else read_all(Path(shared_desk(Path(project or source).resolve()))))
-            if not away:
-                raise JudgeRefused(why)
+            raise JudgeRefused(away_why)
     if contract.get("work_id") != task_id:
         raise JudgeRefused(f"TASK_MISMATCH: manual work_id {contract.get('work_id')!r} is not {task_id!r}")
-    if contract.get("judge") != JUDGE_TOOL[judge]:
-        raise JudgeRefused(f"NOT_THE_NAMED_JUDGE: the contract names judge {contract.get('judge')!r}")
+    if named_judge != JUDGE_TOOL[judge]:
+        if not two_tool_quorum_active(active_desk, named_judge, JUDGE_TOOL[judge]):
+            raise JudgeRefused(f"NOT_THE_NAMED_JUDGE: the contract names judge {contract.get('judge')!r}")
+        acting_for = named_judge
     runs = work_dir / "runs" / task_id
     try:
         summary = json.loads((runs / "summary.json").read_text(encoding="utf-8"))
@@ -210,6 +259,8 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
         raise JudgeRefused(f"NO_PILOT_RUN:{runs} ({type(exc).__name__})") from exc
     if author in (judge, JUDGE_TOOL[judge]):
         raise JudgeRefused(f"JUDGE_IS_AUTHOR:{judge} wrote this bundle")
+    if quorum_when_codex_active and author != "codex":
+        raise JudgeRefused("CODEX_JUDGES: codex is ACTIVE and did not author this bundle; codex must judge")
     if summary.get("promotion") != "DRY_RUN_PASSED" or summary.get("acceptance_exit") != 0:
         raise JudgeRefused(f"NOT_READY: promotion {summary.get('promotion')!r}, "
                            f"acceptance_exit {summary.get('acceptance_exit')!r}")
@@ -248,6 +299,8 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     last = runs / "judge_codex_last.json"
     if judge == "codex":
         argv = build_codex_command(runs, schema, last)
+    elif judge == "claude":
+        argv = build_claude_command(runs, schema)
     else:
         short = (f"Read {request.name} in this folder: a judge request with the contract, the acceptance result and "
                  "the complete diff. Do not edit any file. Answer with the JSON verdict it asks for.")
@@ -286,6 +339,29 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
                 judgement = parse_judgement({"response": answer.decode("utf-8", errors="replace")})
                 if judgement is None:
                     error = "JUDGE_UNPARSED: codex did not return the JSON verdict"
+        elif judge == "claude":
+            done = runner(argv, cwd=str(runs), env=env, input=prompt_text.encode("utf-8"), capture_output=True,
+                          timeout=timeout_s + 60)
+            stdout = done.stdout or b""
+            envelope_sha = hashlib.sha256(stdout).hexdigest() if stdout else ""
+            if done.returncode != 0:
+                error = f"JUDGE_FAILED:claude exit {done.returncode}"
+                provider_message = _provider_message(stdout)
+            else:
+                try:
+                    env_obj = json.loads(stdout.decode("utf-8", errors="replace"))
+                except ValueError:
+                    env_obj = {"response": stdout.decode("utf-8", errors="replace")}
+                if isinstance(env_obj, dict):
+                    conversation_id = env_obj.get("session_id") or env_obj.get("conversation_id")
+                    u = env_obj.get("usage")
+                    if isinstance(u, dict):
+                        usage = {k: int(v) for k, v in u.items() if isinstance(v, int)}
+                    if "result" in env_obj and "response" not in env_obj:
+                        env_obj = {**env_obj, "response": env_obj.get("result")}
+                judgement = parse_judgement(env_obj if isinstance(env_obj, dict) else {})
+                if judgement is None:
+                    error = "JUDGE_UNPARSED: claude did not return the JSON verdict"
         else:
             done = runner(argv, cwd=str(runs), env=env, capture_output=True, timeout=timeout_s + 60)
             stdout = done.stdout or b""
@@ -320,7 +396,7 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
         else:
             error = f"BUNDLE_MISMATCH: verdict names {judgement['bundle_id']!r}"
     record: dict[str, Any] = {
-        "task_id": task_id, "judge": JUDGE_TOOL[judge], "acting_for": None if judge == "codex" else "codex",
+        "task_id": task_id, "judge": JUDGE_TOOL[judge], "acting_for": acting_for,
         "codex_state": why,
         "author_worker": author, "bundle_id": bundle_id, "verdict": verdict,
         "evidence": (judgement or {}).get("evidence", []),
