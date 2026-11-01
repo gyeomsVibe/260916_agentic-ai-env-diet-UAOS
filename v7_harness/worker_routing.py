@@ -13,9 +13,13 @@ HAIKU = 'claude-haiku-5-5'
 
 OLLAMA_PREPROCESS_KINDS = ('map', 'draft', 'summarize', 'classify', 'extract', 'extract_semantic', 'transform')
 OLLAMA_PATCH_KINDS = ('patch', 'edit', 'micro_patch')
+U280_NEW_KINDS = ('patch', 'micro_patch', 'map', 'extract')
 EVALUATOR_GATE_TOKENS = (
-    'evaluator', 'judge', 'calculator_gate', 'firewall_audit', 'stop_gate',
-    'rsi_release', 'proof_receipt', 'security', 'consensus', 'tests/', 'tests\\',
+    'evaluator', 'judge', 'gate', 'ledger', 'audit', 'review', 'rsi',
+    'calculator_gate', 'firewall_audit', 'stop_gate', 'output_gate',
+    'evidence_ledger', 'usage_ledger', 'intent_ledger', 'rsi_release',
+    'proof_receipt', 'worker_routing', 'security', 'consensus',
+    'tests/', 'tests\\', 'test/', 'test\\',
 )
 
 
@@ -28,6 +32,14 @@ def _positive(value):
         return type(value) in (int, float) and math.isfinite(value) and value > 0
     except OverflowError:
         return False
+
+
+def _is_evaluator_or_gate_path(path: str) -> bool:
+    norm = path.strip().lower().replace('\\', '/')
+    if any(tok in norm for tok in EVALUATOR_GATE_TOKENS):
+        return True
+    parts = [p for p in norm.split('/') if p]
+    return any(p in ('test', 'tests') or p.startswith('test_') or p.endswith('_test.py') for p in parts)
 
 
 def evaluate_ollama_task_fit(
@@ -59,13 +71,9 @@ def evaluate_ollama_task_fit(
         multi_file_architecture = task.get('multi_file_architecture', multi_file_architecture)
         functions = task.get('functions', functions)
         changed_lines = task.get('changed_lines', changed_lines)
-        source_verified = task.get(
-            'source_verified', task.get('bounded', source_verified)
-        )
+        source_verified = task.get('source_verified', source_verified)
         exact_search_block = task.get('exact_search_block', exact_search_block)
-        pinned_acceptance = task.get(
-            'pinned_acceptance', task.get('frozen_gate', pinned_acceptance)
-        )
+        pinned_acceptance = task.get('pinned_acceptance', pinned_acceptance)
     elif isinstance(task, str):
         kind = task
     elif task is not None:
@@ -106,7 +114,7 @@ def evaluate_ollama_task_fit(
             'execution_authorized': False,
         }
     if target_files is not None:
-        if not isinstance(target_files, (list, tuple)) or any(not isinstance(p, str) for p in target_files):
+        if not isinstance(target_files, (list, tuple)) or any(not isinstance(p, str) or not p.strip() for p in target_files):
             return {
                 'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
                 'local_qualified': False,
@@ -119,9 +127,7 @@ def evaluate_ollama_task_fit(
         files_norm = ()
 
     norm_kind = kind.strip().lower()
-    touches_gate_file = any(
-        any(tok in path for tok in EVALUATOR_GATE_TOKENS) for path in files_norm
-    )
+    touches_gate_file = any(_is_evaluator_or_gate_path(path) for path in files_norm)
 
     # Precedence (1): evaluator/security/consensus/gate files -> REFUSE_LOCAL_EVALUATOR_OR_GATE
     if touches_evaluator or touches_gate_file or norm_kind in JUDGMENTS or norm_kind in ('evaluator', 'security', 'consensus', 'gate'):
@@ -246,29 +252,37 @@ def plan(task: dict, availability: dict) -> dict:
     """The same deterministic→local→explicit bounded Haiku policy for all callers."""
     if not _valid(task, availability):
         return _answer(None, 'INVALID_OR_UNBOUNDED_TASK', 'BLOCKED')
+    raw_kind = task.get('kind')
+    kind = raw_kind.strip().lower() if isinstance(raw_kind, str) else raw_kind
     fit = None
-    if 'local_qualified' not in task or any(
-        k in task for k in (
-            'touches_evaluator', 'target_files', 'exact_dictation',
-            'whole_file_rewrite', 'multi_file_architecture',
-            'source_verified', 'exact_search_block', 'pinned_acceptance',
+    if (
+        'local_qualified' not in task
+        or kind in U280_NEW_KINDS
+        or any(
+            k in task for k in (
+                'touches_evaluator', 'target_files', 'exact_dictation',
+                'same_cause_failures', 'whole_file_rewrite', 'multi_file_architecture',
+                'functions', 'source_verified', 'exact_search_block', 'pinned_acceptance',
+            )
         )
     ):
         fit = evaluate_ollama_task_fit(task)
+        if str(fit.get('reason', '')).startswith('INVALID_'):
+            return _answer(None, 'INVALID_OR_UNBOUNDED_TASK', 'BLOCKED')
         if fit['verdict'] == 'REFUSE_LOCAL_EVALUATOR_OR_GATE':
             return _answer('conductor', fit['reason'])
         if fit['verdict'] == 'DETERMINISTIC_APPLY_FIRST':
             return _answer('deterministic', fit['reason'])
-    kind = task.get('kind')
     if kind in EXACT:
         return _answer('deterministic', 'EXACT_OPERATION')
     if kind in JUDGMENTS:
         return _answer('conductor', 'INDEPENDENT_JUDGMENT_REQUIRED')
     if kind not in LOCAL_TASKS and kind not in OLLAMA_PREPROCESS_KINDS and kind not in OLLAMA_PATCH_KINDS:
         return _answer(None, 'UNKNOWN_TASK_KIND', 'BLOCKED')
-    local_qualified = task['local_qualified'] if 'local_qualified' in task else bool(fit and fit['local_qualified'])
-    if fit is not None and not fit['local_qualified']:
-        local_qualified = False
+    if fit is not None:
+        local_qualified = bool(fit['local_qualified'])
+    else:
+        local_qualified = bool(task.get('local_qualified'))
     total = task['input_tokens'] + task['output_tokens']
     if (availability.get('local') is True and local_qualified
         and task['local_failures'] < 2 and task['changed_lines'] <= EDIT_LINES

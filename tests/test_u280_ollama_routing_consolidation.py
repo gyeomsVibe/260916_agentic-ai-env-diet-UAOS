@@ -56,6 +56,14 @@ class TestU280OllamaRoutingConsolidation(unittest.TestCase):
             'v7_harness/calculator_gate.py',
             'v7_harness/firewall_audit.py',
             'v7_harness/coord/stop_gate.py',
+            'v7_harness/output_gate.py',
+            'v7_harness/evidence_ledger.py',
+            'v7_harness/coord/usage_ledger.py',
+            'v7_harness/intent_ledger.py',
+            'v7_harness/rsi.py',
+            'v7_harness/review.py',
+            'v7_harness/worker_routing.py',
+            'test/some_unit_test.py',
             'tests/test_u280_ollama_routing_consolidation.py',
         ):
             with self.subTest(path=path):
@@ -358,6 +366,67 @@ class TestU280OllamaRoutingConsolidation(unittest.TestCase):
         self.assertIn('https://docs.ollama.com/capabilities/structured-outputs', note)
         self.assertIn('https://arxiv.org/abs/2506.02153', note)
         self.assertIn('evaluate_ollama_task_fit', note)
+
+    def test_25_p2_2_plan_fails_closed_on_malformed_fit_inputs_instead_of_paid_haiku(self):
+        for bad_override in (
+            {'kind': 'patch', 'target_files': 'a.py', 'allow_remote': True},
+            {'kind': 'edit', 'local_qualified': True, 'target_files': 'a.py', 'allow_remote': True},
+            {'kind': 'patch', 'touches_evaluator': 'yes', 'allow_remote': True},
+            {'kind': 'patch', 'functions': '1', 'allow_remote': True},
+        ):
+            with self.subTest(bad_override=bad_override):
+                routed = plan(
+                    self.base_task(**bad_override),
+                    {'local': True, 'haiku': True},
+                )
+                self.assertEqual(routed['status'], 'BLOCKED')
+                self.assertIsNone(routed['worker'])
+                self.assertEqual(routed['reason'], 'INVALID_OR_UNBOUNDED_TASK')
+
+    def test_26_p2_3_new_u280_kinds_cannot_bypass_fit_gate_with_local_qualified_true(self):
+        # kind='patch' with local_qualified=True but missing exact_search_block/pinned_acceptance must NOT route to local
+        bypass_patch = self.base_task(
+            kind='patch',
+            local_qualified=True,
+            changed_lines=5,
+            allow_remote=False,
+        )
+        res_patch = plan(bypass_patch, {'local': True, 'haiku': True})
+        self.assertEqual(res_patch['status'], 'BLOCKED')
+        self.assertIsNone(res_patch['worker'])
+
+        # kind='map' with local_qualified=True but source_verified=False must NOT route to local
+        bypass_map = self.base_task(
+            kind='map',
+            local_qualified=True,
+            changed_lines=0,
+            allow_remote=False,
+        )
+        res_map = plan(bypass_map, {'local': True, 'haiku': True})
+        self.assertEqual(res_map['status'], 'BLOCKED')
+        self.assertIsNone(res_map['worker'])
+
+        # bounded=True alone no longer aliases to source_verified=True (P3-1)
+        bounded_only = self.base_task(
+            kind='summarize',
+            bounded=True,
+            allow_remote=False,
+        )
+        del bounded_only['local_qualified']
+        res_bounded = plan(bounded_only, {'local': True, 'haiku': True})
+        self.assertEqual(res_bounded['status'], 'BLOCKED')
+
+        # Case-normalized kind in plan() (P3-3)
+        upper_map = self.base_task(
+            kind='Summarize',
+            source_verified=True,
+            changed_lines=0,
+            allow_remote=False,
+        )
+        del upper_map['local_qualified']
+        res_upper = plan(upper_map, {'local': True, 'haiku': True})
+        self.assertEqual(res_upper['status'], 'READY')
+        self.assertEqual(res_upper['worker'], 'local')
 
 
 if __name__ == '__main__':
