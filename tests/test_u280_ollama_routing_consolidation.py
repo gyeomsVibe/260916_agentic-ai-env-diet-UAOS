@@ -148,6 +148,7 @@ class TestU280OllamaRoutingConsolidation(unittest.TestCase):
     def test_10_precedence_3_single_failure_still_allows_qualified_work(self):
         res = evaluate_ollama_task_fit(
             kind='patch',
+            target_files=['v7_harness/coord/desk_delta.py'],
             same_cause_failures=1,
             functions=1,
             changed_lines=10,
@@ -249,6 +250,7 @@ class TestU280OllamaRoutingConsolidation(unittest.TestCase):
     def test_18_precedence_6_patch_missing_exact_search_or_pinned_acceptance_escalates(self):
         no_search = evaluate_ollama_task_fit(
             kind='patch',
+            target_files=['v7_harness/coord/desk_delta.py'],
             functions=1,
             changed_lines=5,
             exact_search_block=False,
@@ -259,6 +261,7 @@ class TestU280OllamaRoutingConsolidation(unittest.TestCase):
 
         no_gate = evaluate_ollama_task_fit(
             kind='patch',
+            target_files=['v7_harness/coord/desk_delta.py'],
             functions=1,
             changed_lines=5,
             exact_search_block=True,
@@ -427,6 +430,86 @@ class TestU280OllamaRoutingConsolidation(unittest.TestCase):
         res_upper = plan(upper_map, {'local': True, 'haiku': True})
         self.assertEqual(res_upper['status'], 'READY')
         self.assertEqual(res_upper['worker'], 'local')
+
+    def test_27_p2_a_explicit_local_qualified_false_is_never_overwritten_by_fit(self):
+        task_remote = self.base_task(
+            kind='edit',
+            local_qualified=False,
+            target_files=['v7_harness/cli.py'],
+            functions=1,
+            exact_search_block=True,
+            pinned_acceptance=True,
+            allow_remote=True,
+        )
+        routed_remote = plan(task_remote, {'local': True, 'haiku': True})
+        self.assertEqual(routed_remote['status'], 'READY')
+        self.assertEqual(routed_remote['worker'], 'claude')
+        self.assertEqual(routed_remote['model'], 'claude-haiku-5-5')
+
+        task_blocked = dict(task_remote, allow_remote=False)
+        routed_blocked = plan(task_blocked, {'local': True, 'haiku': True})
+        self.assertEqual(routed_blocked['status'], 'BLOCKED')
+        self.assertIsNone(routed_blocked['worker'])
+
+    def test_28_p2_b_patch_without_target_files_refuses_local_route(self):
+        fit_empty = evaluate_ollama_task_fit(
+            kind='patch',
+            functions=1,
+            changed_lines=5,
+            exact_search_block=True,
+            pinned_acceptance=True,
+        )
+        self.assertEqual(fit_empty['verdict'], 'ESCALATE_BOUNDED_SLICE_REQUIRED')
+        self.assertFalse(fit_empty['local_qualified'])
+
+        plan_no_target = plan(
+            self.base_task(
+                kind='patch',
+                functions=1,
+                changed_lines=5,
+                exact_search_block=True,
+                pinned_acceptance=True,
+                allow_remote=False,
+            ),
+            {'local': True, 'haiku': True},
+        )
+        self.assertEqual(plan_no_target['status'], 'BLOCKED')
+        self.assertIsNone(plan_no_target['worker'])
+
+    def test_29_p2_c_missing_local_qualified_without_fit_keys_stays_blocked(self):
+        unqualified_summarize = {
+            'caller': 'codex',
+            'kind': 'summarize',
+            'input_tokens': 800,
+            'output_tokens': 200,
+            'changed_lines': 8,
+            'local_failures': 0,
+            'allow_remote': True,
+            'budget_tokens': 3000,
+            'budget_usd': 0.04,
+            'timeout_s': 60,
+        }
+        routed = plan(unqualified_summarize, {'local': True, 'haiku': True})
+        self.assertEqual(routed['status'], 'BLOCKED')
+        self.assertIsNone(routed['worker'])
+        self.assertEqual(routed['reason'], 'INVALID_OR_UNBOUNDED_TASK')
+
+    def test_30_p3_a_tokenized_path_matching_avoids_substring_false_refusals(self):
+        for benign_path in (
+            'v7_harness/version.py',
+            'docs/preview.md',
+            'src/navigate.py',
+            'latest/x.py',
+            'aggregate.py',
+        ):
+            with self.subTest(benign_path=benign_path):
+                fit = evaluate_ollama_task_fit(
+                    kind='summarize',
+                    target_files=[benign_path],
+                    source_verified=True,
+                )
+                self.assertEqual(fit['verdict'], 'ALLOW_LOCAL_PREPROCESS')
+                self.assertTrue(fit['local_qualified'])
 
 
 if __name__ == '__main__':
