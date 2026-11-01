@@ -215,7 +215,7 @@ def gate(project: Path, tool: str, session: str | None = None, now: float | None
     from v7_harness.coord import failover_closeout, presence
 
     try:
-        failover_closeout.replan_on_quota_limit(project, now=now)
+        failover_closeout.replan_on_quota_limit(project, now=now, lock_timeout_s=0.05)
     except Exception:  # noqa: BLE001
         pass
     if presence.read(project, tool, now=now).get("state") in NO_BUDGET_STATES:
@@ -229,7 +229,7 @@ def gate(project: Path, tool: str, session: str | None = None, now: float | None
     step = next_card.next_step(project, tool, claim=True, session=session, now=now)
     if step.get("state") == "DONE":
         try:
-            failover_closeout.finalize_schedule_closeout(project, tool=tool, now=now)
+            failover_closeout.finalize_schedule_closeout(project, tool=tool, now=now, lock_timeout_s=0.05)
         except Exception:  # noqa: BLE001
             pass
     if step.get("state") != "NEXT":

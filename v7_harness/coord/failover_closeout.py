@@ -27,7 +27,40 @@ from typing import Any
 
 from . import next_card, presence
 from .stall import HUMAN_ONLY_RE, MAX_WAIT_S, STATE_DIR
-from .stream import _exclusive
+from contextlib import contextmanager
+from .stream import LOCK_TIMEOUT_S, StreamBusy, _LOCAL_LOCK, _exclusive, _try_lock, _unlock
+
+
+@contextmanager
+def _schedule_lock(root: Path, timeout_s: float | None = None):
+    lock_path = _schedule_lock_path(root)
+    if timeout_s is None:
+        with _exclusive(lock_path):
+            yield
+        return
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + float(timeout_s)
+    with _LOCAL_LOCK:
+        fd = None
+        try:
+            while True:
+                if fd is None:
+                    try:
+                        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+                    except PermissionError:
+                        fd = None
+                if fd is not None and _try_lock(fd):
+                    break
+                if time.monotonic() > deadline:
+                    raise StreamBusy("STREAM_LOCK_TIMEOUT")
+                time.sleep(0.005)
+            try:
+                yield
+            finally:
+                _unlock(fd)
+        finally:
+            if fd is not None:
+                os.close(fd)
 
 FOREGROUND_WAIT_LIMIT_S = 5.0
 ACTIVE_STALL_TIMEOUT_S = float(MAX_WAIT_S)
@@ -114,11 +147,12 @@ def replan_on_quota_limit(
     desk: dict[str, dict[str, Any]] | None = None,
     now: float | None = None,
     stall_timeout_s: float = ACTIVE_STALL_TIMEOUT_S,
+    lock_timeout_s: float | None = None,
 ) -> dict[str, Any]:
     """Audit tool presence and replan eligible phases owned by LIMITED/ABSENT tools under lock (3->2->1)."""
     root = next_card.coord_root(Path(project))
     moment = time.time() if now is None else float(now)
-    with _exclusive(_schedule_lock_path(root)):
+    with _schedule_lock(root, timeout_s=lock_timeout_s):
         if desk is None:
             desk = presence.read_all(root, now=moment)
         active_tools = [t for t in TOOL_ORDER if (desk.get(t) or {}).get("state") == "ACTIVE"]
@@ -260,11 +294,12 @@ def finalize_schedule_closeout(
     *,
     tool: str = "antigravity",
     now: float | None = None,
+    lock_timeout_s: float | None = None,
 ) -> dict[str, Any]:
     """Naturally close out the current process when all non-human schedule phases are DONE."""
     root = next_card.coord_root(Path(project))
     moment = time.time() if now is None else float(now)
-    with _exclusive(_schedule_lock_path(root)):
+    with _schedule_lock(root, timeout_s=lock_timeout_s):
         sched_file = next_card.schedule_path(root)
         schedule = _read_json(sched_file, None)
         if not isinstance(schedule, dict) or not isinstance(schedule.get("phases"), list):
@@ -288,6 +323,17 @@ def finalize_schedule_closeout(
             for p in non_human
             if p.get("needs_return_review")
         ]
+        receipt_path = root / ".coord" / "results" / f"SCHEDULE-CLOSEOUT-{schedule_id}.json"
+        if schedule.get("schedule_state") == "CLOSED_OUT" and receipt_path.is_file():
+            return {
+                "closed_out": True,
+                "already_closed_out": True,
+                "state": "CLOSED_OUT",
+                "schedule_id": schedule_id,
+                "completed_count": len(non_human),
+                "receipt_path": str(receipt_path),
+                "sole_survivor_return_reviews": return_reviews,
+            }
         receipt = {
             "schedule_id": schedule_id,
             "state": "CLOSED_OUT",
@@ -297,7 +343,6 @@ def finalize_schedule_closeout(
             "human_items_remaining": [str(p["phase_id"]) for p in phases if str(p.get("state", "")) == "HUMAN"],
             "sole_survivor_return_reviews": return_reviews,
         }
-        receipt_path = root / ".coord" / "results" / f"SCHEDULE-CLOSEOUT-{schedule_id}.json"
         _write_json(receipt_path, receipt)
 
         presence_dir = root / ".coord" / "presence"

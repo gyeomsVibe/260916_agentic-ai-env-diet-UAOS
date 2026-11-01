@@ -364,6 +364,20 @@ def _release_locks(project: Path, tools: list[str], mine: dict[str, Any]) -> Non
             pass
 
 
+def _owns_all_locks(project: Path, locks: list[str], token: str) -> bool:
+    """U291: False as soon as any lock file was preempted by another watcher token or removed."""
+    for locked_tool in locks:
+        try:
+            cur_lock = json.loads(lock_file(project, locked_tool).read_text(encoding="utf-8"))
+            if not isinstance(cur_lock, dict) or cur_lock.get("token") not in (None, token):
+                return False
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError):
+            pass
+    return True
+
+
 def _stalled_wait(project: Path, tools: tuple[str, ...], clock: Callable[[], float]) -> dict[str, Any] | None:
     """U179: the first stalled wait one of `tools` has a part in and has not been woken for yet."""
     from v7_harness.coord import stall
@@ -528,14 +542,8 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     started_at = deadline - timeout_s  # the watch's start, without an extra clock read (see above)
     try:
         while True:
-            if locks:
-                for locked_tool in locks:
-                    try:
-                        cur_lock = json.loads(lock_file(project, locked_tool).read_text(encoding="utf-8"))
-                        if isinstance(cur_lock, dict) and cur_lock.get("token") not in (None, token):
-                            return None  # Preempted by a newer session watcher; exit without stealing wake claims
-                    except (OSError, ValueError):
-                        pass
+            if locks and not _owns_all_locks(project, locks, token):
+                return None  # Preempted by a newer session watcher; exit without stealing wake claims
             if native_session:
                 from .continuity import _desk_matches
                 if not _desk_matches(Path(project), native_session):
@@ -577,6 +585,8 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                     body = payload if isinstance(payload, dict) else {}
                     found = {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),
                              "requested_target": body.get("requested_target") or body.get("to")}
+                    if locks and not _owns_all_locks(project, locks, token):
+                        return None
                     if not structured:
                         return found
                     target = found["requested_target"]
@@ -593,6 +603,8 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                         if acked_wake_path(project, target, digest).is_file():
                             continue
                         digest = hashlib.sha256(f'native:{native_session}:{digest}'.encode()).hexdigest()
+                    if locks and not _owns_all_locks(project, locks, token):
+                        return None  # Re-check lock ownership immediately before claim_wake so a preempted watcher never claims
                     if claim_wake(project, target, message_id, digest,
                                   clock=clock) == "CLAIMED":
                         return {**found, "wake_class": cls}

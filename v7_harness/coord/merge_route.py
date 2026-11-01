@@ -314,7 +314,7 @@ def sync_runtime_after_merge(project: Path, *, head: str, home: Path | None = No
             return {"synced": False, "reason": "CHECKOUT_NOT_CLEAN_AT_HEAD"}
         if main_rev.returncode != 0 or main_rev.stdout.strip() != head:
             return {"synced": False, "reason": "HEAD_NOT_ORIGIN_MAIN"}
-        changed = subprocess.run(["git", "-C", str(project), "show", "--name-only", "--pretty=format:", head], capture_output=True, text=True, timeout=15)
+        changed = subprocess.run(["git", "-C", str(project), "diff", "--name-only", f"{head}^1", head], capture_output=True, text=True, timeout=15)
         if changed.returncode == 0:
             from .agy_moderator import is_codex_exclusive_keypoint
             files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]

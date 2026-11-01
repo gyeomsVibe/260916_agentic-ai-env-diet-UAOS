@@ -147,7 +147,7 @@ def two_tool_quorum_active(desk: dict[str, Any], away_tool: str, judge_tool: str
 def build_claude_command(runs: Path, schema: Path) -> list[str]:
     """Read-only `claude -p` in the run folder returning structured JSON matching `schema`."""
     schema_inline = schema.read_text(encoding="utf-8") if schema.is_file() else json.dumps(VERDICT_SCHEMA)
-    return ["claude", "-p", "--output-format", "json", "--json-schema", schema_inline, "--allowedTools", "Read"]
+    return ["claude", "-p", "--output-format", "json", "--json-schema", schema_inline, "--allowedTools", "Read", "--max-budget-usd", "0.50"]
 
 
 def judge_prompt(task_id: str, bundle_id: str, manual_text: str, diff: str, acceptance_exit: Any,
@@ -222,7 +222,7 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
     if is_keypoint and judge != "codex":
         raise JudgeRefused("KEYPOINT_NEEDS_CODEX: codex-exclusive keypoint contracts require judge=codex")
     acting_for: str | None = None
-    quorum_When_codex_active = False
+    quorum_when_codex_active = False
     if judge == "codex":
         why = "codex judges its own contract (U47-J6)"
         if named_judge and named_judge != "codex" and two_tool_quorum_active(active_desk, named_judge, "codex"):
@@ -240,7 +240,7 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
             why = away_why
             acting_for = "codex"
         elif named_judge and named_judge != "codex" and two_tool_quorum_active(active_desk, named_judge, JUDGE_TOOL[judge]):
-            quorum_When_codex_active = True
+            quorum_when_codex_active = True
             acting_for = named_judge
             why = f"{JUDGE_TOOL[judge]} acting for {named_judge} under 2-tool quorum (U291)"
         else:
@@ -259,7 +259,7 @@ def run_judge(*, task_id: str, work_dir: Path, source: Path, manual_path: Path, 
         raise JudgeRefused(f"NO_PILOT_RUN:{runs} ({type(exc).__name__})") from exc
     if author in (judge, JUDGE_TOOL[judge]):
         raise JudgeRefused(f"JUDGE_IS_AUTHOR:{judge} wrote this bundle")
-    if quorum_When_codex_active and author != "codex":
+    if quorum_when_codex_active and author != "codex":
         raise JudgeRefused("CODEX_JUDGES: codex is ACTIVE and did not author this bundle; codex must judge")
     if summary.get("promotion") != "DRY_RUN_PASSED" or summary.get("acceptance_exit") != 0:
         raise JudgeRefused(f"NOT_READY: promotion {summary.get('promotion')!r}, "
