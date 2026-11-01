@@ -290,15 +290,22 @@ def _record(project: Path, row: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
 
 
+def _check_sync_args(project: Path, head: str) -> str | None:
+    if os.environ.get("UAOS_RUNTIME_HOLD") == "1" or (project / ".coord" / "presence" / "runtime_reinstall_hold.json").is_file():
+        return "RUNTIME_REINSTALL_HOLD"
+    if not isinstance(head, str) or not HEAD_RE.match(head):
+        return "INVALID_OR_EMPTY_HEAD"
+    if not (project / "v7_harness" / "runtime_install.py").is_file() or not (project / "v7_harness" / "__init__.py").is_file():
+        return "NO_RUNTIME_SOURCE"
+    return None
+
+
 def sync_runtime_after_merge(project: Path, *, head: str, home: Path | None = None) -> dict[str, Any]:
     """U291: install the merged runtime into ~/.uaos/runtime only when `project` is clean at `origin/main == head` and not on HOLD."""
     project = Path(project)
-    if os.environ.get("UAOS_RUNTIME_HOLD") == "1" or (project / ".coord" / "presence" / "runtime_reinstall_hold.json").is_file():
-        return {"synced": False, "reason": "RUNTIME_REINSTALL_HOLD"}
-    if not isinstance(head, str) or not HEAD_RE.match(head):
-        return {"synced": False, "reason": "INVALID_OR_EMPTY_HEAD"}
-    if not (project / "v7_harness" / "runtime_install.py").is_file() or not (project / "v7_harness" / "__init__.py").is_file():
-        return {"synced": False, "reason": "NO_RUNTIME_SOURCE"}
+    refusal = _check_sync_args(project, head)
+    if refusal is not None:
+        return {"synced": False, "reason": refusal}
     try:
         st = subprocess.run(["git", "-C", str(project), "status", "--porcelain"], capture_output=True, text=True, timeout=15)
         rev = subprocess.run(["git", "-C", str(project), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=15)

@@ -19,7 +19,7 @@
 
 - 모델 출력이 실행 파일·셸 명령이 되는 곳(명령 주입): **0곳**
 - 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **11곳** (U120 `coord/agy_dispatch.py` 추가; U166 병합자 호출은 같은 함수의 `check_args` 검사로 GUARDED)
-- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **18곳** (U103 `coord/desk_delta.py`, U134 `coord/presence.py`, U146-A `coord/next_card.py`·`coord/stop_gate.py`, U146a-R `coord/stop_gate.py` push 허가 읽기, U166 `coord/merge_route.py` PR 읽기, U181 `coord/boot_task.py` 부팅 실행기, U213 `coord/day_brief.py` 최근 병합 읽기 추가)
+- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **18곳** (U277이 추가한 `coord/deliver.py` 원격 주소 읽기는 U277-C1에서 다시 제거; U103 `coord/desk_delta.py`, U134 `coord/presence.py`, U146-A `coord/next_card.py`·`coord/stop_gate.py`, U146a-R `coord/stop_gate.py` push 허가 읽기, U166 `coord/merge_route.py` PR 읽기, U181 `coord/boot_task.py` 부팅 실행기, U213 `coord/day_brief.py` 최근 병합 읽기 추가)
 - 사람 운영자(operator)가 명령을 직접 넘기는 도구(OPERATOR_COMMAND): **3곳**
 - 따라서 U54-S2 결론: 지금 코드에는 POLICY_DENIED 관문을 새로 끼울 **실행 지점이 없다**. 새 CALLER_INPUT 지점이 생기면 `tests/test_u54_s2_caller_review.py`가 실패해서 이 검토를 다시 하게 만든다.
 

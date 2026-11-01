@@ -102,7 +102,8 @@ def _letter_waits(project: Path, schedule: dict[str, Any] | None = None) -> list
                 continue
             # Only a letter that asks for a verdict is a step someone waits on; a status note or ACK is not
             # (relay_45a03503, defect 1), and U120 already uses this token as the wake word.
-            if "VERDICT_REQUESTED=YES" not in str(payload.get("message", "")):
+            # U277 L1: the queued record carries the structured flag; the token stays for letters sent before it.
+            if payload.get("verdict_requested") is not True and "VERDICT_REQUESTED=YES" not in str(payload.get("message", "")):
                 continue
             body = _payload(project / INBOX / letter.name) or payload
             if ((project / ACK / letter.name).exists() or letter.stem in answered
@@ -110,6 +111,23 @@ def _letter_waits(project: Path, schedule: dict[str, Any] | None = None) -> list
                 continue
             found.append({"item": f"letter:{target}:{letter.stem}", "kind": "verdict", "waiting_on": target,
                           "author": str(payload.get("actor", "")), "since": since, "pr": ""})
+    found.extend(_request_waits(project, ended, {item["item"].rsplit(":", 1)[-1] for item in found}))
+    return found
+
+
+def _request_waits(project: Path, ended: set[str], known: set[str]) -> list[dict[str, Any]]:
+    """U277 H2: a verdict request whose letter was DISPATCHED and is still OPEN in the registry is a wait, whichever
+    route carried it. A request already counted through its queued letter (`known`) is not counted twice."""
+    from . import requests
+
+    found = []
+    for row in requests.dispatched_open(project):
+        request_id = str(row.get("request_id") or "")
+        if request_id in known or str(row.get("card") or "") in ended:
+            continue
+        found.append({"item": f"request:{row.get('target')}:{request_id}", "kind": "verdict",
+                      "waiting_on": str(row.get("target") or ""), "author": str(row.get("requester") or ""),
+                      "since": float(row.get("created_at") or 0), "pr": ""})
     return found
 
 
