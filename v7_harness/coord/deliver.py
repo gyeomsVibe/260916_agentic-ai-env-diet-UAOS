@@ -195,12 +195,17 @@ def _deliver_to_codex(
 
 # ── Claude 전달 ──────────────────────────────────────────────
 @contextmanager
-def _claude_turn(project_dir: Path | None, timeout: int):
-    """Serialize messages through the one persisted Claude conversation, including across processes."""
+def _claude_turn(project_dir: Path | None, timeout: int, *, lock_key: str = ""):
+    """Serialize messages through the persisted Claude conversation, including across processes.
+    U279: when `lock_key` is provided (for an active recorded card/topic window), shard the turn lock per topic/session
+    (`claude-topic-<lock_key>.turn.lock`) so parallel card windows never block each other, while non-windowed letters
+    share `claude-session.turn.lock`."""
     if project_dir is None:
         yield
         return
-    lock = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.turn.lock"
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", lock_key.strip()) if lock_key else ""
+    lock_name = f"claude-topic-{safe_key}.turn.lock" if safe_key else "claude-session.turn.lock"
+    lock = project_dir / ".coord" / "mailbox" / "delivery" / lock_name
     lock.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout + 5
     fd = None
@@ -244,12 +249,17 @@ def _deliver_to_claude(
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
     session: str = "",
+    card: str = "",
 ) -> DeliverResult:
+    from v7_harness.coord.windows import normalize_topic_key
+
+    topic_key = normalize_topic_key(card) if card else ""
+    lock_key = (topic_key or session) if session else ""
     try:
-        with _claude_turn(project_dir, timeout):
+        with _claude_turn(project_dir, timeout, lock_key=lock_key):
             return _deliver_to_claude_locked(
                 message, project_dir=project_dir, runner=runner, timeout=timeout, allowed_tools=allowed_tools,
-                session=session,
+                session=session, card=card, topic_key=topic_key,
             )
     except TimeoutError as exc:
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
@@ -263,6 +273,8 @@ def _deliver_to_claude_locked(
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
     session: str = "",
+    card: str = "",
+    topic_key: str = "",
 ) -> DeliverResult:
     claude_bin = shutil.which("claude")
     if not claude_bin:
@@ -277,6 +289,7 @@ def _deliver_to_claude_locked(
 
         (session_id, window_cwd), resume = claude_session(session), True
     elif project_dir:
+        # U279 (P2-2 fix): Never shard `claude-session.json` by card; non-windowed card letters share one session file.
         session_path = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.json"
         session_path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -321,6 +334,7 @@ def _deliver_to_claude_locked(
     stdout = ""
     stderr = ""
     retry_argv = argv_list
+    failover_from_id = ""
     for attempt in range(2):
         run_argv = retry_argv if attempt == 1 else argv_list
         try:
@@ -339,7 +353,8 @@ def _deliver_to_claude_locked(
             if rc == 0 and resume:
                 session_path = None
             break
-        if rc != 0 and "already in use" in stderr.lower() and session_id and not session:
+        if rc != 0 and "already in use" in stderr.lower() and session_id:
+            failover_from_id = session_id
             fresh_id = str(uuid.uuid4())
             retry_argv = [
                 "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
@@ -369,6 +384,22 @@ def _deliver_to_claude_locked(
         temporary.write_text(json.dumps({"session_id": session_id, "ready": True}, sort_keys=True) + "\n",
                              encoding="utf-8")
         os.replace(temporary, session_path)
+    elif failover_from_id and session and project_dir and session_id:
+        # U279 (P2-3 fix): when a card window UUID was "already in use" and failed over to `session_id`, durably
+        # persist the fresh `window_id` / `failover_id` into `.coord/windows/<topic>.json` and `.coord/windows.json`.
+        from v7_harness.coord.windows import record_window, window_entry_for_topic
+
+        resolved_card, existing_entry = window_entry_for_topic(project_dir, card or topic_key, "claude")
+        target_records = {c for c in (resolved_card, topic_key, card) if c}
+        for rec_card in target_records:
+            extra_fields = {
+                k: v
+                for k, v in existing_entry.items()
+                if k not in ("id", "window_id", "state", "opened_at", "last_active_at", "updated_at")
+            }
+            extra_fields["failover_from"] = failover_from_id
+            extra_fields["failover_id"] = session_id
+            record_window(project_dir, rec_card, "claude", session_id, **extra_fields)
     reply = str(result_text)[:2000]
     try:
         _check_secrets(reply)
@@ -489,16 +520,30 @@ def _recover_lock(guard: Path, wait_s: float):
         os.close(fd)
 
 
-def _acquire_guard(guard: Path, box: Mailbox, message_id: str, digest: str) -> int | None:
+def _acquire_guard(
+    guard: Path, box: Mailbox, message_id: str, digest: str, *, initial_bytes: bytes | None = None
+) -> int | None:
     """Take the per-message dispatch guard, recovering one left by a crashed dispatcher. None means IN_FLIGHT.
 
     Recovery runs under the OS recovery lock so the age check and the rename cannot interleave with another
     recoverer (otherwise one could rename a guard that another had just re-created). The stale guard is renamed,
-    not deleted, and an attempt receipt records the recovery.
+    not deleted, and an attempt receipt records the recovery. When `initial_bytes` is provided, creation + PID write
+    happens inside `_recover_lock` so no recoverer can observe an empty guard between open and write.
     """
-    fd = _open_excl(guard)
-    if fd is not None:
-        return fd
+    if initial_bytes is not None:
+        with _recover_lock(guard, RELEASE_WAIT_S) as held:
+            if held:
+                fd = _open_excl(guard)
+                if fd is not None:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(initial_bytes)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    return -1
+    else:
+        fd = _open_excl(guard)
+        if fd is not None:
+            return fd
     try:
         if time.time() - guard.stat().st_mtime < GUARD_STALE_S:
             return None
@@ -1253,30 +1298,50 @@ def _deliver_unlocked(
                          "The sender keeps this message in the inbox until ACK.")
         fallback: dict[str, str] = {}
         sent_thread = ""  # U147: the receipt names the Codex thread, so a misrouted letter is visible
-        if target == "codex":
-            if window:  # U115: the card's own Codex thread replaces the default thread
-                thread = window
-            chosen_thread, fallback, status = _codex_thread(desk, thread)
-            if status != "DISPATCH":
-                result = DeliverResult(False, "codex", status, (), "")
+        from v7_harness.coord.windows import acquire_window_lease, release_window_lease, record_window, window_entry_for_topic
+        lease_id = ""
+        if card and target in ("codex", "claude") and window:
+            lease_id = acquire_window_lease(project, card, target)
+        try:
+            if target == "codex":
+                if window:  # U115: the card's own Codex thread replaces the default thread
+                    thread = window
+                chosen_thread, fallback, status = _codex_thread(desk, thread)
+                if status != "DISPATCH":
+                    result = DeliverResult(False, "codex", status, (), "")
+                else:
+                    result = _deliver_to_codex(envelope, chosen_thread, runner=runner)
+                    sent_thread = chosen_thread
+                    # Rule 6: retry once on rc != 0 with newest verified thread other than failed one
+                    # U147-D: a letter to the designated user desk is never re-sent to a guessed relay window.
+                    if not result.delivered and result.reason.startswith("DELIVERY_FAILED:rc=") \
+                            and chosen_thread != read_user_desk(desk, "codex"):
+                        alt_thread = _newest_verified_thread(desk, _codex_sessions(), exclude_threads={chosen_thread})
+                        if alt_thread:
+                            fallback = {"given": chosen_thread, "used": alt_thread, "why": "send_failed"}
+                            result = _deliver_to_codex(envelope, alt_thread, runner=runner)
+                            sent_thread = alt_thread
+                            if result.delivered and card:
+                                resolved_card, existing_entry = window_entry_for_topic(desk, card, "codex")
+                                for rec_card in {c for c in (resolved_card, card) if c}:
+                                    extra_fields = {
+                                        k: v
+                                        for k, v in existing_entry.items()
+                                        if k not in ("id", "window_id", "state", "opened_at", "last_active_at", "updated_at")
+                                    }
+                                    extra_fields["failover_from"] = chosen_thread
+                                    extra_fields["failover_id"] = alt_thread
+                                    record_window(desk, rec_card, "codex", alt_thread, **extra_fields)
+            elif target == "claude":
+                prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
+                    "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
+                result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window,
+                                            card=card)
             else:
-                result = _deliver_to_codex(envelope, chosen_thread, runner=runner)
-                sent_thread = chosen_thread
-                # Rule 6: retry once on rc != 0 with newest verified thread other than failed one
-                # U147-D: a letter to the designated user desk is never re-sent to a guessed relay window.
-                if not result.delivered and result.reason.startswith("DELIVERY_FAILED:rc=") \
-                        and chosen_thread != read_user_desk(desk, "codex"):
-                    alt_thread = _newest_verified_thread(desk, _codex_sessions(), exclude_threads={chosen_thread})
-                    if alt_thread:
-                        fallback = {"given": chosen_thread, "used": alt_thread, "why": "send_failed"}
-                        result = _deliver_to_codex(envelope, alt_thread, runner=runner)
-                        sent_thread = alt_thread
-        elif target == "claude":
-            prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
-                "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
-            result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window)
-        else:
-            result = DeliverResult(False, str(target), f"UNKNOWN_TARGET:{target}", (), "")
+                result = DeliverResult(False, str(target), f"UNKNOWN_TARGET:{target}", (), "")
+        finally:
+            if card and target in ("codex", "claude") and lease_id:
+                release_window_lease(project, card, target, lease_id)
 
         attempts = box.root / "delivery" / "attempts"
         receipt = {"message_id": message_id, "digest": digest, "target": target,
@@ -1514,16 +1579,18 @@ def _deliver_impl(
         return DeliverResult(False, "mailbox_only", "PUBLISHED", (), "", message_id, digest)
     guard = box.root / "delivery" / "guards" / f"{message_id}.lock"
     guard.parent.mkdir(parents=True, exist_ok=True)
-    fd = _acquire_guard(guard, box, message_id, digest)
+    owner = uuid.uuid4().hex
+    guard_bytes = json.dumps({"message_id": message_id, "digest": digest, "actor": actor,
+                              "message": message, "target": target, "owner": owner, "pid": os.getpid()},
+                             ensure_ascii=False).encode("utf-8")
+    fd = _acquire_guard(guard, box, message_id, digest, initial_bytes=guard_bytes)
     if fd is None:
         return DeliverResult(False, target or "mailbox_only", "IN_FLIGHT", (), "", message_id, digest)
-    owner = uuid.uuid4().hex
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(json.dumps({"message_id": message_id, "digest": digest, "actor": actor,
-                                 "message": message, "target": target, "owner": owner},
-                                ensure_ascii=False).encode("utf-8"))
-        handle.flush()
-        os.fsync(handle.fileno())
+    if fd >= 0:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(guard_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
     pending_owner = None
     if target == "claude" and _requires_wake(message):
         # The guard winner takes ownership even if another contender created the provisional marker. Guard losers
