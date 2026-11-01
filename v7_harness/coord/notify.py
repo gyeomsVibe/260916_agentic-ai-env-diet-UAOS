@@ -27,7 +27,8 @@ CURSOR_PATH = Path(".work") / "coord" / "codex_notify_cursor.json"
 MESSAGE_MAX_LINES = 6
 MESSAGE_MAX_CHARS = 500
 MIN_INTERVAL = timedelta(minutes=1)
-DAILY_LIMIT = 24
+# U290 (윤겸스 2026-11-01): no daily notice cap by default; an int re-enables it. NO_CHANGE and MIN_INTERVAL still stop floods.
+DAILY_LIMIT: int | None = None
 DATA_HEADER = "[DATA] from={actor} verdict_requested={verdict}"
 
 
@@ -193,7 +194,7 @@ def notify(
 
     today = f"{moment:%Y-%m-%d}"
     sent_today = int(cursor.get("sent_today") or 0) if cursor.get("day") == today else 0
-    if sent_today >= DAILY_LIMIT:
+    if DAILY_LIMIT is not None and sent_today >= DAILY_LIMIT:
         return NotifyResult(False, "DAILY_LIMIT", command, message)
 
     last_sent_at = cursor.get("last_sent_at") or ""
