@@ -1095,7 +1095,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="U287: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
     )
     p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session"], default="status")
+    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards"], default="status")
     p_coord_lanes.add_argument("--session-id", default="", help="U292: RSI upgrade session ID for record-rsi-session")
     p_coord_lanes.add_argument("--title", default="", help="U292: RSI upgrade session title")
     p_coord_lanes.add_argument("--rules-version", default="7.6.2", help="U292: Global rules version pinned in RSI session")
@@ -2750,6 +2750,32 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
 
     project = Path(args.project)
     action = getattr(args, "action", "status")
+    if action == "sync-card-sessions":
+        from .coord.card_sessions import sync_claude_desktop_card_sessions
+        res = sync_claude_desktop_card_sessions(project)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "launch-spec":
+        from .coord.card_sessions import build_card_parallel_launch_spec
+        res = build_card_parallel_launch_spec(
+            project,
+            args.card or "U291",
+            title=getattr(args, "title", ""),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "orchestrate-cards":
+        from .coord.card_sessions import orchestrate_card_parallel_batch
+        raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
+        if not raw_cards:
+            raw_cards = ["U291", "U290", "U287", "U276+U284"]
+        res = orchestrate_card_parallel_batch(
+            project,
+            raw_cards,
+            actor=args.actor,
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
     if action == "provision-cards":
         raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
         if not raw_cards:

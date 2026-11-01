@@ -1065,6 +1065,7 @@ def open_or_reuse_card_parallel_windows(
     (`codex`, `claude`, `antigravity`) and is simultaneously clustered into its matching process lane window
     (`.coord/windows/lanes/<lane_id>.json`) for lock-isolated parallel message exchange.
     """
+    from .card_sessions import deterministic_card_session_uuid
     from .windows import CARD_RE, record_window, window_entry
 
     desk = Path(shared_desk(project)).resolve()
@@ -1083,7 +1084,13 @@ def open_or_reuse_card_parallel_windows(
                 continue
             lane_win = open_or_reuse_lane_window(desk, lid, tool, card=card)
             existing = window_entry(desk, card, tool)
-            wid = str(existing.get("id") or lane_win["id"])
+            existing_id = str(existing.get("id") or "")
+            if existing_id and existing_id != str(lane_win["id"]):
+                wid = existing_id
+                reused = True
+            else:
+                wid = deterministic_card_session_uuid(desk, card, tool)
+                reused = False
             entry = record_window(
                 desk,
                 card,
@@ -1097,7 +1104,7 @@ def open_or_reuse_card_parallel_windows(
                 "window_id": wid,
                 "lane_id": lid,
                 "lane_window_id": str(lane_win["id"]),
-                "reused": bool(existing.get("id")),
+                "reused": reused,
                 "opened_at": entry.get("opened_at"),
             }
         card_results[card] = {"card": card, "lane_id": lid, "tools": per_tool}
