@@ -295,7 +295,7 @@ def lock_file(project: Path, tool: str) -> Path:
     return Path(project) / PRESENCE_DIR / f"{tool}.watch.lock.json"
 
 
-def _lock_owner_live(path: Path) -> bool:
+def _lock_owner_live(path: Path, *, preempt_non_waking: bool = False) -> bool:
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -304,16 +304,19 @@ def _lock_owner_live(path: Path) -> bool:
         return False  # unreadable: treated as stale and replaced
     if not isinstance(record, dict):
         return False
+    if preempt_non_waking and record.get("wakes_session") is False:
+        return False  # U291: an interactive --wakes-session watcher preempts a non-waking watcher; a live waking watcher is kept
     created = process_identity(record.get("pid"))
     return created is not None and created == record.get("process_created")
 
 
 def _take_locks(project: Path, tools: tuple[str, ...], mine: dict[str, Any]) -> tuple[list[str], str | None]:
     taken: list[str] = []
+    preempt = bool(mine.get("wakes_session"))
     for tool in tools:
         path = lock_file(project, tool)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if _lock_owner_live(path):
+        if _lock_owner_live(path, preempt_non_waking=preempt):
             return taken, tool
         _write_atomic(path, mine)
         taken.append(tool)
@@ -453,7 +456,8 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     structured = policy == "structured"
     token = uuid.uuid4().hex
     locks: list[str] = []
-    mine = {"pid": os.getpid(), "process_created": process_identity(os.getpid()), "token": token}
+    mine = {"pid": os.getpid(), "process_created": process_identity(os.getpid()), "token": token,
+            "wakes_session": bool(wakes_session)}
     if structured and not native_session:
         locks, owned_by_other = _take_locks(project, tools, mine)
         if owned_by_other is not None:
@@ -464,6 +468,14 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     next_stall_scan = deadline - timeout_s  # the first scan runs at once; no extra clock read (U117 test counts them)
     try:
         while True:
+            if locks:
+                for locked_tool in locks:
+                    try:
+                        cur_lock = json.loads(lock_file(project, locked_tool).read_text(encoding="utf-8"))
+                        if isinstance(cur_lock, dict) and cur_lock.get("token") not in (None, token):
+                            return None  # Preempted by a newer session watcher; exit without stealing wake claims
+                    except (OSError, ValueError):
+                        pass
             if native_session:
                 from .continuity import _desk_matches
                 if not _desk_matches(Path(project), native_session):
