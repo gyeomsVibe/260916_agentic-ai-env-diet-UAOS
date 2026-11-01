@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.parse
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1295,14 +1296,53 @@ def _first(pattern: re.Pattern[str], text: str) -> str:
     return match.group(0) if match else ""
 
 
+# The Codex A9 judge gate (desk_261028_3/u277_malformed_port_gate.py) names an unusable remote "UNKNOWN".
+REPO_UNKNOWN = "UNKNOWN"
+
+
+def _repo_identity(raw: str) -> str:
+    """U277-A9: "<host>/<path>" or REPO_UNKNOWN; allow-list only, so userinfo, port, query and fragment never persist."""
+    raw = raw.strip()
+    if not raw:
+        return REPO_UNKNOWN
+    if "://" in raw:
+        try:
+            parts = urllib.parse.urlsplit(raw)
+            host = (parts.hostname or "").lower()
+            parts.port  # urllib validates the port lazily; a malformed one raises here (Codex A9 port gate)
+        except ValueError:
+            return REPO_UNKNOWN
+        if parts.scheme.lower() not in ("https", "http", "ssh", "git"):
+            return REPO_UNKNOWN
+        path = parts.path
+    else:
+        m = re.fullmatch(r"(?:[^@/\s]+@)?([^@:/\s]+):([^:\s].*)", raw)
+        if not m:
+            return REPO_UNKNOWN
+        host, path = m.group(1).lower(), m.group(2)
+    path = path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    path = path.strip("/")
+    if not re.fullmatch(r"[a-z0-9.-]+", host) or ("." not in host and host != "localhost"):
+        return REPO_UNKNOWN
+    if not path or not re.fullmatch(r"[A-Za-z0-9._/-]+", path):
+        return REPO_UNKNOWN
+    return f"{host}/{path}"
+
+
 def _repo_url(root: Path) -> str:
-    """The remote a request was made in (a binding field, U277). "" when git is unavailable."""
+    """The remote a request was made in (a binding field, U277). "" (the binding's unavailable value) when git is
+    unavailable or the remote has no safe identity."""
     try:
         done = subprocess.run(["git", "-C", str(root), "config", "--get", "remote.origin.url"], capture_output=True,
                               text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return ""
-    return done.stdout.strip() if done.returncode == 0 else ""
+    if done.returncode != 0:
+        return ""
+    identity = _repo_identity(done.stdout)
+    return "" if identity == REPO_UNKNOWN else identity
 
 
 def deliver(

@@ -179,6 +179,19 @@ class WakeTests(unittest.TestCase):
             self.assertEqual(requests.ack(root, "relay_k", session="sA"), "ALREADY")
             self.assertEqual(requests.open_for(root, "claude", session="sA"), [])
 
+    def test_blank_or_foreign_session_cannot_claim_a_bound_request(self) -> None:
+        # Codex A8 session gate: a passive watcher with no session must not consume the requester's wake.
+        from v7_harness.coord import requests
+
+        tmp, root = _project()
+        with tmp:
+            _register(root, "relay_b")
+            _answer(root, "relay_b")
+            requests.scan(root)
+            self.assertFalse(requests.claim_wake(root, "relay_b", session=""))
+            self.assertFalse(requests.claim_wake(root, "relay_b", session="sB"))
+            self.assertTrue(requests.claim_wake(root, "relay_b", session="sA"))
+
     def test_fuzzy_hint_wakes_once_and_keeps_request_open(self) -> None:
         from v7_harness.coord import requests, watch
 

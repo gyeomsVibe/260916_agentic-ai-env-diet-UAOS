@@ -635,7 +635,8 @@ def claim_wake(project: Path, request_id: str, *, session: str, now: float | Non
 
     def fn(cur: dict[str, Any]) -> dict[str, Any] | None:
         wanted = str(cur.get("requester_session") or "")
-        if wanted and session and session != wanted:
+        # A bound request wakes only its requester session; a blank or passive watcher may not claim it (Codex A8).
+        if wanted and session != wanted:
             return None
         if cur.get("state") == ANSWER_OBSERVED or (cur.get("state") == WAKE_PENDING
                                                    and _reclaimable(cur, moment, started_at)):
