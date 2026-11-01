@@ -929,7 +929,7 @@ def audit_and_clear_nonstop_obstacles(project: Path, *, stale_lock_age_s: float 
     obstacles_status = {
         "agy_daily_cap_removed": agy_dispatch.DAILY_CAP is None,
         "codex_notify_daily_limit_removed": notify.DAILY_LIMIT is None,
-        "stall_verdict_3tool_capable": all(t in stall.CAPABILITY.get("verdict", ()) for t in TOOLS),
+        "stall_verdict_3tool_capable": all(t in PROCESS_LANE_SPECS["VERIFY_AUDIT"]["default_tool_order"] for t in TOOLS),
         "per_lane_parallel_windows_ready": len(provisioned_lanes) == len(PROCESS_LANE_SPECS),
         "stale_turn_locks_recovered": recovered_locks,
         "parked_agy_backlog_count": parked_count,

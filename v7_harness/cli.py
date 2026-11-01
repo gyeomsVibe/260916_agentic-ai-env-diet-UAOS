@@ -1089,10 +1089,10 @@ def build_parser() -> argparse.ArgumentParser:
                              help="U129: mark the card's window done so its Claude session can take the next card")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
-    # U287: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
+    # U287/U292: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
     p_coord_lanes = p_coord_subs.add_parser(
         "lanes",
-        help="U287: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
+        help="U287/U292: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
     )
     p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session"], default="status")
@@ -2733,7 +2733,7 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "
 
 
 def cmd_coord_lanes(args: argparse.Namespace) -> int:
-    """U287: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
+    """U287/U292: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
     from .coord.process_lanes import (
         audit_and_clear_nonstop_obstacles,
         classify_process_lane,
