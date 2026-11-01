@@ -473,7 +473,7 @@ def _spawn_detached(code: str, *args: str) -> None:
     import subprocess
     import sys
 
-    flags: dict[str, Any] = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    flags: dict[str, Any] = ({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
                              if os.name == "nt" else {"start_new_session": True})
     subprocess.Popen([sys.executable, "-c", code, *args],
                      cwd=str(Path(__file__).resolve().parents[2]), stdin=subprocess.DEVNULL,

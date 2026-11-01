@@ -23,6 +23,7 @@ REVIEW_DOC = ROOT / "docs" / "51_u54-s2-caller-input-review.md"
 # U166 added coord/merge_route.py: read-only gh pr view (FIXED_PLAN); the merger call runs after check_args in the
 # same function, so the audit marks it GUARDED and it is not a CALLER_INPUT site.
 # U213 added coord/day_brief.py (fixed read-only git log of the newest merge, reviewed as FIXED_PLAN).
+# U277 added a third coord/deliver.py site (git config remote.origin.url); U277-C1 removed that remote read again.
 REVIEWED = {
     "v7_harness/adapters/claude_worker.py": 1,
     "v7_harness/adapters/lane_worker.py": 1,

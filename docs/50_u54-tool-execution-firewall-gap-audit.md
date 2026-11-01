@@ -42,7 +42,7 @@
 | `v7_harness/coord/notify.py:219` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/presence.py:478` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/stop_gate.py:75` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/stop_gate.py:217` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/stop_gate.py:274` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/thrift.py:63` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/windows.py:153` | DIRECT | `subprocess.Popen` | FIXED | no | no | FIXED |
 | `v7_harness/deploy_pc.py:222` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
@@ -95,7 +95,7 @@
 - `v7_harness/coord/notify.py:219` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/presence.py:478` DIRECT `subprocess.Popen`
 - `v7_harness/coord/stop_gate.py:75` DIRECT `subprocess.run`
-- `v7_harness/coord/stop_gate.py:217` DIRECT `subprocess.run`
+- `v7_harness/coord/stop_gate.py:274` DIRECT `subprocess.run`
 - `v7_harness/coord/thrift.py:63` DIRECT `subprocess.run`
 - `v7_harness/deploy_pc.py:222` INDIRECT `runner -> subprocess.run`
 - `v7_harness/deploy_pc.py:240` INDIRECT `runner -> subprocess.run`
