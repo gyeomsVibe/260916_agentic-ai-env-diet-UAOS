@@ -124,8 +124,9 @@ def _digest(actor: str, message: str, card: str = "", window: str | None = None,
 
 def _requires_wake(message: str) -> bool:
     """Only a real delta may spend a paid turn; ACK_ONLY, negated, incidental or quoted tokens never do."""
-    upper = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()
-    if _ACK_RE.search(upper) or _ECHO_STORM_RE.search(message):
+    unquoted = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message))
+    upper = unquoted.upper()
+    if _ACK_RE.search(upper) or _ECHO_STORM_RE.search(unquoted):
         return False
     upper = _NEGATED_RE.sub(" ", upper)
     return any(pattern.search(upper) for pattern in _WAKE_RES)
@@ -1454,8 +1455,16 @@ def _deliver_impl(
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = thread or None
     if lane and not window:
-        from v7_harness.coord.process_lanes import lane_window_for
-        window = None if target == "claude" else lane_window_for(desk, lane, target or "")
+        from v7_harness.coord.process_lanes import ensure_fresh_lane_window, is_lane_batch_envelope, lane_window_for
+        if (
+            target in ("codex", "claude", "antigravity")
+            and not is_lane_batch_envelope(message)
+            and not message.lstrip().startswith("[LANE:")
+        ):
+            win_info = ensure_fresh_lane_window(desk, lane, target, card=card)
+            window = None if target == "claude" else str(win_info.get("id") or "")
+        else:
+            window = None if target == "claude" else lane_window_for(desk, lane, target or "")
     elif card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published

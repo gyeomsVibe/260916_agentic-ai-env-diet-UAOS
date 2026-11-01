@@ -26,6 +26,7 @@ import time
 from typing import Any
 
 from .agy_accounts import antigravity_accounts
+from .helper_telemetry import TELEMETRY as HELPER_TELEMETRY, read_helper_records, summarize as summarize_helpers
 from .hook_context import shared_desk
 from .next_card import TERMINAL
 from .presence import TOOLS, read_all as read_all_presence
@@ -133,14 +134,17 @@ DEFAULT_POLICY: dict[str, Any] = {
 }
 
 
-def _atomic_write_json(path: Path, data: Any) -> None:
+def _atomic_write_json(path: Path, data: Any, *, compact: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
+            if compact:
+                json.dump(data, handle, ensure_ascii=False, separators=(",", ":"))
+            else:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(str(tmp_path), str(path))
@@ -493,6 +497,9 @@ def _parse_ts(row: dict[str, Any]) -> float | None:
 
 
 def _classify_engine(row: dict[str, Any]) -> str:
+    # U287: a helper contract row names its budget engine; label guessing would bill Luna/Flash wrongly.
+    if row.get("telemetry") == HELPER_TELEMETRY and row.get("budget_engine") in ALL_ENGINES:
+        return str(row["budget_engine"])
     worker = str(row.get("worker") or row.get("actor") or row.get("provider") or "").lower().strip()
     model = str(row.get("model") or "").lower().strip()
     if "haiku" in model or worker == "haiku":
@@ -777,17 +784,26 @@ def _scan_agy_brain_transcripts(
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
             cached = wm_files.get(f_key)
             cached_ok = False
+            c_size, c_mtime, c_offset = -1, 0.0, 0
             if isinstance(cached, dict) and isinstance(cached.get("events"), list):
-                try:
-                    c_size = int(cached.get("file_size") if cached.get("file_size") is not None else -1)
-                    c_mtime = float(cached.get("mtime") or 0.0)
-                    c_offset = int(cached.get("offset") or 0)
-                    events_valid = all(isinstance(ev, dict) and isinstance(ev.get("ts"), (int, float)) for ev in cached["events"])
-                    cached_ok = events_valid and c_offset >= 0
-                except (TypeError, ValueError):
-                    cached_ok = False
-            else:
-                c_size, c_mtime, c_offset = -1, 0.0, 0
+                raw_offset = cached.get("offset")
+                raw_size = cached.get("file_size")
+                raw_mtime = cached.get("mtime")
+                if not isinstance(raw_offset, bool) and not isinstance(raw_size, bool) and not isinstance(raw_mtime, bool):
+                    try:
+                        c_size = int(raw_size if raw_size is not None else -1)
+                        c_mtime = float(raw_mtime or 0.0)
+                        c_offset = int(raw_offset if raw_offset is not None else 0)
+                        events_valid = all(
+                            isinstance(ev, dict)
+                            and isinstance(ev.get("ts"), (int, float))
+                            and not isinstance(ev.get("ts"), bool)
+                            for ev in cached["events"]
+                        )
+                        cached_ok = events_valid and c_offset >= 0
+                    except (TypeError, ValueError):
+                        cached_ok = False
+                        c_size, c_mtime, c_offset = -1, 0.0, 0
 
             if cached_ok and c_size == f_size and abs(c_mtime - f_mtime) < 1e-3:
                 file_events = [ev for ev in cached["events"] if float(ev.get("ts") or 0.0) >= cutoff_ts]
@@ -1206,6 +1222,8 @@ def collect_capacity_snapshot(
     # U286 v4: per-account Antigravity facts (registry + 429 log); a test home never reads the real APPDATA
     snapshot["antigravity_accounts"] = antigravity_accounts(
         desk, appdata=(home / "AppData" / "Roaming") if home else None, persist=persist)
+    # U287: helper lanes read through the one telemetry contract, independent of the HUD layout (U286).
+    snapshot["helper_telemetry"] = summarize_helpers(read_helper_records(desk), now=moment)
     snapshot["contextual_hud_widget"] = render_contextual_hud_widget(snapshot)
 
     if persist:
@@ -1214,10 +1232,7 @@ def collect_capacity_snapshot(
         sub_sched_file = desk / ".coord" / "sub_process_schedule.json"
         _atomic_write_json(sub_sched_file, sub_process_schedule)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
-        local_head.parent.mkdir(parents=True, exist_ok=True)
-        head_tmp = local_head.with_name(f".capacity_head.{os.getpid()}.{time.time_ns()}.tmp")
-        head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        os.replace(head_tmp, local_head)
+        _atomic_write_json(local_head, head_summary, compact=True)
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -1242,6 +1257,128 @@ def collect_capacity_snapshot(
         _atomic_write_json(global_reg, reg_data)
 
     return snapshot
+
+
+WDRR_DEFAULT_WEIGHTS: dict[str, int] = {
+    "antigravity": 6,
+    "codex": 3,
+    "claude": 1,
+}
+
+
+def select_wdrr_heavy_lifter(
+    engines: dict[str, dict[str, Any]],
+    *,
+    deficits: dict[str, float] | None = None,
+    weights: dict[str, int | float] | None = None,
+    cost: float = 1.0,
+    exclude: set[str] | None = None,
+) -> dict[str, Any]:
+    """U259: Deterministic 6:3:1 Weighted Deficit Round-Robin (WDRR) heavy-lifter router.
+
+    Each active, non-exhausted tool receives `weight` deficit credits per dispatch quantum;
+    the eligible tool with the highest deficit is selected and charged `cost` (default 1.0).
+    Ineligible (`LIMITED`, `ABSENT`, `LIMITED_PAUSE`, or `usable_remaining_5h_tokens == 0` without burst reserve)
+    tools have their deficit reset to 0.0 and are skipped automatically (failover).
+    """
+    w_map = dict(WDRR_DEFAULT_WEIGHTS)
+    if weights:
+        for k, v in weights.items():
+            if k in PAID_TOOLS and isinstance(v, (int, float)) and not isinstance(v, bool) and float(v) > 0:
+                w_map[k] = int(v) if float(v).is_integer() else float(v)  # type: ignore[assignment]
+
+    excl = set(exclude or ())
+    state_deficits: dict[str, float] = {
+        t: float((deficits or {}).get(t, 0.0)) for t in PAID_TOOLS
+    }
+
+    eligible: list[str] = []
+    skipped: dict[str, str] = {}
+    for t in ("antigravity", "codex", "claude"):
+        if t in excl:
+            skipped[t] = "EXCLUDED"
+            continue
+        info = engines.get(t) or {}
+        pres = str(info.get("presence_state") or "ACTIVE").upper()
+        tier = str(info.get("status_tier") or "")
+        rem = info.get("usable_remaining_5h_tokens")
+        burst = int(info.get("active_burst_reserve_tokens") or 0)
+        if pres in ("LIMITED", "ABSENT") or tier == "LIMITED_PAUSE":
+            state_deficits[t] = 0.0
+            skipped[t] = f"PRESENCE_{pres}"
+            continue
+        if isinstance(rem, (int, float)) and not isinstance(rem, bool) and int(rem) <= 0 and burst <= 0:
+            state_deficits[t] = 0.0
+            skipped[t] = "QUOTA_EXHAUSTED"
+            continue
+        eligible.append(t)
+
+    if not eligible:
+        return {
+            "schema": "uaos-wdrr-routing-v1",
+            "policy": "WDRR_6_3_1",
+            "weights": w_map,
+            "selected_tool": "BLOCKED",
+            "eligible_tools": [],
+            "skipped_tools": skipped,
+            "deficits": state_deficits,
+        }
+
+    total_eligible_weight = sum(float(w_map.get(t, 1)) for t in eligible)
+    norm_cost = float(cost) * (total_eligible_weight if total_eligible_weight > 0 else 1.0)
+    for t in eligible:
+        state_deficits[t] = round(state_deficits.get(t, 0.0) + float(w_map.get(t, 1)), 6)
+
+    order_rank = {"antigravity": 3, "codex": 2, "claude": 1}
+    chosen = max(
+        eligible,
+        key=lambda t: (state_deficits[t], float(w_map.get(t, 1)), order_rank.get(t, 0)),
+    )
+    state_deficits[chosen] = round(state_deficits[chosen] - norm_cost, 6)
+
+    if deficits is not None:
+        deficits.clear()
+        deficits.update(state_deficits)
+
+    return {
+        "schema": "uaos-wdrr-routing-v1",
+        "policy": "WDRR_6_3_1",
+        "weights": w_map,
+        "selected_tool": chosen,
+        "eligible_tools": eligible,
+        "skipped_tools": skipped,
+        "deficits": dict(state_deficits),
+    }
+
+
+def simulate_wdrr_sequence(
+    engines: dict[str, dict[str, Any]],
+    steps: int = 10,
+    *,
+    weights: dict[str, int | float] | None = None,
+) -> dict[str, Any]:
+    """Simulate `steps` dispatches under 6:3:1 WDRR and return sequence + per-tool dispatch counts."""
+    deficits: dict[str, float] = {t: 0.0 for t in PAID_TOOLS}
+    sequence: list[str] = []
+    counts: dict[str, int] = {t: 0 for t in PAID_TOOLS}
+    last_step: dict[str, Any] = {}
+    for _ in range(max(0, int(steps))):
+        last_step = select_wdrr_heavy_lifter(engines, deficits=deficits, weights=weights)
+        sel = str(last_step.get("selected_tool") or "BLOCKED")
+        sequence.append(sel)
+        if sel in counts:
+            counts[sel] += 1
+    return {
+        "schema": "uaos-wdrr-simulation-v1",
+        "policy": "WDRR_6_3_1",
+        "weights": dict(weights or WDRR_DEFAULT_WEIGHTS),
+        "steps": int(steps),
+        "sequence": sequence,
+        "counts": counts,
+        "eligible_tools": last_step.get("eligible_tools", []),
+        "skipped_tools": last_step.get("skipped_tools", {}),
+        "next_recommended_heavy_lifter": sequence[0] if sequence else "BLOCKED",
+    }
 
 
 def build_capacity_aware_schedule(
@@ -1439,6 +1576,8 @@ def build_capacity_aware_schedule(
         "argon_tier_mode": argon_mode,
         "argon_used_5h_share_pct": agy_used_share_pct,
         "argon_remaining_5h_share_pct": agy_rem_share_pct,
+        "argon_routing": simulate_wdrr_sequence(engines, steps=10),
+        "wdrr_heavy_lifter": select_wdrr_heavy_lifter(engines),
         "post_schedule_remaining_tokens": virtual_rem,
         "phase_assignments": assignments,
         "subworker_optimization": compute_subworker_optimization(engines),
@@ -2153,7 +2292,7 @@ def refresh_capacity_zero_token(
                 and sched_mtime <= last_ts
                 and brain_mtime <= last_ts
             ):
-                if html_out is not None and not Path(html_out).is_file():
+                if html_out is not None:
                     snap_cached = json.loads(snap_path.read_text(encoding="utf-8"))
                     render_html_dashboard(snap_cached, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}

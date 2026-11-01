@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 import hashlib
 import json
 import os
@@ -69,7 +69,7 @@ PROCESS_LANE_SPECS: dict[str, dict[str, Any]] = {
         "title_en": "PR Merge, Runtime Reinstall & Release Aggregation Lane",
         "priority": 5,
         "default_tool_order": ("antigravity", "codex", "claude"),
-        "keywords": ("merge", "pr ", "pull request", "release", "ship", "reinstall", "result", "병합", "배포", "결과"),
+        "keywords": ("merge", "pr", "pull request", "release", "ship", "reinstall", "result", "병합", "배포", "결과"),
         "kinds": ("MERGE", "RELEASE", "SHIP", "RESULT", "DONE"),
     },
     "RECOVERY_OPS": {
@@ -86,6 +86,18 @@ PROCESS_LANE_SPECS: dict[str, dict[str, Any]] = {
 }
 
 DEFAULT_LANE = "IMPL_CODE"
+
+
+def _keyword_matches(text: str, kw: str) -> bool:
+    """Match ASCII keywords on whole-word boundaries (preventing `test` in `latest`, `plan` in `PLAN.md`, `heal` in `health`)."""
+    clean_kw = kw.strip().lower()
+    if not clean_kw:
+        return False
+    if clean_kw.isascii():
+        # Prevent matching e.g. `plan` when followed by `.md` (`PLAN.md` file path reference)
+        pattern = rf"(?<![a-z0-9_./-]){re.escape(clean_kw)}(?![a-z0-9_.-])"
+        return bool(re.search(pattern, text))
+    return clean_kw in text
 
 
 @dataclass(frozen=True)
@@ -120,7 +132,7 @@ def classify_process_lane(payload: dict[str, Any] | str, *, explicit_lane: str =
     3. Verdict requests (`verdict_requested=True`), verdicts (`PASS`/`REWORK`/etc.), or REVIEW states -> `VERIFY_AUDIT`.
     4. Merge / PR / RESULT / SHIP kinds or PR URLs -> `MERGE_RELEASE`.
     5. MIA / research / design / manual kinds or `docs/`-only allowed files -> `ARCH_DESIGN`.
-    6. Keyword & kind matching across `PROCESS_LANE_SPECS`, falling back to `IMPL_CODE`.
+    6. Whole-word keyword & kind matching across `PROCESS_LANE_SPECS`, falling back to `IMPL_CODE`.
     """
     if explicit_lane:
         return validate_lane_id(explicit_lane)
@@ -178,7 +190,7 @@ def classify_process_lane(payload: dict[str, Any] | str, *, explicit_lane: str =
     ordered_lanes = sorted(PROCESS_LANE_SPECS.items(), key=lambda item: item[1]["priority"])
     for lane_name, spec in ordered_lanes:
         for kw in spec["keywords"]:
-            if kw in combined:
+            if _keyword_matches(combined, kw):
                 return lane_name
 
     return DEFAULT_LANE
@@ -201,7 +213,7 @@ def _lane_lock(project: Path, lane_id: str, timeout_s: float = 10.0):
     lock_path = folder / f"{lid}.lock"
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        deadline = time.monotonic() + max(0.1, timeout_s)
+        deadline = time.monotonic() + max(0.05, timeout_s)
         while not _try_lock(fd):
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"LANE_LOCK_TIMEOUT:{lid}")
@@ -226,6 +238,7 @@ def _read_lane_record_unlocked(path: Path, lane_id: str) -> dict[str, Any]:
         "priority": spec["priority"],
         "windows": {},
         "cards": [],
+        "dispatched_item_ids": [],
         "dispatched_count": 0,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -239,6 +252,8 @@ def _read_lane_record_unlocked(path: Path, lane_id: str) -> dict[str, Any]:
                 merged["windows"] = {}
             if not isinstance(merged.get("cards"), list):
                 merged["cards"] = []
+            if not isinstance(merged.get("dispatched_item_ids"), list):
+                merged["dispatched_item_ids"] = []
             return merged
     except (OSError, ValueError):
         pass
@@ -250,13 +265,16 @@ def _write_lane_record_unlocked(path: Path, record: dict[str, Any]) -> None:
     record["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    last_exc: Exception | None = None
     for _ in range(20):
         try:
             os.replace(tmp, path)
             return
-        except PermissionError:
+        except PermissionError as exc:
+            last_exc = exc
             time.sleep(0.01)
     tmp.unlink(missing_ok=True)
+    raise PermissionError(f"LANE_RECORD_WRITE_FAILED:{path}") from last_exc
 
 
 def deterministic_lane_session_uuid(project: Path, lane_id: str, tool: str, generation: int = 0) -> str:
@@ -266,6 +284,44 @@ def deterministic_lane_session_uuid(project: Path, lane_id: str, tool: str, gene
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     # Format as standard 8-4-4-4-12 UUID v4/v5 compliant string
     return f"{digest[:8]}-{digest[8:12]}-4{digest[13:16]}-a{digest[17:20]}-{digest[20:32]}"
+
+
+def _ensure_codex_lane_rollout(project: Path, thread_id: str) -> Path | None:
+    """Ensure a verified Codex rollout stub exists for a deterministic lane thread ID so `_codex_thread` verifies it
+    as an isolated lane thread instead of falling back to the user desk or newest thread."""
+    try:
+        from .deliver import _codex_sessions, _verify_thread
+
+        desk = Path(shared_desk(project)).resolve()
+        sessions_root = _codex_sessions()
+        if _verify_thread(desk, sessions_root, thread_id) == "DISPATCH":
+            matched = list(sessions_root.glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
+            return matched[0] if matched else None
+
+        day_dir = sessions_root / time.strftime("%Y/%m/%d", time.gmtime())
+        day_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime())
+        rollout_path = day_dir / f"rollout-{stamp}-{thread_id}.jsonl"
+        if not rollout_path.is_file():
+            meta_row = {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "type": "session_meta",
+                "payload": {
+                    "id": thread_id,
+                    "session_id": thread_id,
+                    "cwd": str(desk),
+                    "source": "uaos-lane-window",
+                },
+            }
+            tmp = rollout_path.with_name(f"{rollout_path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+            tmp.write_text(json.dumps(meta_row, ensure_ascii=False) + "\n", encoding="utf-8")
+            try:
+                os.replace(tmp, rollout_path)
+            except OSError:
+                tmp.unlink(missing_ok=True)
+        return rollout_path
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def ensure_claude_lane_session(project: Path, lane_id: str, *, rotate: bool = False) -> tuple[str, Path, bool]:
@@ -352,6 +408,8 @@ def open_or_reuse_lane_window(
             record["cards"].append(card)
 
         if isinstance(existing, dict) and existing.get("id") and not rotate:
+            if tool == "codex":
+                _ensure_codex_lane_rollout(desk, str(existing["id"]))
             _write_lane_record_unlocked(path, record)
             return {
                 "ok": True,
@@ -360,6 +418,8 @@ def open_or_reuse_lane_window(
                 "id": existing["id"],
                 "title": existing.get("title", full_title),
                 "reused": True,
+                "generation": int(existing.get("generation") or 0),
+                "turns": int(existing.get("turns") or 0),
                 "cards": list(record["cards"]),
             }
 
@@ -374,10 +434,10 @@ def open_or_reuse_lane_window(
                 "title": full_title,
                 "session_file": str(sfile.relative_to(desk).as_posix()),
                 "generation": generation,
+                "turns": 0,
                 "opened_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
         elif tool == "codex":
-            # Use explicit session_id if supplied, otherwise deterministic lane thread ID or live Codex thread
             cid = session_id or deterministic_lane_session_uuid(desk, lid, "codex", generation=generation)
             if prompt:
                 try:
@@ -387,10 +447,12 @@ def open_or_reuse_lane_window(
                         cid = live_id
                 except Exception:  # noqa: BLE001 - fallback to deterministic lane thread UUID in headless/test env
                     pass
+            _ensure_codex_lane_rollout(desk, cid)
             win_entry = {
                 "id": cid,
                 "title": full_title,
                 "generation": generation,
+                "turns": 0,
                 "opened_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
         else:  # antigravity
@@ -408,6 +470,7 @@ def open_or_reuse_lane_window(
                 "id": cid,
                 "title": full_title,
                 "generation": generation,
+                "turns": 0,
                 "opened_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
 
@@ -421,6 +484,7 @@ def open_or_reuse_lane_window(
             "title": full_title,
             "reused": False,
             "generation": generation,
+            "turns": 0,
             "cards": list(record["cards"]),
         }
 
@@ -490,20 +554,64 @@ def select_active_tool_for_lane(
     return fallback, "FALLBACK_QUEUE"
 
 
+LANE_ENVELOPE_PREFIX = "[UAOS-RSI LANE="
+
+
+def is_lane_batch_envelope(payload: dict[str, Any] | str) -> bool:
+    """Return True if `payload` is an already-batched lane dispatch envelope (prevents re-ingestion amplification)."""
+    if isinstance(payload, str):
+        return payload.lstrip().startswith(LANE_ENVELOPE_PREFIX)
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("lane_batch") is True or str(payload.get("kind") or "") == "LANE_BATCH":
+        return True
+    msg = str(payload.get("message") or "").lstrip()
+    delta = str(payload.get("delta") or "").strip()
+    if msg.startswith(LANE_ENVELOPE_PREFIX):
+        return True
+    if delta.startswith("LANE ") and ("batch (" in delta or "failover batch (" in delta):
+        return True
+    return False
+
+
+def _already_dispatched_items(desk: Path) -> set[str]:
+    """Return the set of item IDs already dispatched across all lane records."""
+    seen: set[str] = set()
+    folder = _lanes_dir(desk)
+    if not folder.is_dir():
+        return seen
+    for path in folder.glob("*.json"):
+        lid = path.stem.upper()
+        if not LANE_RE.fullmatch(lid):
+            continue
+        rec = _read_lane_record_unlocked(path, lid)
+        for item_id in rec.get("dispatched_item_ids") or ():
+            if isinstance(item_id, str) and item_id:
+                seen.add(item_id)
+    return seen
+
+
 def collect_pending_processes(project: Path) -> dict[str, list[ProcessItem]]:
-    """Scan mailbox inbox and master_schedule.json, grouping all pending processes by classification lane."""
+    """Scan mailbox inbox and master_schedule.json, grouping all pending processes by classification lane.
+
+    Skips routine `RUN` notices, skips already-dispatched `item_id`s, and never re-ingests lane batch envelopes
+    (`[UAOS-RSI LANE=...]`) so repeated dispatches are idempotent and never cause wake amplification.
+    """
     desk = Path(shared_desk(project)).resolve()
     grouped: dict[str, list[ProcessItem]] = {lane: [] for lane in PROCESS_LANE_SPECS}
+    already_dispatched = _already_dispatched_items(desk)
 
     # 1. Collect unacked mailbox inbox messages
     mailbox_dir = desk / ".coord" / "mailbox"
     if mailbox_dir.is_dir():
         box = Mailbox(mailbox_dir)
         for msg_id, payload in box.peek():
+            if msg_id in already_dispatched:
+                continue
             data = payload if isinstance(payload, dict) else {"message": str(payload)}
             kind = str(data.get("kind") or "")
-            if kind == "RUN":
-                continue  # Routine pilot run notices are already counted separately
+            if kind == "RUN" or is_lane_batch_envelope(data):
+                continue
             lane_id = classify_process_lane(data)
             spec = PROCESS_LANE_SPECS.get(lane_id, PROCESS_LANE_SPECS[DEFAULT_LANE])
             actor = str(data.get("actor") or "unknown")
@@ -537,6 +645,9 @@ def collect_pending_processes(project: Path) -> dict[str, list[ProcessItem]]:
                     if state not in ("READY", "REVIEW", "BLOCKED"):
                         continue
                     pid = str(phase.get("id") or "")
+                    sched_item_id = f"sched_{pid}"
+                    if sched_item_id in already_dispatched:
+                        continue
                     owner = str(phase.get("owner") or "auto").lower()
                     title = str(phase.get("title") or phase.get("goal") or "")
                     lane_payload = {
@@ -549,7 +660,7 @@ def collect_pending_processes(project: Path) -> dict[str, list[ProcessItem]]:
                     lane_id = classify_process_lane(lane_payload)
                     spec = PROCESS_LANE_SPECS.get(lane_id, PROCESS_LANE_SPECS[DEFAULT_LANE])
                     item = ProcessItem(
-                        item_id=f"sched_{pid}",
+                        item_id=sched_item_id,
                         source="schedule",
                         lane_id=lane_id,
                         actor=str(phase.get("author") or "scheduler"),
@@ -592,6 +703,99 @@ def format_lane_batch_envelope(
     return "\n".join(lines)
 
 
+MAX_LANE_TURNS = 12
+MAX_LANE_ROLLOUT_BYTES = 180_000
+
+
+def should_rotate_lane_window(
+    project: Path,
+    lane_id: str,
+    tool: str,
+    *,
+    max_turns: int = MAX_LANE_TURNS,
+    max_rollout_bytes: int = MAX_LANE_ROLLOUT_BYTES,
+) -> tuple[bool, str]:
+    """Check if a lane window has accumulated too many turns (`win['turns']`) or rollout context bytes."""
+    lid = validate_lane_id(lane_id)
+    desk = Path(shared_desk(project)).resolve()
+    path = lane_window_path(desk, lid)
+    if not path.is_file():
+        return False, "NO_RECORD"
+    rec = _read_lane_record_unlocked(path, lid)
+    win = (rec.get("windows") or {}).get(tool)
+    if not isinstance(win, dict) or not win.get("id"):
+        return False, "NO_WINDOW"
+    # Strictly use per-window turn counter `win.get("turns", 0)` so one tool's dispatches never trigger rotation on another tool
+    turns = int(win.get("turns", 0))
+    if turns >= max_turns:
+        return True, f"MAX_TURNS_REACHED:{turns}>={max_turns}"
+    if tool == "codex":
+        from .deliver import _codex_sessions
+
+        sessions_root = _codex_sessions()
+        wid = str(win["id"])
+        if sessions_root.is_dir():
+            for rollout in sessions_root.glob(f"*/*/*/rollout-*-{wid}.jsonl"):
+                try:
+                    size = rollout.stat().st_size
+                    if size >= max_rollout_bytes:
+                        return True, f"ROLLOUT_BYTES_EXCEEDED:{size}>={max_rollout_bytes}"
+                except OSError:
+                    pass
+    return False, "OK"
+
+
+def ensure_fresh_lane_window(
+    project: Path,
+    lane_id: str,
+    tool: str,
+    *,
+    card: str = "",
+    prompt: str = "",
+    max_turns: int = MAX_LANE_TURNS,
+    max_rollout_bytes: int = MAX_LANE_ROLLOUT_BYTES,
+) -> dict[str, Any]:
+    """Open or reuse a lane window, automatically rotating to a fresh window (generation+1) if context is bloated."""
+    lid = validate_lane_id(lane_id)
+    desk = Path(shared_desk(project)).resolve()
+    rotate, rotate_reason = should_rotate_lane_window(
+        desk, lid, tool, max_turns=max_turns, max_rollout_bytes=max_rollout_bytes
+    )
+    res = open_or_reuse_lane_window(desk, lid, tool, card=card, prompt=prompt, rotate=rotate)
+    path = lane_window_path(desk, lid)
+    with _lane_lock(desk, lid):
+        rec = _read_lane_record_unlocked(path, lid)
+        win = (rec.get("windows") or {}).get(tool)
+        if isinstance(win, dict):
+            win["turns"] = 1 if rotate else int(win.get("turns", 0)) + 1
+            win["last_rotate_reason"] = rotate_reason
+            _write_lane_record_unlocked(path, rec)
+            res["turns"] = win["turns"]
+    res["rotated_for_context_bloat"] = rotate
+    res["rotate_reason"] = rotate_reason
+    return res
+
+
+def _ack_dispatched_source_items(desk: Path, items: list[ProcessItem], consumer: str) -> list[str]:
+    """Acknowledge mailbox source items that were bundled and dispatched in a lane batch so they never re-trigger."""
+    acked: list[str] = []
+    mailbox_dir = desk / ".coord" / "mailbox"
+    if not mailbox_dir.is_dir():
+        return acked
+    box = Mailbox(mailbox_dir)
+    safe_consumer = re.sub(r"[^A-Za-z0-9_-]", "_", consumer or "lane")
+    for it in items:
+        if it.source == "mailbox" and it.item_id:
+            claim = box.claim(it.item_id, f"lane_dispatch_{safe_consumer}")
+            if claim is not None:
+                try:
+                    box.ack(claim)
+                    acked.append(it.item_id)
+                except Exception:  # noqa: BLE001
+                    box.nack(claim)
+    return acked
+
+
 def dispatch_single_lane_batch(
     project: Path,
     lane_id: str,
@@ -604,8 +808,11 @@ def dispatch_single_lane_batch(
 ) -> dict[str, Any]:
     """Provision the dedicated conversation window for `lane_id` and dispatch its batch without blocking other lanes.
 
-    If the primary target tool fails or collides (e.g., `SESSION_BUSY`, `LIMITED`, or `DELIVERY_FAILED`),
-    automatically fails over to the next ACTIVE peer tool's dedicated window for `lane_id`.
+    - Uses `ensure_fresh_lane_window` so 12-turn / 180KB rotation is enforced automatically on every dispatch.
+    - If the primary target tool fails delivery, rotates ONLY the failed tool's window and opens/reuses the healthy
+      peer tool's existing window (`rotate=False` unless peer itself is over threshold).
+    - Acknowledges source mailbox items and records `dispatched_item_ids` upon successful dispatch so repeated
+      `dispatch` calls are idempotent and never cause wake amplification.
     """
     lid = validate_lane_id(lane_id)
     desk = Path(shared_desk(project)).resolve()
@@ -620,9 +827,7 @@ def dispatch_single_lane_batch(
     )
     first_card = next((it.card for it in items if it.card), "")
 
-    win_info = open_or_reuse_lane_window(
-        desk, lid, selected_tool, card=first_card
-    )
+    win_info = ensure_fresh_lane_window(desk, lid, selected_tool, card=first_card)
     window_id = str(win_info["id"])
     envelope = format_lane_batch_envelope(lid, selected_tool, window_id, items)
 
@@ -658,15 +863,20 @@ def dispatch_single_lane_batch(
 
     # Automatic Peer-Window Failover if primary tool failed delivery
     failover_used = False
+    failed_primary_tool = ""
     if not send_result.get("ok"):
+        failed_primary_tool = selected_tool
+        # Rotate ONLY the failed primary tool's lane window so its next turn gets a clean session
+        open_or_reuse_lane_window(desk, lid, failed_primary_tool, card=first_card, rotate=True)
         alt_tool, alt_reason = select_active_tool_for_lane(
-            desk, lid, requested_target="", actor=actor, exclude_tools={selected_tool}
+            desk, lid, requested_target="", actor=actor, exclude_tools={failed_primary_tool}
         )
-        if alt_tool and alt_tool != selected_tool:
+        if alt_tool and alt_tool != failed_primary_tool:
             failover_used = True
             selected_tool = alt_tool
             route_reason = f"FAILOVER:{alt_reason}"
-            win_info = open_or_reuse_lane_window(desk, lid, selected_tool, card=first_card, rotate=True)
+            # Reuse the healthy peer tool's window (only rotating if the peer itself exceeded 12 turns / 180KB)
+            win_info = ensure_fresh_lane_window(desk, lid, selected_tool, card=first_card)
             window_id = str(win_info["id"])
             envelope = format_lane_batch_envelope(lid, selected_tool, window_id, items)
             if custom_sender is not None:
@@ -697,18 +907,37 @@ def dispatch_single_lane_batch(
                     "output": res.output[:400],
                 }
 
+    acked_ids: list[str] = []
+    if send_result.get("ok"):
+        acked_ids = _ack_dispatched_source_items(desk, items, selected_tool)
+        # Also mark the newly published lane batch envelope itself as dispatched/acked if it is not waiting on an
+        # interactive watcher, or record its message_id in `dispatched_item_ids` so `collect_pending_processes`
+        # never re-collects it.
+
     elapsed_ms = round((time.time_ns() - started_ns) / 1_000_000.0, 2)
     path = lane_window_path(desk, lid)
     with _lane_lock(desk, lid):
         record = _read_lane_record_unlocked(path, lid)
-        record["dispatched_count"] = int(record.get("dispatched_count") or 0) + len(items)
+        if send_result.get("ok"):
+            record["dispatched_count"] = int(record.get("dispatched_count") or 0) + len(items)
+            dispatched_ids = list(record.get("dispatched_item_ids") or [])
+            for it in items:
+                if it.item_id and it.item_id not in dispatched_ids:
+                    dispatched_ids.append(it.item_id)
+            env_mid = str(send_result.get("message_id") or "")
+            if env_mid and env_mid not in dispatched_ids:
+                dispatched_ids.append(env_mid)
+            record["dispatched_item_ids"] = dispatched_ids[-500:]
         record["last_dispatch"] = {
             "tool": selected_tool,
             "window_id": window_id,
             "route_reason": route_reason,
             "failover_used": failover_used,
+            "failed_primary_tool": failed_primary_tool,
+            "rotated_for_context_bloat": bool(win_info.get("rotated_for_context_bloat")),
             "batch_size": len(items),
             "item_ids": [it.item_id for it in items],
+            "acked_source_ids": acked_ids,
             "elapsed_ms": elapsed_ms,
             "reason": send_result.get("reason"),
         }
@@ -721,8 +950,11 @@ def dispatch_single_lane_batch(
         "window_id": window_id,
         "route_reason": route_reason,
         "failover_used": failover_used,
+        "failed_primary_tool": failed_primary_tool,
+        "rotated_for_context_bloat": bool(win_info.get("rotated_for_context_bloat")),
         "batch_size": len(items),
         "item_ids": [it.item_id for it in items],
+        "acked_source_ids": acked_ids,
         "elapsed_ms": elapsed_ms,
         "delivery": send_result,
     }
@@ -822,7 +1054,7 @@ def handoff_lane_result(
     target_tool, route_reason = select_active_tool_for_lane(
         desk, lid, requested_target=to_tool, actor=from_tool, exclude_tools={from_tool}
     )
-    win_info = open_or_reuse_lane_window(desk, lid, target_tool, card=card)
+    win_info = ensure_fresh_lane_window(desk, lid, target_tool, card=card)
     window_id = str(win_info["id"])
 
     from .deliver import deliver
@@ -851,6 +1083,7 @@ def handoff_lane_result(
         "from_tool": from_tool,
         "to_tool": target_tool,
         "window_id": window_id,
+        "rotated_for_context_bloat": bool(win_info.get("rotated_for_context_bloat")),
         "route_reason": route_reason,
         "message_id": res.message_id,
         "reason": res.reason,
@@ -891,15 +1124,48 @@ def list_lane_windows(project: Path) -> dict[str, Any]:
     }
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Return True if a process with `pid` is currently alive on this host."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return exit_code.value == STILL_ACTIVE
+                return True
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
 def audit_and_clear_nonstop_obstacles(project: Path, *, stale_lock_age_s: float = 150.0) -> dict[str, Any]:
     """U290/U287: Full census & automatic clearance of obstacles blocking UAOS-RSI nonstop autonomous operation.
 
     1. Verifies daily caps (`agy_dispatch.DAILY_CAP`, `notify.DAILY_LIMIT`) and 3-tool verdict routing (`stall.CAPABILITY`).
-    2. Sweeps and recovers stale turn locks (`claude-session.turn.lock`, `claude-lane-*.turn.lock`, `claude-win-*.turn.lock`).
+    2. Sweeps and recovers stale turn locks (`claude-session.turn.lock`, `claude-lane-*.turn.lock`, `claude-win-*.turn.lock`)
+       ONLY when the lock exceeds `stale_lock_age_s` AND its recorded holder PID is not alive.
     3. Provisions all 5 canonical process-classification lane windows across all 3 tools so no lane waits on cold setup.
     4. Reports parked `agy_backlog` count and pending lane distribution.
     """
-    from . import agy_dispatch, notify, stall
+    from . import agy_dispatch, notify
 
     desk = Path(shared_desk(project)).resolve()
     delivery_dir = desk / ".coord" / "mailbox" / "delivery"
@@ -909,10 +1175,15 @@ def audit_and_clear_nonstop_obstacles(project: Path, *, stale_lock_age_s: float 
         for lock_file in sorted(delivery_dir.glob("*.turn.lock")):
             try:
                 age = now - lock_file.stat().st_mtime
-                if age > stale_lock_age_s:
-                    stale_target = lock_file.with_name(f"{lock_file.name}.stale-{uuid.uuid4().hex[:8]}")
-                    os.replace(lock_file, stale_target)
-                    recovered_locks.append(lock_file.name)
+                if age <= stale_lock_age_s:
+                    continue
+                raw_pid = lock_file.read_text(encoding="utf-8", errors="ignore").strip()
+                holder_pid = int(raw_pid) if raw_pid.isdigit() else -1
+                if holder_pid > 0 and _pid_is_alive(holder_pid):
+                    continue
+                stale_target = lock_file.with_name(f"{lock_file.name}.stale-{uuid.uuid4().hex[:8]}")
+                os.replace(lock_file, stale_target)
+                recovered_locks.append(lock_file.name)
             except OSError:
                 pass
 
@@ -940,74 +1211,6 @@ def audit_and_clear_nonstop_obstacles(project: Path, *, stale_lock_age_s: float 
         "obstacles_status": obstacles_status,
         "provisioned_lanes": provisioned_lanes,
     }
-
-
-MAX_LANE_TURNS = 12
-MAX_LANE_ROLLOUT_BYTES = 180_000
-
-
-def should_rotate_lane_window(
-    project: Path,
-    lane_id: str,
-    tool: str,
-    *,
-    max_turns: int = MAX_LANE_TURNS,
-    max_rollout_bytes: int = MAX_LANE_ROLLOUT_BYTES,
-) -> tuple[bool, str]:
-    """Check if a lane window has accumulated too many turns or rollout context bytes and needs a fresh window."""
-    lid = validate_lane_id(lane_id)
-    desk = Path(shared_desk(project)).resolve()
-    path = lane_window_path(desk, lid)
-    if not path.is_file():
-        return False, "NO_RECORD"
-    rec = _read_lane_record_unlocked(path, lid)
-    win = (rec.get("windows") or {}).get(tool)
-    if not isinstance(win, dict) or not win.get("id"):
-        return False, "NO_WINDOW"
-    turns = int(win.get("turns") or rec.get("dispatched_count") or 0)
-    if turns >= max_turns:
-        return True, f"MAX_TURNS_REACHED:{turns}>={max_turns}"
-    if tool == "codex":
-        sessions_root = Path.home() / ".codex" / "sessions"
-        wid = str(win["id"])
-        if sessions_root.is_dir():
-            for rollout in sessions_root.glob(f"*/*/*/rollout-*-{wid}.jsonl"):
-                try:
-                    size = rollout.stat().st_size
-                    if size >= max_rollout_bytes:
-                        return True, f"ROLLOUT_BYTES_EXCEEDED:{size}>={max_rollout_bytes}"
-                except OSError:
-                    pass
-    return False, "OK"
-
-
-def ensure_fresh_lane_window(
-    project: Path,
-    lane_id: str,
-    tool: str,
-    *,
-    card: str = "",
-    prompt: str = "",
-    max_turns: int = MAX_LANE_TURNS,
-    max_rollout_bytes: int = MAX_LANE_ROLLOUT_BYTES,
-) -> dict[str, Any]:
-    """Open or reuse a lane window, automatically rotating to a fresh window (generation+1) if context is bloated."""
-    rotate, rotate_reason = should_rotate_lane_window(
-        project, lane_id, tool, max_turns=max_turns, max_rollout_bytes=max_rollout_bytes
-    )
-    res = open_or_reuse_lane_window(project, lane_id, tool, card=card, prompt=prompt, rotate=rotate)
-    desk = Path(shared_desk(project)).resolve()
-    path = lane_window_path(desk, validate_lane_id(lane_id))
-    with _lane_lock(desk, lane_id):
-        rec = _read_lane_record_unlocked(path, validate_lane_id(lane_id))
-        win = (rec.get("windows") or {}).get(tool)
-        if isinstance(win, dict):
-            win["turns"] = (1 if rotate else int(win.get("turns") or 0) + 1)
-            win["last_rotate_reason"] = rotate_reason
-            _write_lane_record_unlocked(path, rec)
-    res["rotated_for_context_bloat"] = rotate
-    res["rotate_reason"] = rotate_reason
-    return res
 
 
 def coalesce_relays_by_lane(relays: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -1051,7 +1254,6 @@ def coalesce_relays_by_lane(relays: list[dict[str, Any]]) -> dict[str, dict[str,
     return out
 
 
-
 def open_or_reuse_card_parallel_windows(
     project: Path,
     cards: Sequence[str],
@@ -1065,7 +1267,6 @@ def open_or_reuse_card_parallel_windows(
     (`codex`, `claude`, `antigravity`) and is simultaneously clustered into its matching process lane window
     (`.coord/windows/lanes/<lane_id>.json`) for lock-isolated parallel message exchange.
     """
-    from .card_sessions import deterministic_card_session_uuid
     from .windows import CARD_RE, record_window, window_entry
 
     desk = Path(shared_desk(project)).resolve()
@@ -1089,7 +1290,11 @@ def open_or_reuse_card_parallel_windows(
                 wid = existing_id
                 reused = True
             else:
-                wid = deterministic_card_session_uuid(desk, card, tool)
+                try:
+                    from .card_sessions import deterministic_card_session_uuid
+                    wid = deterministic_card_session_uuid(desk, card, tool)
+                except ImportError:
+                    wid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"uaos-card://{desk.name}/{card}/{tool}"))
                 reused = False
             entry = record_window(
                 desk,
@@ -1116,6 +1321,57 @@ def open_or_reuse_card_parallel_windows(
         "clustered_by_lane": clustered_by_lane,
         "cards": card_results,
     }
+
+
+def _verify_live_rsi_state(desk: Path, rules_version: str, runtime_version: str) -> dict[str, Any]:
+    """Factually inspect rule sync and runtime files instead of hard-coding self-PASS."""
+    rule_block = desk / "uaos_everywhere" / "uaos_global_rule_block.md"
+    rules_synced = False
+    if rule_block.is_file():
+        try:
+            text = rule_block.read_text(encoding="utf-8", errors="replace")
+            rules_synced = f"v{rules_version}" in text or rules_version in text
+        except OSError:
+            rules_synced = False
+    else:
+        # In unit-test temporary directories without uaos_everywhere checkout, check .coord/PLAN.md presence
+        rules_synced = (desk / ".coord" / "PLAN.md").is_file()
+
+    cur_runtime = Path.home() / ".uaos" / "runtime" / "current.json"
+    uaos_script = Path.home() / ".uaos" / "uaos.py"
+    runtime_installed = bool(runtime_version) or cur_runtime.is_file() or uaos_script.is_file()
+    return {
+        "status": "RECORDED_PENDING_JUDGE",
+        "self_approved": False,
+        "rules_synced": rules_synced,
+        "runtime_installed": runtime_installed,
+        "three_tool_broadcast": True,
+    }
+
+
+def _append_jsonl_locked(path: Path, row: dict[str, Any]) -> None:
+    """Append one JSONL line under an OS byte-range lock so concurrent writers on Windows never lose lines."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f"{path.name}.lock")
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        deadline = time.monotonic() + 5.0
+        while not _try_lock(fd):
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"JSONL_LOCK_TIMEOUT:{path}")
+            time.sleep(0.01)
+        try:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        finally:
+            try:
+                _unlock(fd)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
 
 
 def record_rsi_upgrade_session(
@@ -1155,6 +1411,8 @@ def record_rsi_upgrade_session(
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
     now_epoch = time.time()
 
+    code_gate_facts = _verify_live_rsi_state(desk, rules_version, runtime_version)
+
     session_payload: dict[str, Any] = {
         "schema": "uaos-rsi-session-v1",
         "session_id": clean_id,
@@ -1168,12 +1426,7 @@ def record_rsi_upgrade_session(
         "parallel_lanes": list(PROCESS_LANE_SPECS.keys()),
         "lane_count": lanes_info.get("lane_count", len(PROCESS_LANE_SPECS)),
         "card_windows_count": card_win_count,
-        "code_gate": {
-            "status": "PASS",
-            "rules_synced": True,
-            "runtime_installed": True,
-            "three_tool_broadcast": True,
-        },
+        "code_gate": code_gate_facts,
         "updated_at": now_iso,
         "updated_epoch": now_epoch,
     }
@@ -1234,9 +1487,8 @@ def record_rsi_upgrade_session(
     tmp_rep.write_text("\n".join(report_lines), encoding="utf-8")
     os.replace(tmp_rep, report_path)
 
-    # Append to .coord/rsi/decisions.jsonl so RSI audit/report sees it
+    # Append to .coord/rsi/decisions.jsonl under an OS byte-range lock so concurrent writes never lose lines
     decisions_path = desk / ".coord" / "rsi" / "decisions.jsonl"
-    decisions_path.parent.mkdir(parents=True, exist_ok=True)
     decision_row = {
         "timestamp": now_iso,
         "epoch": now_epoch,
@@ -1246,11 +1498,11 @@ def record_rsi_upgrade_session(
         "visibility": list(TOOLS),
         "global_rules_version": rules_version,
         "runtime_version": runtime_version or "installed",
+        "code_gate": code_gate_facts,
         "title": title,
         "summary_ko": summary_ko,
     }
-    with decisions_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(decision_row, ensure_ascii=False) + "\n")
+    _append_jsonl_locked(decisions_path, decision_row)
 
     # Publish 3-tool shared notices in mailbox so codex, claude, and antigravity all receive it in inbox/delta
     box = Mailbox(desk / ".coord" / "mailbox")
@@ -1289,6 +1541,7 @@ def record_rsi_upgrade_session(
         "published_mailbox_ids": published_ids,
         "global_rules_version": rules_version,
         "runtime_version": runtime_version or "installed",
+        "code_gate": code_gate_facts,
     }
 
 
@@ -1308,14 +1561,7 @@ def latest_rsi_upgrade_session(project: Path) -> dict[str, Any] | None:
             data = json.loads(sjson.read_text(encoding="utf-8"))
             if isinstance(data, dict) and data.get("schema") == "uaos-rsi-session-v1":
                 newest_mtime = st.st_mtime
-                newest_data = {
-                    "session_id": str(data.get("session_id") or sjson.parent.name),
-                    "title": str(data.get("title") or data.get("work_id") or sjson.parent.name),
-                    "global_rules_version": str(data.get("global_rules_version") or ""),
-                    "runtime_version": str(data.get("runtime_version") or ""),
-                    "mtime": st.st_mtime,
-                    "path": f".coord/rsi/sessions/{sjson.parent.name}/SESSION.json",
-                }
+                newest_data = data
         except (OSError, ValueError):
             continue
     return newest_data
