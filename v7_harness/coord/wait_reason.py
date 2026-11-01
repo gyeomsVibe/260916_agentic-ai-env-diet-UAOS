@@ -106,7 +106,10 @@ def reasons(project: Path, tool: str, *, now: float | None = None) -> list[str]:
     lines: list[str] = []
     parked = _parked(project)
     if parked:
-        lines.append(f"Antigravity 답장 {parked}건 대기: 오늘 자동 답장 한도({DAILY_CAP}건) 소진 → 다음 날 첫 도구 턴에 자동 처리")
+        if DAILY_CAP is not None:
+            lines.append(f"Antigravity 답장 {parked}건 대기: 오늘 자동 답장 한도({DAILY_CAP}건) 소진 → 다음 날 첫 도구 턴에 자동 처리")
+        else:  # U290: no cap; letters parked before it are answered by the next drain
+            lines.append(f"Antigravity 답장 {parked}건 대기: 이전 한도로 보류된 편지 → 다음 도구 턴에 자동 처리")
     for other in TOOLS:
         record = read(project, other, now=moment) if other != tool else {}
         if record.get("state") == "LIMITED":

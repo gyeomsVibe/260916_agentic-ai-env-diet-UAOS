@@ -60,6 +60,7 @@ class VerdictWakesAgy(unittest.TestCase):
                 self.send(message=f"{PLAIN} {wake_class}", verdict_requested=True, wake_class=wake_class)
                 self.assertEqual([], self.calls)
 
+    @mock.patch.object(agy_dispatch, "DAILY_CAP", 20)  # U290: opt-in only; the default is uncapped
     def test_the_daily_cap_never_stops_a_verdict_request(self):
         # U199 (윤겸스 2026-10-15): a verdict request is the commit-gate audit, so a spent daily cap no longer parks it
         ledger = self.project / ".coord" / "mailbox" / "delivery" / "agy_auto.jsonl"
