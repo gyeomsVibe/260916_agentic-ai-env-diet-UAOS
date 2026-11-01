@@ -11,6 +11,13 @@ LOCAL_OUTPUT = 4096
 EDIT_LINES = 20
 HAIKU = 'claude-haiku-5-5'
 
+OLLAMA_PREPROCESS_KINDS = ('map', 'draft', 'summarize', 'classify', 'extract', 'extract_semantic', 'transform')
+OLLAMA_PATCH_KINDS = ('patch', 'edit', 'micro_patch')
+EVALUATOR_GATE_TOKENS = (
+    'evaluator', 'judge', 'calculator_gate', 'firewall_audit', 'stop_gate',
+    'rsi_release', 'proof_receipt', 'security', 'consensus', 'tests/', 'tests\\',
+)
+
 
 def _integer(value, minimum=0):
     return type(value) is int and value >= minimum
@@ -21,6 +28,180 @@ def _positive(value):
         return type(value) in (int, float) and math.isfinite(value) and value > 0
     except OverflowError:
         return False
+
+
+def evaluate_ollama_task_fit(
+    task: dict | str | None = None,
+    *,
+    kind: str | None = None,
+    target_files: tuple[str, ...] | list[str] | None = None,
+    touches_evaluator: bool = False,
+    exact_dictation: bool = False,
+    same_cause_failures: int = 0,
+    whole_file_rewrite: bool = False,
+    multi_file_architecture: bool = False,
+    functions: int = 1,
+    changed_lines: int = 0,
+    source_verified: bool = False,
+    exact_search_block: bool = False,
+    pinned_acceptance: bool = False,
+) -> dict:
+    """Pure deterministic first-match Ollama task-fit evaluator (U280)."""
+    if isinstance(task, dict):
+        kind = task.get('kind', kind)
+        target_files = task.get('target_files', target_files)
+        touches_evaluator = task.get('touches_evaluator', touches_evaluator)
+        exact_dictation = task.get('exact_dictation', exact_dictation)
+        same_cause_failures = task.get(
+            'same_cause_failures', task.get('local_failures', same_cause_failures)
+        )
+        whole_file_rewrite = task.get('whole_file_rewrite', whole_file_rewrite)
+        multi_file_architecture = task.get('multi_file_architecture', multi_file_architecture)
+        functions = task.get('functions', functions)
+        changed_lines = task.get('changed_lines', changed_lines)
+        source_verified = task.get(
+            'source_verified', task.get('bounded', source_verified)
+        )
+        exact_search_block = task.get('exact_search_block', exact_search_block)
+        pinned_acceptance = task.get(
+            'pinned_acceptance', task.get('frozen_gate', pinned_acceptance)
+        )
+    elif isinstance(task, str):
+        kind = task
+    elif task is not None:
+        return {
+            'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+            'local_qualified': False,
+            'worker': None,
+            'reason': 'INVALID_TASK_SPEC',
+            'execution_authorized': False,
+        }
+
+    if not isinstance(kind, str) or not kind.strip():
+        return {
+            'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+            'local_qualified': False,
+            'worker': None,
+            'reason': 'INVALID_TASK_KIND',
+            'execution_authorized': False,
+        }
+    if any(not _integer(n, 0) for n in (same_cause_failures, functions, changed_lines)):
+        return {
+            'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+            'local_qualified': False,
+            'worker': None,
+            'reason': 'INVALID_COUNTERS',
+            'execution_authorized': False,
+        }
+    bool_flags = (
+        touches_evaluator, exact_dictation, whole_file_rewrite,
+        multi_file_architecture, source_verified, exact_search_block, pinned_acceptance,
+    )
+    if any(type(b) is not bool for b in bool_flags):
+        return {
+            'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+            'local_qualified': False,
+            'worker': None,
+            'reason': 'INVALID_BOOLEAN_FLAGS',
+            'execution_authorized': False,
+        }
+    if target_files is not None:
+        if not isinstance(target_files, (list, tuple)) or any(not isinstance(p, str) for p in target_files):
+            return {
+                'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+                'local_qualified': False,
+                'worker': None,
+                'reason': 'INVALID_TARGET_FILES',
+                'execution_authorized': False,
+            }
+        files_norm = tuple(p.strip().lower() for p in target_files if p.strip())
+    else:
+        files_norm = ()
+
+    norm_kind = kind.strip().lower()
+    touches_gate_file = any(
+        any(tok in path for tok in EVALUATOR_GATE_TOKENS) for path in files_norm
+    )
+
+    # Precedence (1): evaluator/security/consensus/gate files -> REFUSE_LOCAL_EVALUATOR_OR_GATE
+    if touches_evaluator or touches_gate_file or norm_kind in JUDGMENTS or norm_kind in ('evaluator', 'security', 'consensus', 'gate'):
+        return {
+            'verdict': 'REFUSE_LOCAL_EVALUATOR_OR_GATE',
+            'local_qualified': False,
+            'worker': 'conductor',
+            'reason': 'REFUSE_LOCAL_EVALUATOR_OR_GATE',
+            'execution_authorized': False,
+        }
+
+    # Precedence (2): zero-change or already-exact dictation patch -> DETERMINISTIC_APPLY_FIRST
+    if exact_dictation or norm_kind in EXACT or norm_kind == 'deterministic' or (norm_kind in OLLAMA_PATCH_KINDS and changed_lines == 0):
+        return {
+            'verdict': 'DETERMINISTIC_APPLY_FIRST',
+            'local_qualified': False,
+            'worker': 'deterministic',
+            'reason': 'DETERMINISTIC_APPLY_FIRST',
+            'execution_authorized': False,
+        }
+
+    # Precedence (3): same-cause local failures >= 2 -> QUARANTINE_LOCAL_SAME_CAUSE
+    if same_cause_failures >= 2:
+        return {
+            'verdict': 'QUARANTINE_LOCAL_SAME_CAUSE',
+            'local_qualified': False,
+            'worker': None,
+            'reason': 'QUARANTINE_LOCAL_SAME_CAUSE',
+            'execution_authorized': False,
+        }
+
+    # Precedence (4): whole-file rewrite or >20 changed lines or multi-file architecture -> ESCALATE_BOUNDED_SLICE_REQUIRED
+    if (
+        whole_file_rewrite
+        or multi_file_architecture
+        or changed_lines > EDIT_LINES
+        or len(files_norm) > 1
+        or (norm_kind in OLLAMA_PATCH_KINDS and functions != 1)
+    ):
+        return {
+            'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+            'local_qualified': False,
+            'worker': 'conductor',
+            'reason': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+            'execution_authorized': False,
+        }
+
+    # Precedence (5): narrow map/draft/summary with source verification -> ALLOW_LOCAL_PREPROCESS
+    if norm_kind in OLLAMA_PREPROCESS_KINDS and source_verified:
+        return {
+            'verdict': 'ALLOW_LOCAL_PREPROCESS',
+            'local_qualified': True,
+            'worker': 'local',
+            'reason': 'ALLOW_LOCAL_PREPROCESS',
+            'execution_authorized': False,
+        }
+
+    # Precedence (6): single-function patch <=20 lines with exact SEARCH block and pinned acceptance -> ALLOW_LOCAL_MICRO_PATCH
+    if (
+        norm_kind in OLLAMA_PATCH_KINDS
+        and functions == 1
+        and 0 < changed_lines <= EDIT_LINES
+        and exact_search_block
+        and pinned_acceptance
+    ):
+        return {
+            'verdict': 'ALLOW_LOCAL_MICRO_PATCH',
+            'local_qualified': True,
+            'worker': 'local',
+            'reason': 'ALLOW_LOCAL_MICRO_PATCH',
+            'execution_authorized': False,
+        }
+
+    return {
+        'verdict': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+        'local_qualified': False,
+        'worker': 'conductor',
+        'reason': 'ESCALATE_BOUNDED_SLICE_REQUIRED',
+        'execution_authorized': False,
+    }
 
 
 def forecast(*, calls, input_tokens, output_tokens, cache_read_tokens=0, cache_write_tokens=0):
@@ -56,22 +237,40 @@ def _valid(task, availability):
     for key in ('input_tokens', 'output_tokens', 'changed_lines', 'local_failures'):
         if not _integer(task.get(key)):
             return False
-    return type(task.get('local_qualified')) is bool and type(task.get('allow_remote')) is bool
+    if 'local_qualified' in task and type(task.get('local_qualified')) is not bool:
+        return False
+    return type(task.get('allow_remote')) is bool
 
 
 def plan(task: dict, availability: dict) -> dict:
     """The same deterministic→local→explicit bounded Haiku policy for all callers."""
     if not _valid(task, availability):
         return _answer(None, 'INVALID_OR_UNBOUNDED_TASK', 'BLOCKED')
+    fit = None
+    if 'local_qualified' not in task or any(
+        k in task for k in (
+            'touches_evaluator', 'target_files', 'exact_dictation',
+            'whole_file_rewrite', 'multi_file_architecture',
+            'source_verified', 'exact_search_block', 'pinned_acceptance',
+        )
+    ):
+        fit = evaluate_ollama_task_fit(task)
+        if fit['verdict'] == 'REFUSE_LOCAL_EVALUATOR_OR_GATE':
+            return _answer('conductor', fit['reason'])
+        if fit['verdict'] == 'DETERMINISTIC_APPLY_FIRST':
+            return _answer('deterministic', fit['reason'])
     kind = task.get('kind')
     if kind in EXACT:
         return _answer('deterministic', 'EXACT_OPERATION')
     if kind in JUDGMENTS:
         return _answer('conductor', 'INDEPENDENT_JUDGMENT_REQUIRED')
-    if kind not in LOCAL_TASKS:
+    if kind not in LOCAL_TASKS and kind not in OLLAMA_PREPROCESS_KINDS and kind not in OLLAMA_PATCH_KINDS:
         return _answer(None, 'UNKNOWN_TASK_KIND', 'BLOCKED')
+    local_qualified = task['local_qualified'] if 'local_qualified' in task else bool(fit and fit['local_qualified'])
+    if fit is not None and not fit['local_qualified']:
+        local_qualified = False
     total = task['input_tokens'] + task['output_tokens']
-    if (availability.get('local') is True and task['local_qualified']
+    if (availability.get('local') is True and local_qualified
         and task['local_failures'] < 2 and task['changed_lines'] <= EDIT_LINES
         and total <= LOCAL_CONTEXT and 0 < task['output_tokens'] <= LOCAL_OUTPUT
         and _positive(task.get('timeout_s'))):
