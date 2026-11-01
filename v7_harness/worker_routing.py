@@ -80,6 +80,10 @@ def plan(task: dict, availability: dict) -> dict:
 
 
 def _remote(task, availability, total):
+    if not isinstance(task.get('remote_model', HAIKU), str):
+        return _answer(None, 'INVALID_NATIVE_MODEL', 'BLOCKED')
+    if task.get('remote_model', HAIKU) != HAIKU:
+        return _native_helper(task, availability, total)
     if not task['allow_remote'] or availability.get('haiku') is not True:
         return _answer(None, 'NO_EXPLICIT_AVAILABLE_HAIKU_ROUTE', 'BLOCKED')
     if (not _integer(task.get('budget_tokens'), 1) or not _positive(task.get('budget_usd'))
@@ -98,10 +102,27 @@ def _remote(task, availability, total):
     return result
 
 
+def _native_helper(task, availability, total):
+    lanes = {'gpt-6-luna': ('codex', 'uaos-luna-worker'), 'gemini-3.8-flash-low': ('agy', 'uaos-flash-worker')}
+    model = task.get('remote_model')
+    seat, agent = lanes.get(model, (None, None))
+    if seat is None or not task['allow_remote'] or availability.get(seat) is not True:
+        return _answer(None, 'NO_EXPLICIT_AVAILABLE_NATIVE_HELPER', 'BLOCKED')
+    if not _integer(task.get('budget_tokens'), 1) or not all(_positive(task.get(k)) for k in ('budget_usd', 'timeout_s')):
+        return _answer(None, 'NATIVE_POSITIVE_CAPS_REQUIRED', 'BLOCKED')
+    if task['input_tokens'] <= 0 or task['output_tokens'] <= 0 or total > task['budget_tokens']:
+        return _answer(None, 'NATIVE_TOTAL_TOKEN_CAP', 'BLOCKED')
+    result = _answer(seat, 'EXPLICIT_NATIVE_HELPER_REQUIRES_ADMISSION', model=model)
+    result.update(subagent=agent, require_exact_model=True, model_pin='exact', quota_saving='UNMEASURED')
+    return result
+
+
 def select_pool_worker(task: dict, availability: dict) -> dict:
     """Resolve 3-tool worker pool dispatch spec (local Ollama coder vs bounded Haiku 5.5 subagent)."""
     decision = dict(plan(task, availability))
     worker = decision.get('worker')
+    if worker in ('codex', 'agy'):
+        return decision
     if worker == 'local':
         decision['model'] = 'qwen2.5-coder:7b'
         decision['subagent'] = None
