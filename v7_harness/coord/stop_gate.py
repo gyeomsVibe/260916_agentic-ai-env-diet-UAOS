@@ -154,6 +154,60 @@ def _write_atomic(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def _request_hold(project: Path, tool: str, session: str, now: float | None = None) -> dict[str, Any] | None:
+    """U277 rev 2 (docs 5.6): hold a turn end while this session's verdict request is open. A live watcher of this
+    session releases the hold. Each request blocks once; the next stop with no live watcher is let through and logged
+    once as STOP_UNGUARDED (a visible fallback, never a silent loop). Any failure returns None, never a block."""
+    import hashlib
+
+    try:
+        from v7_harness.coord import requests, stream, watch
+
+        rows = requests.open_for(project, tool, session=session)
+        if not rows:
+            return None
+        ids = [str(row["request_id"]) for row in rows]
+        scope = hashlib.sha256(session.encode("utf-8")).hexdigest()[:12]
+        guard_path = Path(project) / ".coord" / "presence" / f"stop_gate_request_{tool}_{scope}.json"
+        try:
+            state = json.loads(guard_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                state = {}
+        except (OSError, ValueError):
+            state = {}
+        entries = {rid: state[rid] if isinstance(state.get(rid), dict)
+                   else {"blocks": 0, "lease_seen": False, "logged": False} for rid in ids}
+        if watch.watcher_wakes_for(Path(project), tool, session, now=now):
+            for entry in entries.values():
+                entry["lease_seen"] = True  # a live watcher of this session: the next lapse starts a fresh count
+            _write_atomic(guard_path, {**state, **entries})
+            return None
+        pending = []
+        for rid, entry in entries.items():
+            if entry["lease_seen"]:
+                entry.update(blocks=0, lease_seen=False)
+            if entry["blocks"] >= MAX_BLOCKS:
+                if not entry["logged"]:
+                    stream.append_event(Path(project), actor=tool, kind="BLOCKED", step="U277-STOP-UNGUARDED",
+                                        summary=f"STOP_UNGUARDED request:{rid} open after {MAX_BLOCKS} block with no "
+                                                f"live {tool} watcher; turn let through",
+                                        refs=[f"request:{rid}"], evidence={})
+                    entry["logged"] = True
+                continue
+            pending.append(rid)
+        for rid in pending:
+            entries[rid]["blocks"] += 1
+        _write_atomic(guard_path, {**state, **entries})
+        if not pending:
+            return None
+        return {"decision": HOLD_DECISION.get(tool, "block"),
+                "reason": f"Open verdict request(s) {', '.join(pending[:LETTER_NAMES])}: keep "
+                          f"`coord watch --target {tool} --wakes-session` running in the background, then take the "
+                          "next ready card"}
+    except Exception:  # noqa: BLE001 - a broken registry must not trap the turn; the next stop looks again
+        return None
+
+
 def gate(project: Path, tool: str, session: str | None = None, now: float | None = None) -> dict[str, Any] | None:
     project = Path(project)
     if not session:
@@ -165,6 +219,9 @@ def gate(project: Path, tool: str, session: str | None = None, now: float | None
     hold = letter_hold(project, tool, now=now, session=session)
     if hold is not None:
         return hold
+    request_hold = _request_hold(project, tool, session, now)
+    if request_hold is not None:
+        return request_hold
     step = next_card.next_step(project, tool, claim=True, session=session, now=now)
     if step.get("state") != "NEXT":
         return None
