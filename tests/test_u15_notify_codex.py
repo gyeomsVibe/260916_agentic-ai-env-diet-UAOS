@@ -9,9 +9,10 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
+from v7_harness.coord import notify as notify_module
 from v7_harness.coord.notify import (
-    DAILY_LIMIT,
     MESSAGE_MAX_CHARS,
     MESSAGE_MAX_LINES,
     NotifyRefused,
@@ -115,13 +116,14 @@ class U15NotifyTests(unittest.TestCase):
         self.assertEqual("RATE_LIMIT", soon.reason)
         self.assertEqual([], runner.calls)
 
+    @mock.patch.object(notify_module, "DAILY_LIMIT", 24)  # U290: opt-in only; the default is unlimited
     def test_daily_limit_stops_a_flood(self) -> None:
         write_cursor(
             self.project,
             {
                 "last_hash": "old",
                 "last_sent_at": (self.now - timedelta(hours=1)).isoformat(timespec="seconds"),
-                "sent_today": DAILY_LIMIT,
+                "sent_today": 24,
                 "day": f"{self.now:%Y-%m-%d}",
             },
         )
@@ -129,6 +131,22 @@ class U15NotifyTests(unittest.TestCase):
         self.assertFalse(result.sent)
         self.assertEqual("DAILY_LIMIT", result.reason)
         self.assertEqual([], runner.calls)
+
+    def test_no_daily_limit_by_default(self) -> None:
+        # U290 (윤겸스 2026-11-01 "모든 한도를 없애라"): a busy day never silences a Codex notice.
+        self.assertIsNone(notify_module.DAILY_LIMIT)
+        write_cursor(
+            self.project,
+            {
+                "last_hash": "old",
+                "last_sent_at": (self.now - timedelta(hours=1)).isoformat(timespec="seconds"),
+                "sent_today": 500,
+                "day": f"{self.now:%Y-%m-%d}",
+            },
+        )
+        result, runner = self._notify()
+        self.assertTrue(result.sent, result.reason)
+        self.assertEqual(1, len(runner.calls))
 
     def test_queue_failure_is_reported_not_swallowed(self) -> None:
         with self.assertRaises(NotifyRefused) as caught:

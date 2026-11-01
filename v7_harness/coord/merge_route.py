@@ -290,8 +290,51 @@ def _record(project: Path, row: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
 
 
+def _check_sync_args(project: Path, head: str) -> str | None:
+    if os.environ.get("UAOS_RUNTIME_HOLD") == "1" or (project / ".coord" / "presence" / "runtime_reinstall_hold.json").is_file():
+        return "RUNTIME_REINSTALL_HOLD"
+    if not isinstance(head, str) or not HEAD_RE.match(head):
+        return "INVALID_OR_EMPTY_HEAD"
+    if not (project / "v7_harness" / "runtime_install.py").is_file() or not (project / "v7_harness" / "__init__.py").is_file():
+        return "NO_RUNTIME_SOURCE"
+    return None
+
+
+def sync_runtime_after_merge(project: Path, *, head: str, home: Path | None = None) -> dict[str, Any]:
+    """U291: install the merged runtime into ~/.uaos/runtime only when `project` is clean at `origin/main == head` and not on HOLD."""
+    project = Path(project)
+    refusal = _check_sync_args(project, head)
+    if refusal is not None:
+        return {"synced": False, "reason": refusal}
+    try:
+        st = subprocess.run(["git", "-C", str(project), "status", "--porcelain"], capture_output=True, text=True, timeout=15)
+        rev = subprocess.run(["git", "-C", str(project), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=15)
+        main_rev = subprocess.run(["git", "-C", str(project), "rev-parse", "refs/remotes/origin/main"], capture_output=True, text=True, timeout=15)
+        if st.returncode != 0 or st.stdout.strip() or rev.returncode != 0 or rev.stdout.strip() != head:
+            return {"synced": False, "reason": "CHECKOUT_NOT_CLEAN_AT_HEAD"}
+        if main_rev.returncode != 0 or main_rev.stdout.strip() != head:
+            return {"synced": False, "reason": "HEAD_NOT_ORIGIN_MAIN"}
+        changed = subprocess.run(["git", "-C", str(project), "diff", "--name-only", f"{head}^1", head], capture_output=True, text=True, timeout=15)
+        if changed.returncode == 0:
+            from .agy_moderator import is_codex_exclusive_keypoint
+            files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
+            if is_codex_exclusive_keypoint({"files": files}):
+                return {"synced": False, "reason": "RUNTIME_REINSTALL_HOLD:KEYPOINT_NEEDS_CODEX_RETURN_REVIEW"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"synced": False, "reason": f"GIT_CHECK_FAILED:{type(exc).__name__}"}
+    from .. import runtime_install
+
+    try:
+        target_home = Path(home) if home is not None else Path.home()
+        manifest = runtime_install.install(target_home, repo=project)
+        return {"synced": True, "version": manifest.get("version"), "digest": manifest.get("build_digest")}
+    except Exception as exc:  # noqa: BLE001
+        return {"synced": False, "reason": f"{type(exc).__name__}:{exc}"[:160]}
+
+
 def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None,
-          now: float | None = None, desk: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+          now: float | None = None, desk: dict[str, dict[str, Any]] | None = None,
+          sync_runtime: bool = False, home: Path | None = None) -> dict[str, Any]:
     """Merge `pr` at `head` through Antigravity, then Codex. Returns {"state": MERGED | REFUSED | FAILED_ALL_ROUTES}."""
     project = Path(project)
     if runner is None:
@@ -333,6 +376,8 @@ def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None
         if after.get("state") == "MERGED" and after.get("headRefOid") == head:
             row = {"ts": moment, "pr": pr, "head": head, "verdict": verdict, "state": "MERGED", "merged_by": tool,
                    "ci_run": ci_run, "attempts": attempts}
+            if sync_runtime:
+                row["runtime_sync"] = sync_runtime_after_merge(project, head=head, home=home)
             _record(project, row)
             return row
         if after.get("state") == "CLOSED":

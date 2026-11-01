@@ -98,6 +98,7 @@ class AgyAutoReply(unittest.TestCase):
         self.assertEqual([], self.calls)
         self.assertIn("SKIPPED_LOOP", result.output)
 
+    @mock.patch.object(agy_dispatch, "DAILY_CAP", 20)  # U290: opt-in only; the default is uncapped
     def test_the_daily_cap_stops_dispatch(self):
         ledger = self.project / ".coord" / "mailbox" / "delivery" / "agy_auto.jsonl"
         ledger.parent.mkdir(parents=True, exist_ok=True)

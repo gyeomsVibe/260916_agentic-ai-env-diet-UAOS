@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any
 
 AUTO_TAG = "[agy-auto]"
-# 20 answers x ~28k tokens (U119 live) = at most ~560k Antigravity tokens a day; past it letters wait (U118 route).
-DAILY_CAP = 20
+# U290 (윤겸스 2026-11-01 "모든 한도를 없애라"): no daily answer cap by default. The U120 cap (20 answers x ~28k tokens)
+# parked approval requests until the next Seoul day. An int re-enables that path (the cap tests use 20).
+DAILY_CAP: int | None = None
 # The answer is a letter, not a document: 1,500 characters keep the reply inside one mailbox read.
 MAX_REPLY_CHARS = 1500
 # U127: a resumed turn re-reads the conversation (probe: 53,072 input tokens against about 25,000 fresh, +28,000 a
@@ -151,11 +152,16 @@ def _budget_lock(project: Path):
     return _exclusive(_ledger(project).parent / "agy_budget.lock")
 
 
+def _cap_spent(project: Path, now: float) -> bool:
+    """U290: True only when a daily cap is set and today's answers reached it."""
+    return DAILY_CAP is not None and _today_count(project, now) >= DAILY_CAP
+
+
 def _reserve(project: Path, message_id: str, now: float, audit: bool = False) -> str | None:
     """U164: take one unit of today's cap before the paid call, or None when the cap is spent. A process that dies
     after this keeps its unit spent: the budget counts calls started, not calls finished."""
     with _budget_lock(project):
-        if not audit and _today_count(project, now) >= DAILY_CAP:  # U199: 윤겸스 2026-10-15, audits are uncapped
+        if not audit and _cap_spent(project, now):  # U199: 윤겸스 2026-10-15, audits are uncapped
             return None
         reservation = f"{os.getpid()}-{time.time_ns()}"
         _append(project, {"ts": now, "message_id": message_id, "state": "RESERVED", "reservation": reservation,
@@ -191,7 +197,7 @@ def backlog_ready(project: Path, now: float | None = None) -> bool:
     folder = _backlog(project)
     if not folder.is_dir() or not any(folder.glob("*.json")):
         return False
-    return _today_count(project, time.time() if now is None else now) < DAILY_CAP
+    return not _cap_spent(project, time.time() if now is None else now)
 
 
 def _parked_order(path: Path) -> float:
@@ -213,7 +219,7 @@ def drain_backlog(project: Path, *, now: float | None = None, runner: Any = subp
     if not folder.is_dir():
         return rows
     for path in sorted(folder.glob("*.json"), key=_parked_order):
-        if _today_count(project, now) >= DAILY_CAP:
+        if _cap_spent(project, now):
             break
         try:
             fd = os.open(folder / f"{path.stem}.lock", os.O_CREAT | os.O_RDWR)
