@@ -13,7 +13,7 @@ from v7_harness.coord.usage_ledger import record_usage
 
 
 class TestU267Pr229WatermarkCounterexamples(unittest.TestCase):
-    """Comprehensive counterexample suite for PR #229 watermark and U259 Argon brain transcript ingestion."""
+    """Comprehensive counterexample suite for PR #229 watermark, U259 Argon brain transcript ingestion, and 6:3:1 WDRR routing."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -104,6 +104,7 @@ class TestU267Pr229WatermarkCounterexamples(unittest.TestCase):
         ev2 = self._row(2, 200, 1, "2027-01-15T07:51:00Z")
         self.tf.write_text(ev1 + ev2, encoding="utf-8", newline="\n")
         os.utime(self.tf, (1020.0, 1020.0))
+        f_size = self.tf.stat().st_size
 
         for bad_offset in ("abc", -10, True, {"bad": 1}):
             self.wm.parent.mkdir(parents=True, exist_ok=True)
@@ -113,34 +114,56 @@ class TestU267Pr229WatermarkCounterexamples(unittest.TestCase):
                     "files": {
                         str(self.tf): {
                             "offset": bad_offset,
-                            "file_size": self.tf.stat().st_size,
+                            "file_size": f_size,
                             "mtime": 1020.0,
                             "prefix_sha": "deadbeefdeadbeef",
-                            "events": [],
+                            "events": [{"ts": 999999999.0, "raw_total": 99999}],
                         }
                     },
                 }),
                 encoding="utf-8",
             )
             res = CP._scan_agy_brain_transcripts(self.home, cutoff_ts=0.0, watermark_path=self.wm)
-            self.assertEqual([e["raw_total"] for e in res], [101, 201])
+            self.assertEqual([e["raw_total"] for e in res], [101, 201], f"failed on bad_offset={bad_offset!r}")
 
-    def test_f2_corrupt_cached_events_falls_back_cleanly(self) -> None:
-        """F2 (pr229_b440579_review.json): Non-dict cached events (['garbage']) fall back to full rescan without AttributeError."""
+    def test_f2_corrupt_cached_events_including_bool_ts_falls_back_cleanly(self) -> None:
+        """F2 (pr229_b440579_review.json): Malformed cached events including boolean ts ({'ts': True}) force full rescan."""
         ev1 = self._row(1, 100, 1, "2027-01-15T07:50:00Z")
         ev2 = self._row(2, 200, 1, "2027-01-15T07:51:00Z")
         self.tf.write_text(ev1 + ev2, encoding="utf-8", newline="\n")
         os.utime(self.tf, (1030.0, 1030.0))
+        f_size = self.tf.stat().st_size
 
+        # Discriminating case 1: cached event with boolean ts (isinstance(True, (int, float)) is True in Python!)
+        # When file_size and mtime match, origin/main e030527 blindly trusted {"ts": True, "raw_total": 77777}!
+        self.wm.parent.mkdir(parents=True, exist_ok=True)
+        self.wm.write_text(
+            json.dumps({
+                "schema": "uaos-brain-watermark-v1",
+                "files": {
+                    str(self.tf): {
+                        "offset": f_size,
+                        "file_size": f_size,
+                        "mtime": 1030.0,
+                        "prefix_sha": "deadbeefdeadbeef",
+                        "events": [{"ts": True, "raw_total": 77777}],
+                    }
+                },
+            }),
+            encoding="utf-8",
+        )
+        res_bool_ts = CP._scan_agy_brain_transcripts(self.home, cutoff_ts=0.0, watermark_path=self.wm)
+        self.assertEqual([e["raw_total"] for e in res_bool_ts], [101, 201])
+
+        # Case 2: non-dict events list ['garbage'] with both matching and non-matching mtime
         for mtime_val in (0.0, 1030.0):
-            self.wm.parent.mkdir(parents=True, exist_ok=True)
             self.wm.write_text(
                 json.dumps({
                     "schema": "uaos-brain-watermark-v1",
                     "files": {
                         str(self.tf): {
                             "offset": 10,
-                            "file_size": self.tf.stat().st_size,
+                            "file_size": f_size,
                             "mtime": mtime_val,
                             "prefix_sha": "deadbeefdeadbeef",
                             "events": ["garbage", 123, {"ts": "not-a-float"}],
@@ -191,28 +214,32 @@ class TestU267Pr229WatermarkCounterexamples(unittest.TestCase):
         self.assertFalse(res_1d["debounced"])
         self.assertEqual(res_1d["head"]["ts"], int(t0 + 86400))
 
-    def test_f5_debounced_refresh_always_writes_requested_html_out(self) -> None:
-        """F5 (pr229_b440579_review.json): When html_out is requested during a debounced window, the HTML file is written."""
+    def test_f5_debounced_refresh_overwrites_existing_stale_html_and_creates_missing_html(self) -> None:
+        """F5 (pr229_b440579_review.json): When html_out is requested during a debounced window, even an existing stale HTML file is overwritten."""
         t0 = 1_800_000_000.0
         html_out = self.root / ".work" / "dash_u267.html"
         res1 = CP.refresh_capacity_zero_token(self.root, home=self.home, now=t0, min_interval_s=60.0, html_out=html_out)
         self.assertFalse(res1["debounced"])
         self.assertTrue(html_out.is_file())
 
-        html_out.unlink()
-        self.assertFalse(html_out.is_file())
+        # Discriminating case: overwrite html_out with STALE_HTML (file still exists on disk!)
+        # On origin/main e030527, `if html_out is not None and not Path(html_out).is_file():` skipped existing files!
+        html_out.write_text("STALE_HTML", encoding="utf-8")
+        self.assertEqual(html_out.read_text(encoding="utf-8"), "STALE_HTML")
 
         res2 = CP.refresh_capacity_zero_token(
             self.root, home=self.home, now=t0 + 10.0, min_interval_s=60.0, html_out=html_out
         )
         self.assertTrue(res2["debounced"])
-        self.assertTrue(html_out.is_file())
+        fresh_html = html_out.read_text(encoding="utf-8")
+        self.assertNotEqual(fresh_html, "STALE_HTML")
+        self.assertIn("<!DOCTYPE html>", fresh_html)
 
     def test_f6_capacity_head_written_atomically_via_atomic_write_json(self) -> None:
-        """F6 (pr229_b440579_review.json): capacity_head.json is persisted via _atomic_write_json and stays <=320 bytes."""
+        """F6 (pr229_b440579_review.json): capacity_head.json is persisted via _atomic_write_json(compact=True) with fsync and stays <=320 bytes."""
         src = inspect.getsource(CP.collect_capacity_snapshot)
+        self.assertIn("_atomic_write_json(local_head, head_summary, compact=True)", src)
         self.assertNotIn("local_head.write_text(", src)
-        self.assertTrue("_atomic_write_json(local_head" in src or "os.replace(head_tmp, local_head)" in src)
 
         snap = CP.collect_capacity_snapshot(self.root, home=self.home, now=1_800_000_000.0, persist=True)
         head_path = self.root / ".coord" / "usage" / "capacity_head.json"
@@ -274,6 +301,37 @@ class TestU267Pr229WatermarkCounterexamples(unittest.TestCase):
         wm_text = self.wm.read_text(encoding="utf-8")
         self.assertNotIn("NEVER_PERSIST_SECRET_TOKEN_XYZ_98765", snap_text)
         self.assertNotIn("NEVER_PERSIST_SECRET_TOKEN_XYZ_98765", wm_text)
+
+    def test_u259_wdrr_6_3_1_heavy_lifter_routing_and_limited_failover(self) -> None:
+        """U259 P1: 6:3:1 Weighted Deficit Round-Robin (WDRR) distributes 6:3:1 over 10 dispatches and fails over when LIMITED."""
+        all_active = {
+            "antigravity": {"presence_state": "ACTIVE", "usable_remaining_5h_tokens": 30_000_000},
+            "codex": {"presence_state": "ACTIVE", "usable_remaining_5h_tokens": 7_000_000},
+            "claude": {"presence_state": "ACTIVE", "usable_remaining_5h_tokens": 8_000_000},
+        }
+        sim = CP.simulate_wdrr_sequence(all_active, steps=10)
+        self.assertEqual(sim["policy"], "WDRR_6_3_1")
+        self.assertEqual(sim["weights"], {"antigravity": 6, "codex": 3, "claude": 1})
+        self.assertEqual(sim["counts"], {"antigravity": 6, "codex": 3, "claude": 1})
+        self.assertEqual(sim["next_recommended_heavy_lifter"], "antigravity")
+
+        # When codex is LIMITED, WDRR skips codex (0 dispatches) and distributes between antigravity (6) and claude (1)
+        codex_limited = {
+            "antigravity": {"presence_state": "ACTIVE", "usable_remaining_5h_tokens": 30_000_000},
+            "codex": {"presence_state": "LIMITED", "usable_remaining_5h_tokens": 0},
+            "claude": {"presence_state": "ACTIVE", "usable_remaining_5h_tokens": 8_000_000},
+        }
+        sim_failover = CP.simulate_wdrr_sequence(codex_limited, steps=7)
+        self.assertEqual(sim_failover["counts"]["codex"], 0)
+        self.assertEqual(sim_failover["counts"]["antigravity"], 6)
+        self.assertEqual(sim_failover["counts"]["claude"], 1)
+        self.assertIn("codex", sim_failover["skipped_tools"])
+
+        # Verify build_capacity_aware_schedule surfaces argon_routing and wdrr_heavy_lifter
+        sched_plan = CP.build_capacity_aware_schedule(self.root, codex_limited)
+        self.assertIn("argon_routing", sched_plan)
+        self.assertEqual(sched_plan["argon_routing"]["policy"], "WDRR_6_3_1")
+        self.assertEqual(sched_plan["wdrr_heavy_lifter"]["selected_tool"], "antigravity")
 
 
 if __name__ == "__main__":

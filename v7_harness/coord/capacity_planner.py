@@ -1253,6 +1253,128 @@ def collect_capacity_snapshot(
     return snapshot
 
 
+WDRR_DEFAULT_WEIGHTS: dict[str, int] = {
+    "antigravity": 6,
+    "codex": 3,
+    "claude": 1,
+}
+
+
+def select_wdrr_heavy_lifter(
+    engines: dict[str, dict[str, Any]],
+    *,
+    deficits: dict[str, float] | None = None,
+    weights: dict[str, int | float] | None = None,
+    cost: float = 1.0,
+    exclude: set[str] | None = None,
+) -> dict[str, Any]:
+    """U259: Deterministic 6:3:1 Weighted Deficit Round-Robin (WDRR) heavy-lifter router.
+
+    Each active, non-exhausted tool receives `weight` deficit credits per dispatch quantum;
+    the eligible tool with the highest deficit is selected and charged `cost` (default 1.0).
+    Ineligible (`LIMITED`, `ABSENT`, `LIMITED_PAUSE`, or `usable_remaining_5h_tokens == 0` without burst reserve)
+    tools have their deficit reset to 0.0 and are skipped automatically (failover).
+    """
+    w_map = dict(WDRR_DEFAULT_WEIGHTS)
+    if weights:
+        for k, v in weights.items():
+            if k in PAID_TOOLS and isinstance(v, (int, float)) and not isinstance(v, bool) and float(v) > 0:
+                w_map[k] = int(v) if float(v).is_integer() else float(v)  # type: ignore[assignment]
+
+    excl = set(exclude or ())
+    state_deficits: dict[str, float] = {
+        t: float((deficits or {}).get(t, 0.0)) for t in PAID_TOOLS
+    }
+
+    eligible: list[str] = []
+    skipped: dict[str, str] = {}
+    for t in ("antigravity", "codex", "claude"):
+        if t in excl:
+            skipped[t] = "EXCLUDED"
+            continue
+        info = engines.get(t) or {}
+        pres = str(info.get("presence_state") or "ACTIVE").upper()
+        tier = str(info.get("status_tier") or "")
+        rem = info.get("usable_remaining_5h_tokens")
+        burst = int(info.get("active_burst_reserve_tokens") or 0)
+        if pres in ("LIMITED", "ABSENT") or tier == "LIMITED_PAUSE":
+            state_deficits[t] = 0.0
+            skipped[t] = f"PRESENCE_{pres}"
+            continue
+        if isinstance(rem, (int, float)) and not isinstance(rem, bool) and int(rem) <= 0 and burst <= 0:
+            state_deficits[t] = 0.0
+            skipped[t] = "QUOTA_EXHAUSTED"
+            continue
+        eligible.append(t)
+
+    if not eligible:
+        return {
+            "schema": "uaos-wdrr-routing-v1",
+            "policy": "WDRR_6_3_1",
+            "weights": w_map,
+            "selected_tool": "BLOCKED",
+            "eligible_tools": [],
+            "skipped_tools": skipped,
+            "deficits": state_deficits,
+        }
+
+    total_eligible_weight = sum(float(w_map.get(t, 1)) for t in eligible)
+    norm_cost = float(cost) * (total_eligible_weight if total_eligible_weight > 0 else 1.0)
+    for t in eligible:
+        state_deficits[t] = round(state_deficits.get(t, 0.0) + float(w_map.get(t, 1)), 6)
+
+    order_rank = {"antigravity": 3, "codex": 2, "claude": 1}
+    chosen = max(
+        eligible,
+        key=lambda t: (state_deficits[t], float(w_map.get(t, 1)), order_rank.get(t, 0)),
+    )
+    state_deficits[chosen] = round(state_deficits[chosen] - norm_cost, 6)
+
+    if deficits is not None:
+        deficits.clear()
+        deficits.update(state_deficits)
+
+    return {
+        "schema": "uaos-wdrr-routing-v1",
+        "policy": "WDRR_6_3_1",
+        "weights": w_map,
+        "selected_tool": chosen,
+        "eligible_tools": eligible,
+        "skipped_tools": skipped,
+        "deficits": dict(state_deficits),
+    }
+
+
+def simulate_wdrr_sequence(
+    engines: dict[str, dict[str, Any]],
+    steps: int = 10,
+    *,
+    weights: dict[str, int | float] | None = None,
+) -> dict[str, Any]:
+    """Simulate `steps` dispatches under 6:3:1 WDRR and return sequence + per-tool dispatch counts."""
+    deficits: dict[str, float] = {t: 0.0 for t in PAID_TOOLS}
+    sequence: list[str] = []
+    counts: dict[str, int] = {t: 0 for t in PAID_TOOLS}
+    last_step: dict[str, Any] = {}
+    for _ in range(max(0, int(steps))):
+        last_step = select_wdrr_heavy_lifter(engines, deficits=deficits, weights=weights)
+        sel = str(last_step.get("selected_tool") or "BLOCKED")
+        sequence.append(sel)
+        if sel in counts:
+            counts[sel] += 1
+    return {
+        "schema": "uaos-wdrr-simulation-v1",
+        "policy": "WDRR_6_3_1",
+        "weights": dict(weights or WDRR_DEFAULT_WEIGHTS),
+        "steps": int(steps),
+        "sequence": sequence,
+        "counts": counts,
+        "eligible_tools": last_step.get("eligible_tools", []),
+        "skipped_tools": last_step.get("skipped_tools", {}),
+        "next_recommended_heavy_lifter": sequence[0] if sequence else "BLOCKED",
+    }
+
+
 def build_capacity_aware_schedule(
     desk: Path,
     engines: dict[str, dict[str, Any]],
@@ -1448,6 +1570,8 @@ def build_capacity_aware_schedule(
         "argon_tier_mode": argon_mode,
         "argon_used_5h_share_pct": agy_used_share_pct,
         "argon_remaining_5h_share_pct": agy_rem_share_pct,
+        "argon_routing": simulate_wdrr_sequence(engines, steps=10),
+        "wdrr_heavy_lifter": select_wdrr_heavy_lifter(engines),
         "post_schedule_remaining_tokens": virtual_rem,
         "phase_assignments": assignments,
         "subworker_optimization": compute_subworker_optimization(engines),
