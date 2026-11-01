@@ -133,14 +133,17 @@ DEFAULT_POLICY: dict[str, Any] = {
 }
 
 
-def _atomic_write_json(path: Path, data: Any) -> None:
+def _atomic_write_json(path: Path, data: Any, *, compact: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
+            if compact:
+                json.dump(data, handle, ensure_ascii=False, separators=(",", ":"))
+            else:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(str(tmp_path), str(path))
@@ -777,17 +780,26 @@ def _scan_agy_brain_transcripts(
             conv_id = tf.parts[-4] if len(tf.parts) >= 4 else tf.parent.name
             cached = wm_files.get(f_key)
             cached_ok = False
+            c_size, c_mtime, c_offset = -1, 0.0, 0
             if isinstance(cached, dict) and isinstance(cached.get("events"), list):
-                try:
-                    c_size = int(cached.get("file_size") if cached.get("file_size") is not None else -1)
-                    c_mtime = float(cached.get("mtime") or 0.0)
-                    c_offset = int(cached.get("offset") or 0)
-                    events_valid = all(isinstance(ev, dict) and isinstance(ev.get("ts"), (int, float)) for ev in cached["events"])
-                    cached_ok = events_valid and c_offset >= 0
-                except (TypeError, ValueError):
-                    cached_ok = False
-            else:
-                c_size, c_mtime, c_offset = -1, 0.0, 0
+                raw_offset = cached.get("offset")
+                raw_size = cached.get("file_size")
+                raw_mtime = cached.get("mtime")
+                if not isinstance(raw_offset, bool) and not isinstance(raw_size, bool) and not isinstance(raw_mtime, bool):
+                    try:
+                        c_size = int(raw_size if raw_size is not None else -1)
+                        c_mtime = float(raw_mtime or 0.0)
+                        c_offset = int(raw_offset if raw_offset is not None else 0)
+                        events_valid = all(
+                            isinstance(ev, dict)
+                            and isinstance(ev.get("ts"), (int, float))
+                            and not isinstance(ev.get("ts"), bool)
+                            for ev in cached["events"]
+                        )
+                        cached_ok = events_valid and c_offset >= 0
+                    except (TypeError, ValueError):
+                        cached_ok = False
+                        c_size, c_mtime, c_offset = -1, 0.0, 0
 
             if cached_ok and c_size == f_size and abs(c_mtime - f_mtime) < 1e-3:
                 file_events = [ev for ev in cached["events"] if float(ev.get("ts") or 0.0) >= cutoff_ts]
@@ -1214,10 +1226,7 @@ def collect_capacity_snapshot(
         sub_sched_file = desk / ".coord" / "sub_process_schedule.json"
         _atomic_write_json(sub_sched_file, sub_process_schedule)
         local_head = desk / ".coord" / "usage" / "capacity_head.json"
-        local_head.parent.mkdir(parents=True, exist_ok=True)
-        head_tmp = local_head.with_name(f".capacity_head.{os.getpid()}.{time.time_ns()}.tmp")
-        head_tmp.write_text(json.dumps(head_summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        os.replace(head_tmp, local_head)
+        _atomic_write_json(local_head, head_summary, compact=True)
         global_reg = home_dir / ".uaos" / "usage" / "global_capacity_registry.json"
         reg_data: dict[str, Any] = {
             "schema": "uaos-global-capacity-registry-v1",
@@ -2153,7 +2162,7 @@ def refresh_capacity_zero_token(
                 and sched_mtime <= last_ts
                 and brain_mtime <= last_ts
             ):
-                if html_out is not None and not Path(html_out).is_file():
+                if html_out is not None:
                     snap_cached = json.loads(snap_path.read_text(encoding="utf-8"))
                     render_html_dashboard(snap_cached, Path(html_out))
                 return {"ok": True, "debounced": True, "paid_tokens_used": 0, "head": head_data}
