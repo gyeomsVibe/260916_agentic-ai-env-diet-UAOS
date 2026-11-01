@@ -122,7 +122,7 @@ def antigravity_accounts(root: Path, now: datetime | None = None, appdata: Path 
     newest_login = None
     log = appdata / "Antigravity" / "logs" / "language_server.log" if appdata else None
     if log and log.is_file():
-        mtime = datetime.fromtimestamp(log.stat().st_mtime).astimezone()
+        mtime = datetime.fromtimestamp(log.stat().st_mtime, tz=now.tzinfo)
         fresh, newest_login = parse_log(log.read_text(encoding="utf-8", errors="replace"), mtime)
     # the account signed in now owns the session that began at the newest marker
     if login and newest_login:
