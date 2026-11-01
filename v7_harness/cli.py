@@ -1463,8 +1463,9 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
     # U134-C: QUEUED_UNTIL_ACTIVE waits for the target's next ACTIVE turn; also not a failure.
+    # U282: QUEUED_NOTICE is a letter to Codex that asks for no turn, left in the inbox; also not a failure.
     ok = result.reason in ("PUBLISHED", "DISPATCHED", "ACKED", "QUEUED_INTERACTIVE", "QUEUED_ACK_ONLY",
-                           "QUEUED_UNTIL_ACTIVE")
+                           "QUEUED_UNTIL_ACTIVE", "QUEUED_NOTICE")
     print(json.dumps({"ok": ok, "target": result.target, "reason": result.reason,
                       "message_id": result.message_id, "digest": result.digest,
                       "receipt": result.receipt, "output": result.output[:500]}, ensure_ascii=False))
