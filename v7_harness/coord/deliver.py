@@ -124,8 +124,9 @@ def _digest(actor: str, message: str, card: str = "", window: str | None = None,
 
 def _requires_wake(message: str) -> bool:
     """Only a real delta may spend a paid turn; ACK_ONLY, negated, incidental or quoted tokens never do."""
-    upper = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()
-    if _ACK_RE.search(upper) or _ECHO_STORM_RE.search(message):
+    unquoted = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message))
+    upper = unquoted.upper()
+    if _ACK_RE.search(upper) or _ECHO_STORM_RE.search(unquoted):
         return False
     upper = _NEGATED_RE.sub(" ", upper)
     return any(pattern.search(upper) for pattern in _WAKE_RES)
@@ -629,7 +630,7 @@ def _read_rollout_meta(path: Path) -> tuple[str, Path | None, str]:
     if not isinstance(data, dict) or data.get("type") != "session_meta":
         return "", None, "THREAD_UNVERIFIED"
     payload = data.get("payload")
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or payload.get("source") == "uaos-lane-window":
         return "", None, "THREAD_UNVERIFIED"
 
     present_ids: list[str] = []
@@ -842,7 +843,7 @@ def _codex_thread(desk: Path, thread: str) -> tuple[str, dict[str, str], str]:
     why = ""
     if thread and not UUID_RE.fullmatch(thread):
         why = "not_uuid"
-    elif thread and not list(root.glob(f"*/*/*/rollout-*-{thread}.jsonl")):
+    elif thread and not [p for p in root.glob(f"*/*/*/rollout-*-{thread}.jsonl") if _read_rollout_meta(p)[2] == "OK"]:
         why = "no_rollout"
     elif thread:
         status = _verify_thread(desk, root, thread)
@@ -1454,8 +1455,25 @@ def _deliver_impl(
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = thread or None
     if lane and not window:
-        from v7_harness.coord.process_lanes import lane_window_for
-        window = None if target == "claude" else lane_window_for(desk, lane, target or "")
+        from v7_harness.coord.process_lanes import (
+            _resolve_codex_lane_thread,
+            ensure_fresh_lane_window,
+            is_lane_batch_envelope,
+            lane_window_for,
+        )
+        if (
+            target in ("codex", "claude", "antigravity")
+            and not is_lane_batch_envelope(message)
+            and not message.lstrip().startswith("[LANE:")
+        ):
+            win_info = ensure_fresh_lane_window(desk, lane, target, card=card)
+            candidate_wid = None if target == "claude" else str(win_info.get("id") or "")
+        else:
+            candidate_wid = None if target == "claude" else lane_window_for(desk, lane, target or "")
+        if target == "codex":
+            window = _resolve_codex_lane_thread(desk, candidate_wid or "") or None
+        else:
+            window = candidate_wid
     elif card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
