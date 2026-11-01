@@ -178,8 +178,11 @@ def _deliver_to_codex(
 
     argv = (codex_bin, "queue", "--thread", thread, "--message", message)
     execute = runner or subprocess.run
+    kwargs: dict[str, Any] = {"capture_output": True, "text": True, "timeout": timeout}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     try:
-        cp = execute(list(argv), capture_output=True, text=True, timeout=timeout)
+        cp = execute(list(argv), **kwargs)
     except (subprocess.TimeoutExpired, OSError) as exc:
         return DeliverResult(False, "codex", f"DELIVERY_FAILED:{exc}", argv, "")
 
@@ -307,6 +310,8 @@ def _deliver_to_claude_locked(
     # Claude emits UTF-8. Windows' locale is CP949 on this host, so text=True without an explicit encoding loses the
     # reply in subprocess' reader thread even when Claude exits successfully.
     kwargs: dict[str, Any] = dict(capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     if project_dir:
         kwargs["cwd"] = str(project_dir)
     if window_cwd:  # U115 judge: resume where the window's transcript lives (it may have entered a worktree)

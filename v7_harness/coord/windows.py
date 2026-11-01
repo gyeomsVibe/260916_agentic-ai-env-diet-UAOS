@@ -151,7 +151,8 @@ def record_window(project: Path, card: str, tool: str, window_id: str, *, now: f
 def _codex_rpc_session() -> Callable[[str, dict], dict]:
     """A JSON-RPC client over one `codex app-server` stdio process (the official thread API, not Codex's own files)."""
     proc = subprocess.Popen([shutil.which("codex") or "codex", "app-server"], stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == "nt" else 0)
     counter = {"id": 0}
 
     def send(message: dict) -> None:
@@ -199,8 +200,12 @@ def _open_codex(project: Path, title: str, prompt: str, rpc: Callable[[str, dict
 
 
 def _open_antigravity(project: Path, prompt: str, runner: Callable[..., Any]) -> tuple[str, int | None]:
-    done = runner([shutil.which("agy") or "agy", "-p", prompt, "--output-format", "json"], cwd=str(project),
-                  capture_output=True, text=True, encoding="utf-8", timeout=AGY_TIMEOUT_S)
+    kwargs: dict[str, Any] = dict(
+        cwd=str(project), capture_output=True, text=True, encoding="utf-8", timeout=AGY_TIMEOUT_S
+    )
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    done = runner([shutil.which("agy") or "agy", "-p", prompt, "--output-format", "json"], **kwargs)
     raw = done.stdout or ""
     try:
         envelope = json.loads(raw)
