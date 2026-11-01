@@ -27,7 +27,7 @@ CURSOR_PATH = Path(".work") / "coord" / "codex_notify_cursor.json"
 MESSAGE_MAX_LINES = 6
 MESSAGE_MAX_CHARS = 500
 MIN_INTERVAL = timedelta(minutes=1)
-DAILY_LIMIT = 24
+DAILY_LIMIT = None
 DATA_HEADER = "[DATA] from={actor} verdict_requested={verdict}"
 
 

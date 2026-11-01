@@ -24,18 +24,18 @@
 |---|---|---|---|---|---|---|
 | `v7_harness/adapters/claude_worker.py:188` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/adapters/lane_worker.py:79` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/calculator_gate.py:136` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
-| `v7_harness/calculator_gate.py:142` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/calculator_gate.py:202` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
-| `v7_harness/calculator_gate.py:231` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
-| `v7_harness/calculator_gate.py:237` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
-| `v7_harness/calculator_gate.py:246` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
-| `v7_harness/calculator_gate.py:274` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
+| `v7_harness/calculator_gate.py:271` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
+| `v7_harness/calculator_gate.py:283` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/calculator_gate.py:505` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
+| `v7_harness/calculator_gate.py:563` | DIRECT | `subprocess.run` | FIXED | no | no | FIXED |
+| `v7_harness/calculator_gate.py:575` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
+| `v7_harness/calculator_gate.py:593` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
+| `v7_harness/calculator_gate.py:651` | DIRECT | `subprocess.check_output` | FIXED | yes | no | FIXED |
 | `v7_harness/coord/agy_dispatch.py:348` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/boot_task.py:184` | DIRECT | `subprocess.Popen` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/day_brief.py:45` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/deliver.py:168` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
-| `v7_harness/coord/deliver.py:308` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/deliver.py:191` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
+| `v7_harness/coord/deliver.py:347` | INDIRECT | `execute -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/desk_delta.py:42` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/merge_route.py:61` | INDIRECT | `runner -> subprocess.run` | CALLER | no | no | CALLER_INPUT |
 | `v7_harness/coord/next_card.py:53` | DIRECT | `subprocess.run` | CALLER | no | no | CALLER_INPUT |
@@ -83,12 +83,12 @@
 
 - `v7_harness/adapters/claude_worker.py:188` DIRECT `subprocess.run`
 - `v7_harness/adapters/lane_worker.py:79` DIRECT `subprocess.run`
-- `v7_harness/calculator_gate.py:142` DIRECT `subprocess.run`
+- `v7_harness/calculator_gate.py:283` DIRECT `subprocess.run`
 - `v7_harness/coord/agy_dispatch.py:348` INDIRECT `runner -> subprocess.run`
 - `v7_harness/coord/boot_task.py:184` DIRECT `subprocess.Popen`
 - `v7_harness/coord/day_brief.py:45` DIRECT `subprocess.run`
-- `v7_harness/coord/deliver.py:168` INDIRECT `execute -> subprocess.run`
-- `v7_harness/coord/deliver.py:308` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/deliver.py:191` INDIRECT `execute -> subprocess.run`
+- `v7_harness/coord/deliver.py:347` INDIRECT `execute -> subprocess.run`
 - `v7_harness/coord/desk_delta.py:42` DIRECT `subprocess.run`
 - `v7_harness/coord/merge_route.py:61` INDIRECT `runner -> subprocess.run`
 - `v7_harness/coord/next_card.py:53` DIRECT `subprocess.run`

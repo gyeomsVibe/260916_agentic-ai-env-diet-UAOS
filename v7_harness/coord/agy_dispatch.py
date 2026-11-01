@@ -18,7 +18,7 @@ from typing import Any
 
 AUTO_TAG = "[agy-auto]"
 # 20 answers x ~28k tokens (U119 live) = at most ~560k Antigravity tokens a day; past it letters wait (U118 route).
-DAILY_CAP = 20
+DAILY_CAP = None
 # The answer is a letter, not a document: 1,500 characters keep the reply inside one mailbox read.
 MAX_REPLY_CHARS = 1500
 # U127: a resumed turn re-reads the conversation (probe: 53,072 input tokens against about 25,000 fresh, +28,000 a

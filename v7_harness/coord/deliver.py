@@ -58,7 +58,13 @@ class DeliverResult:
 # "STEP1" and "no ACTIONABLE_DELTA since last"; an ACK_ONLY marker always wins.
 _TOKEN = r"(?<![A-Z0-9_=]){}(?![A-Z0-9_])"
 _ACK_RE = re.compile(_TOKEN.format("ACK_ONLY"))
-_NEGATED_RE = re.compile(r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+(?:ACTIONABLE_DELTA|VERDICT_REQUESTED)\b")
+_NEGATED_RE = re.compile(
+    r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+(?:ACTIONABLE_DELTA|VERDICT_REQUESTED)\b|VERDICT_REQUESTED=(?:NO|FALSE|0)\b"
+)
+_ECHO_STORM_RE = re.compile(
+    r"(?:이미\s*수신\s*처리한|수신\s*확인\s*통지|수신\s*확인을\s*처리했습니다|recorded\s+as\s+advisory|already\s+received\s+confirmation)",
+    re.IGNORECASE,
+)
 _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
     "ACTIONABLE_DELTA",
     r"VERDICT_REQUESTED(?:=YES|(?!=NO\b|=FALSE\b|=0\b))",
@@ -119,7 +125,7 @@ def _digest(actor: str, message: str, card: str = "", window: str | None = None,
 def _requires_wake(message: str) -> bool:
     """Only a real delta may spend a paid turn; ACK_ONLY, negated, incidental or quoted tokens never do."""
     upper = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()
-    if _ACK_RE.search(upper):
+    if _ACK_RE.search(upper) or _ECHO_STORM_RE.search(message):
         return False
     upper = _NEGATED_RE.sub(" ", upper)
     return any(pattern.search(upper) for pattern in _WAKE_RES)
@@ -195,12 +201,20 @@ def _deliver_to_codex(
 
 # ── Claude 전달 ──────────────────────────────────────────────
 @contextmanager
-def _claude_turn(project_dir: Path | None, timeout: int):
-    """Serialize messages through the one persisted Claude conversation, including across processes."""
+def _claude_turn(project_dir: Path | None, timeout: int, *, lane: str = "", session: str = ""):
+    """Serialize messages through a Claude conversation; per-lane or per-session locks prevent Head-of-Line blocking."""
     if project_dir is None:
         yield
         return
-    lock = project_dir / ".coord" / "mailbox" / "delivery" / "claude-session.turn.lock"
+    if lane:
+        from v7_harness.coord.process_lanes import validate_lane_id
+        lock_name = f"claude-lane-{validate_lane_id(lane)}.turn.lock"
+    elif session:
+        safe_sess = re.sub(r"[^a-zA-Z0-9_-]", "_", session)[:48]
+        lock_name = f"claude-win-{safe_sess}.turn.lock"
+    else:
+        lock_name = "claude-session.turn.lock"
+    lock = project_dir / ".coord" / "mailbox" / "delivery" / lock_name
     lock.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout + 5
     fd = None
@@ -244,12 +258,13 @@ def _deliver_to_claude(
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
     session: str = "",
+    lane: str = "",
 ) -> DeliverResult:
     try:
-        with _claude_turn(project_dir, timeout):
+        with _claude_turn(project_dir, timeout, lane=lane, session=session):
             return _deliver_to_claude_locked(
                 message, project_dir=project_dir, runner=runner, timeout=timeout, allowed_tools=allowed_tools,
-                session=session,
+                session=session, lane=lane,
             )
     except TimeoutError as exc:
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
@@ -263,6 +278,7 @@ def _deliver_to_claude_locked(
     timeout: int = 120,
     allowed_tools: tuple[str, ...] = ("Read",),
     session: str = "",
+    lane: str = "",
 ) -> DeliverResult:
     claude_bin = shutil.which("claude")
     if not claude_bin:
@@ -272,7 +288,11 @@ def _deliver_to_claude_locked(
     session_id = ""
     resume = False
     window_cwd = ""
-    if session:  # U115: a card window is an existing session; the default delivery session file is left alone
+    if lane and project_dir and not session:
+        from v7_harness.coord.process_lanes import ensure_claude_lane_session
+
+        session_id, session_path, resume = ensure_claude_lane_session(project_dir, lane)
+    elif session:  # U115: a card window is an existing session; the default delivery session file is left alone
         from v7_harness.coord.windows import claude_session
 
         (session_id, window_cwd), resume = claude_session(session), True
@@ -339,8 +359,12 @@ def _deliver_to_claude_locked(
             if rc == 0 and resume:
                 session_path = None
             break
-        if rc != 0 and "already in use" in stderr.lower() and session_id and not session:
-            fresh_id = str(uuid.uuid4())
+        if rc != 0 and "already in use" in (stderr + " " + stdout).lower() and session_id and not session:
+            if lane and project_dir:
+                from v7_harness.coord.process_lanes import ensure_claude_lane_session
+                fresh_id, session_path, _ = ensure_claude_lane_session(project_dir, lane, rotate=True)
+            else:
+                fresh_id = str(uuid.uuid4())
             retry_argv = [
                 "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
                 for a in argv_list
@@ -365,8 +389,16 @@ def _deliver_to_claude_locked(
         result_text = stdout[:500]
 
     if session_path and session_id:
+        prev_state: dict[str, Any] = {}
+        if session_path.is_file():
+            try:
+                loaded_s = json.loads(session_path.read_text(encoding="utf-8"))
+                if isinstance(loaded_s, dict):
+                    prev_state = loaded_s
+            except (OSError, ValueError):
+                prev_state = {}
         temporary = session_path.with_suffix(f".tmp-{uuid.uuid4().hex}")
-        temporary.write_text(json.dumps({"session_id": session_id, "ready": True}, sort_keys=True) + "\n",
+        temporary.write_text(json.dumps({**prev_state, "session_id": session_id, "ready": True}, sort_keys=True) + "\n",
                              encoding="utf-8")
         os.replace(temporary, session_path)
     reply = str(result_text)[:2000]
@@ -1176,6 +1208,7 @@ def _deliver_unlocked(
     pending_owner: str | None = None,
     card: str = "",
     window: str = "",
+    lane: str = "",
     identity_digest: str | None = None,
     wants_turn: bool | None = None,
 ) -> DeliverResult:
@@ -1274,7 +1307,7 @@ def _deliver_unlocked(
         elif target == "claude":
             prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
                 "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
-            result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window)
+            result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window, lane=lane)
         else:
             result = DeliverResult(False, str(target), f"UNKNOWN_TARGET:{target}", (), "")
 
@@ -1323,6 +1356,7 @@ def deliver(
     thread: str = "",
     runner: Any = None,
     card: str = "",
+    lane: str = "",
     wake_class: str | None = None,
     verdict_requested: bool | None = None,
     verdict: str | None = None,
@@ -1353,7 +1387,7 @@ def deliver(
 
     try:
         result = _deliver_impl(root, message=message, actor=actor, target=target, thread=thread, runner=runner,
-                               card=card, wake_class=wake_class, verdict_requested=verdict_requested,
+                               card=card, lane=lane, wake_class=wake_class, verdict_requested=verdict_requested,
                                verdict=verdict, delta=delta, in_reply_to=in_reply_to,
                                _track=track if verdict_requested is True else None,
                                audit=verdict_requested is True)
@@ -1377,6 +1411,7 @@ def _deliver_impl(
     thread: str = "",
     runner: Any = None,
     card: str = "",
+    lane: str = "",
     wake_class: str | None = None,
     verdict_requested: bool | None = None,
     verdict: str | None = None,
@@ -1418,7 +1453,10 @@ def _deliver_impl(
     # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = thread or None
-    if card:
+    if lane and not window:
+        from v7_harness.coord.process_lanes import lane_window_for
+        window = None if target == "claude" else lane_window_for(desk, lane, target or "")
+    elif card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
     token = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
@@ -1535,7 +1573,7 @@ def _deliver_impl(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", identity_digest=digest, wants_turn=wants_turn)
+                                 card=card, window=window or "", lane=lane, identity_digest=digest, wants_turn=wants_turn)
     finally:
         _release_guard(guard, owner)
 
