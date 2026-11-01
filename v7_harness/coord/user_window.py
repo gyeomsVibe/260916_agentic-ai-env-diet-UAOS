@@ -235,10 +235,88 @@ def _claude_title(thread: str, *, root: Path | None = None, transcript=None) -> 
             data = json.loads(text)
         except (OSError, ValueError):
             continue
-        if isinstance(data, dict) and data.get("cliSessionId") == thread:
+        if isinstance(data, dict) and (
+            data.get("cliSessionId") == thread
+            or data.get("sessionId") in (thread, f"local_{thread}")
+        ):
             title = data.get("title")
             return title if isinstance(title, str) else None
     return None
+
+
+def extract_representative_title(raw_title: str | None) -> str:
+    """U293: Extract the clean `<대화창 대표 타이틀>` by stripping any leading `[YYMMDD-N]` or
+    `[사용자 대화창구-YYMMDD-N]` prefix while preserving the user's representative title."""
+    if not isinstance(raw_title, str):
+        return ""
+    cleaned = raw_title.strip()
+    while True:
+        next_cleaned = re.sub(r"^\s*\[(?:사용자 대화창구-)?\d{6}-\d+\]\s*", "", cleaned).strip()
+        if next_cleaned == cleaned:
+            break
+        cleaned = next_cleaned
+    return cleaned
+
+
+def rename_claude_desktop_session_title(
+    thread: str,
+    title: str,
+    *,
+    root: Path | None = None,
+    backup_dir: Path | None = None,
+) -> str:
+    """U293: Atomically update the topmost Claude Code Desktop session's `local_*.json` title to
+    `[YYMMDD-N] <대화창 대표 타이틀>` after backing up the file to `.work/backup_<date>/`.
+
+    Never renames child card sessions spawned by `mcp__ccd_session__start_session` (`titleSource == "tool"`).
+    """
+    if not isinstance(thread, str) or not thread.strip() or not isinstance(title, str) or not title.strip():
+        return "INVALID_ARGS"
+    folder = Path(root) if root else _claude_sessions_root()
+    if not folder.is_dir():
+        return "NO_STORE"
+    norm_thread = thread.strip()
+    local_candidate = norm_thread if norm_thread.startswith("local_") else f"local_{norm_thread}"
+    bare_candidate = norm_thread[6:] if norm_thread.startswith("local_") else norm_thread
+
+    for path in folder.glob("*/*/local_*.json"):
+        try:
+            text = path.read_text(encoding="utf-8")
+            if bare_candidate not in text and norm_thread not in text:
+                continue
+            data = json.loads(text)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("cliSessionId") not in (norm_thread, bare_candidate) and data.get("sessionId") not in (
+            norm_thread,
+            local_candidate,
+        ):
+            continue
+        if data.get("titleSource") == "tool":
+            return "CHILD_TOOL_SESSION"
+        old_title = str(data.get("title") or "")
+        if old_title == title:
+            return "RENAMED"
+        stamp = time.time_ns()
+        try:
+            if backup_dir is not None:
+                Path(backup_dir).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, Path(backup_dir) / f"{path.stem}_{stamp}.json")
+            prev = list(data.get("previousTitles") or []) if isinstance(data.get("previousTitles"), list) else []
+            if old_title and (not prev or prev[-1] != old_title):
+                prev.append(old_title)
+            data["previousTitles"] = prev
+            data["title"] = title
+            temp = path.with_name(f".{path.name}.{os.getpid()}.{stamp}.tmp")
+            temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp, path)
+            verify = json.loads(path.read_text(encoding="utf-8"))
+            return "RENAMED" if isinstance(verify, dict) and verify.get("title") == title else "PARTIAL"
+        except (OSError, ValueError):
+            return "IO_ERROR"
+    return "NOT_FOUND"
 
 
 def _read_one(uri: str, sql: str, arg: str) -> str | None:

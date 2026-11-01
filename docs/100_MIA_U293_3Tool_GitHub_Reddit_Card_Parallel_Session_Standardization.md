@@ -56,9 +56,12 @@
 ### 핵심 표준 아키텍처: **UAOS-RSI Dual-Layer Card & Lane Parallel Session OS (`U293`)**
 
 ```
-[부모 지휘/대행 세션 (Parent Conductor Desk)]
+[최상위(부모) 기본 사용자 대상 대화창 (Topmost Default User-Facing Window: "[YYMMDD-N] 대화창 대표 타이틀")]
+  ├─ 자동 개설·선점 로직: user_window.claim + ensure_topmost_user_window → .coord/presence/user_windows.json (PRIMARY)
+  │    - 예(Claude Code 최상위): "[261102-1] Codex 사용량 제한 대응" (sessionId=local_9538324b..., cliSessionId=926558e3...)
+  │    - 예(Antigravity 최상위): "[261102-2] 카드별 병렬 세션 가동 표준화 설계" (conversationId=e83f605a...)
   ├─ 챕터 마커: "카드별 병렬 세션 가동" (mcp__ccd_session__mark_chapter / UI Header)
-  ├─ 1계층: 카드별 독립 자식 세션 (.coord/windows/<U##>.json)
+  ├─ 1계층(하위): 카드별 독립 자식 세션 (.coord/windows/<U##>.json, "[U##] 핵심 제목" 유지·사용자창 선점 제외)
   │    ├─ [U291 PR #256 비작성자 판정] (id=b30fe6ed..., native_id=local_b30fe6ed..., context=fresh, wt=u291-review)
   │    ├─ [U290 일일 상한 제거 PR 완결] (id=9958fb7b..., native_id=local_9958fb7b..., context=fresh, wt=u290-pr)
   │    ├─ [U287 통합 도우미 원격측정 계약] (id=6ab5c561..., native_id=local_6ab5c561..., context=fresh, wt=u287-telemetry)
@@ -75,6 +78,9 @@
 
 ## Stage 5 ~ 8. 세부계획 및 구현 명세 (`v7_harness/coord/card_sessions.py`)
 
+0. **`ensure_topmost_user_window(project: Path, tool: str, thread: str, *, representative_title: str = "", ...) -> dict[str, Any]`**:
+   - 카드별 병렬 세션 가동 트리에서 **가장 위에 위치한 최상위(부모) 대화창을 기본적으로 사용자 대상 대화창(`PRIMARY`)**으로 선점하고, 기존 사용자 대상 대화창 개설 로직(`user_window.claim` + `extract_representative_title` + 네이티브 저장소 동기화)으로 **`[YYMMDD-N] <대화창 대표 타이틀>`** 형식을 강제한다.
+   - 하위 자식 카드 세션(`titleSource == "tool"` 또는 `[U##]`/`U##` 제목, `.coord/windows/*.json` 등록 세션)은 `is_child_card_session`으로 자동 식별하여 사용자 대상 대화창 선점에서 원천 배제(`CHILD_CARD_SESSION`)한다.
 1. **`normalize_claude_session_id(raw_id: str) -> tuple[str, str]`**:
    - 입력이 `local_<uuid>` 또는 `<uuid>`일 때 `(canonical_uuid, "local_" + canonical_uuid)`를 반환하고, 잘못된 형식은 `ValueError`로 차단.
 2. **`deterministic_card_session_uuid(project: Path, card: str, tool: str, generation: int = 0) -> str`**:

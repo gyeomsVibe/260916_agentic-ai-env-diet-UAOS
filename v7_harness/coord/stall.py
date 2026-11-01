@@ -36,7 +36,7 @@ QUORUM_TIMEOUT_S = 2 * MAX_WAIT_S
 # implement: Claude is the default implementer (global rules), then Antigravity, then Codex.
 CAPABILITY = {
     "merge": MERGERS,
-    "verdict": ("codex", "antigravity", "claude"),
+    "verdict": ("codex", "antigravity"),
     "implement": ("claude", "antigravity", "codex"),
 }
 WAIT_STATES = ("HUMAN", "REVIEW", "BLOCKED")

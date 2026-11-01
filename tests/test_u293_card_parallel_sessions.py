@@ -5,12 +5,16 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
 
 from v7_harness import cli
+from v7_harness.coord import user_window as uw
 from v7_harness.coord.card_sessions import (
     build_card_parallel_launch_spec,
+    ensure_topmost_user_window,
     extract_cards_from_text,
+    is_child_card_session,
     normalize_claude_session_id,
     orchestrate_card_parallel_batch,
     sync_claude_desktop_card_sessions,
@@ -77,6 +81,37 @@ class TestU293CardParallelSessions(unittest.TestCase):
         proj_dir = transcripts_root / "D--D-Workspace-NB-260916-agentic-ai-env-diet"
         proj_dir.mkdir(parents=True, exist_ok=True)
         transcript = proj_dir / "926558e3-548e-4cff-94b3-8fac32aacc94.jsonl"
+
+        desktop_root = Path(self._tmp.name) / "claude_desktop_sessions" / "org" / "ws"
+        desktop_root.mkdir(parents=True, exist_ok=True)
+        parent_session_file = desktop_root / "local_9538324b-ca9a-4629-9caf-48d4dc0dffcb.json"
+        parent_session_file.write_text(
+            json.dumps(
+                {
+                    "sessionId": "local_9538324b-ca9a-4629-9caf-48d4dc0dffcb",
+                    "cliSessionId": "926558e3-548e-4cff-94b3-8fac32aacc94",
+                    "title": "Codex 사용량 제한 대응",
+                    "titleSource": "user",
+                    "previousTitles": [],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        child_session_file = desktop_root / "local_b30fe6ed-a0e1-457c-ad56-715be55da702.json"
+        child_session_file.write_text(
+            json.dumps(
+                {
+                    "sessionId": "local_b30fe6ed-a0e1-457c-ad56-715be55da702",
+                    "cliSessionId": "a86bf3f2-7de7-4c08-8a36-e3cf34c4f994",
+                    "title": "U291 PR #256 비작성자 판정",
+                    "titleSource": "tool",
+                    "worktreePath": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.claude\\worktrees\\competent-panini-d22daa",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
 
         rows = [
             {
@@ -173,13 +208,20 @@ class TestU293CardParallelSessions(unittest.TestCase):
 
         self.assertEqual(extract_cards_from_text("U276+U284 파일럿·작성자 출처 확인"), ["U276", "U284"])
 
-        res = sync_claude_desktop_card_sessions(self.project, transcripts_root=transcripts_root)
+        fixed_now = datetime(2026, 11, 2, 3, 15, 0)
+        res = sync_claude_desktop_card_sessions(
+            self.project,
+            transcripts_root=transcripts_root,
+            claude_sessions_root=desktop_root.parent.parent,
+            now=fixed_now,
+        )
         self.assertTrue(res["ok"])
         self.assertEqual(res["synced_count"], 5)
 
         u291_entry = window_entry(self.project, "U291", "claude")
         self.assertEqual(u291_entry["id"], "b30fe6ed-a0e1-457c-ad56-715be55da702")
         self.assertEqual(u291_entry["native_id"], "local_b30fe6ed-a0e1-457c-ad56-715be55da702")
+        self.assertEqual(u291_entry["cli_session_id"], "a86bf3f2-7de7-4c08-8a36-e3cf34c4f994")
         self.assertEqual(u291_entry["lane_id"], "VERIFY_AUDIT")
 
         u276_entry = window_entry(self.project, "U276", "claude")
@@ -187,16 +229,57 @@ class TestU293CardParallelSessions(unittest.TestCase):
         self.assertEqual(u276_entry["id"], "03c35125-b7eb-4498-ad9b-d44bdf52c946")
         self.assertEqual(u284_entry["id"], "03c35125-b7eb-4498-ad9b-d44bdf52c946")
 
+        # Verify topmost parent session automatically became the default user window `[261102-1] Codex 사용량 제한 대응`
+        topmost_map = res.get("topmost_user_windows") or {}
+        self.assertIn("926558e3-548e-4cff-94b3-8fac32aacc94", topmost_map)
+        top_entry = topmost_map["926558e3-548e-4cff-94b3-8fac32aacc94"]
+        self.assertTrue(top_entry["ok"])
+        self.assertTrue(top_entry["is_default_user_window"])
+        self.assertEqual(top_entry["prefix"], "[261102-1]")
+        self.assertEqual(top_entry["representative_title"], "Codex 사용량 제한 대응")
+        self.assertEqual(top_entry["full_title"], "[261102-1] Codex 사용량 제한 대응")
+        self.assertEqual(top_entry["store_status"], "RENAMED")
+        self.assertEqual(uw.desk_role(self.project, "claude", "926558e3-548e-4cff-94b3-8fac32aacc94"), "PRIMARY")
+
+        updated_parent = json.loads(parent_session_file.read_text(encoding="utf-8"))
+        self.assertEqual(updated_parent["title"], "[261102-1] Codex 사용량 제한 대응")
+        self.assertIn("Codex 사용량 제한 대응", updated_parent["previousTitles"])
+
+        # Verify child card sessions are NEVER claimed or renamed as topmost `[YYMMDD-N]` user windows
+        updated_child = json.loads(child_session_file.read_text(encoding="utf-8"))
+        self.assertEqual(updated_child["title"], "U291 PR #256 비작성자 판정")
+        self.assertTrue(
+            is_child_card_session(
+                self.project,
+                "local_b30fe6ed-a0e1-457c-ad56-715be55da702",
+                claude_sessions_root=desktop_root.parent.parent,
+            )
+        )
+        refused = ensure_topmost_user_window(
+            self.project,
+            "claude",
+            "local_b30fe6ed-a0e1-457c-ad56-715be55da702",
+            representative_title="U291 PR #256 비작성자 판정",
+            claude_sessions_root=desktop_root.parent.parent,
+        )
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "CHILD_CARD_SESSION")
+
     def test_build_launch_spec_and_cli_orchestrate_cards(self) -> None:
         spec = build_card_parallel_launch_spec(
             self.project,
             "U276+U284",
             title="파일럿·작성자 출처 확인",
             role="provenance",
+            parent_session_id="926558e3-548e-4cff-94b3-8fac32aacc94",
+            parent_title="Codex 사용량 제한 대응",
         )
         self.assertTrue(spec["ok"])
         self.assertEqual(spec["chapter_title"], "카드별 병렬 세션 가동")
         self.assertEqual(spec["cards"], ["U276", "U284"])
+        self.assertTrue(spec["topmost_user_window"]["is_default_user_window"])
+        self.assertEqual(spec["topmost_user_window"]["representative_title"], "Codex 사용량 제한 대응")
+        self.assertRegex(spec["topmost_user_window"]["full_title"], r"^\[\d{6}-\d+\] Codex 사용량 제한 대응$")
         claude_start = spec["native_launchers"]["claude_desktop"]["start_session"]["input"]
         self.assertEqual(claude_start["context"], "fresh")
         self.assertTrue(claude_start["use_worktree"])
@@ -206,11 +289,17 @@ class TestU293CardParallelSessions(unittest.TestCase):
         batch = orchestrate_card_parallel_batch(
             self.project,
             ["U291", "U290", "U287"],
+            actor="antigravity",
+            parent_session_id="e83f605a-9f01-4c63-a7d3-c143cd316bc1",
+            parent_title="카드별 병렬 세션 가동 표준화 설계",
             sync_desktop=False,
         )
         self.assertTrue(batch["ok"])
         self.assertEqual(batch["cards_provisioned"], 3)
         self.assertEqual(len(batch["launch_specs"]), 3)
+        self.assertIn("e83f605a-9f01-4c63-a7d3-c143cd316bc1", batch["topmost_user_windows"])
+        top_agy = batch["topmost_user_windows"]["e83f605a-9f01-4c63-a7d3-c143cd316bc1"]
+        self.assertRegex(top_agy["full_title"], r"^\[\d{6}-\d+\] 카드별 병렬 세션 가동 표준화 설계$")
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -223,6 +312,10 @@ class TestU293CardParallelSessions(unittest.TestCase):
                 "orchestrate-cards",
                 "--card",
                 "U291,U290,U287",
+                "--session-id",
+                "e83f605a-9f01-4c63-a7d3-c143cd316bc1",
+                "--title",
+                "카드별 병렬 세션 가동 표준화 설계",
             ])
         self.assertEqual(rc, 0)
         payload = json.loads(buf.getvalue())

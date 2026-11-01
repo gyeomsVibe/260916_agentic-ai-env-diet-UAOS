@@ -9,24 +9,28 @@ Crystal/Nimbalyst, Claude Squad, Planner-Builder-Gatekeeper):
 1. Guarantees `1 Card = 1 Unique Session UUID = 1 Isolated Git Worktree = 1 Fresh Context Envelope` across all 3 tools
    while binding each card session to its 5-Category Process Classification Lane (`IMPL_CODE`, `VERIFY_AUDIT`,
    `ARCH_DESIGN`, `MERGE_RELEASE`, `RECOVERY_OPS`).
-2. Normalizes Claude Desktop child session IDs (`local_<uuid>` <-> canonical `<uuid>`) so `uaos coord window` and
+2. Enforces the Topmost Default User-Facing Window Rule (`가장 위에 위치한 대화창 = 기본 사용자 대상 대화창`):
+   the root/parent session at the top of the card-parallel hierarchy is by default the user-facing conversation window
+   and is automatically claimed and titled via `user_window.claim` + `desk_title` in the canonical format
+   `[YYMMDD-N] <대화창 대표 타이틀>` (while child card sessions underneath it keep `[U##] <핵심 제목>` / `U## <핵심 제목>`).
+3. Normalizes Claude Desktop child session IDs (`local_<uuid>` <-> canonical `<uuid>`) so `uaos coord window` and
    `SendMessage` work seamlessly without `ValueError`.
-3. Automatically discovers and syncs live Claude Desktop child card sessions (`mcp__ccd_session__start_session`) from
+4. Automatically discovers and syncs live Claude Desktop child card sessions (`mcp__ccd_session__start_session`) from
    transcript JSONLs into `.coord/windows/<card>.json` (supporting both single-card and multi-card titles such as
-   `U276+U284`).
-4. Generates deterministic 3-tool native launch specifications (`build_card_parallel_launch_spec`) and orchestrates
+   `U276+U284`) and claims their parent session as `[YYMMDD-N] <대화창 대표 타이틀>`.
+5. Generates deterministic 3-tool native launch specifications (`build_card_parallel_launch_spec`) and orchestrates
    multi-card parallel batches (`orchestrate_card_parallel_batch`).
 """
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 import hashlib
 import json
 import os
 import re
-import time
 
 from .hook_context import shared_desk
 from .process_lanes import (
@@ -38,11 +42,16 @@ from .process_lanes import (
 )
 
 CHAPTER_TITLE_KO = "카드별 병렬 세션 가동"
+DEFAULT_TOPMOST_REP_TITLE = "카드별 병렬 세션 총괄"
 LOCAL_SESSION_ID_RE = re.compile(
     r"^(?:local_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
     re.IGNORECASE,
 )
 CARD_TOKEN_RE = re.compile(r"\b(U\d{1,5}[A-Z]?)\b", re.IGNORECASE)
+CHILD_CARD_TITLE_PREFIX_RE = re.compile(
+    r"^\s*(?:\[\s*(?:U\d{1,5}[A-Z]?(?:\+U\d{1,5}[A-Z]?)*|LANE:[A-Z_]+)\s*\]|U\d{1,5}[A-Z]?(?:\+U\d{1,5}[A-Z]?)*\b)",
+    re.IGNORECASE,
+)
 STARTED_SESSION_RE = re.compile(
     r'Started session "(?P<title>[^"]+)"\s*\(session_id:\s*(?P<native_id>local_[0-9a-fA-F-]{36}),\s*name:\s*(?P<slug>[^)]+)\)'
 )
@@ -95,6 +104,256 @@ def extract_cards_from_text(text: str | None) -> list[str]:
     return ordered
 
 
+def is_child_card_session(
+    project: Path,
+    thread: str,
+    raw_title: str = "",
+    *,
+    claude_sessions_root: Path | None = None,
+) -> bool:
+    """Return True if `thread` or `raw_title` belongs to a child card/lane session rather than a topmost user window."""
+    if isinstance(raw_title, str) and CHILD_CARD_TITLE_PREFIX_RE.search(raw_title):
+        return True
+    norm_thread = str(thread or "").strip()
+    if not norm_thread:
+        return False
+    candidates = {norm_thread.lower()}
+    try:
+        canonical_uuid, native_id = normalize_claude_session_id(norm_thread)
+        candidates.add(canonical_uuid.lower())
+        candidates.add(native_id.lower())
+    except ValueError:
+        pass
+
+    desk = Path(shared_desk(project)).resolve()
+    win_dir = desk / ".coord" / "windows"
+    if win_dir.is_dir():
+        for rec_file in win_dir.glob("*.json"):
+            try:
+                data = json.loads(rec_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            for tool_name in TOOLS:
+                entry = data.get(tool_name)
+                if not isinstance(entry, dict):
+                    continue
+                for key in ("id", "native_id", "cli_session_id"):
+                    val = str(entry.get(key) or "").strip().lower()
+                    if val and val in candidates:
+                        return True
+
+    if claude_sessions_root is not None and Path(claude_sessions_root).is_dir():
+        for path in Path(claude_sessions_root).glob("*/*/local_*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            sid = str(data.get("sessionId") or "").strip().lower()
+            cid = str(data.get("cliSessionId") or "").strip().lower()
+            if (sid in candidates or cid in candidates) and data.get("titleSource") == "tool":
+                return True
+    return False
+
+
+def ensure_topmost_user_window(
+    project: Path,
+    tool: str,
+    thread: str,
+    *,
+    representative_title: str = "",
+    now: datetime | None = None,
+    claude_sessions_root: Path | None = None,
+    sync_native_store: bool = True,
+) -> dict[str, Any]:
+    """최상위 부모 세션을 기본 사용자 대상 대화창으로 선점하고, 제목을 '[YYMMDD-N] 대화창 대표 타이틀' 형식으로 강제합니다.
+    하위 카드 세션은 변경하지 않고 건너뛰며, 네이티브 저장소와 상태를 동기화한 뒤 결과 딕셔너리를 반환합니다.
+    """
+    from . import desk_title as dt
+    from . import user_window as uw
+
+    desk = Path(shared_desk(project)).resolve()
+    norm_tool = str(tool or "").strip().lower()
+    norm_thread = str(thread or "").strip()
+    if norm_tool not in TOOLS or not norm_thread:
+        return {"ok": False, "reason": "INVALID_TOOL_OR_THREAD", "tool": norm_tool, "thread": norm_thread}
+
+    if is_child_card_session(desk, norm_thread, representative_title, claude_sessions_root=claude_sessions_root):
+        return {
+            "ok": False,
+            "reason": "CHILD_CARD_SESSION",
+            "tool": norm_tool,
+            "thread": norm_thread,
+            "is_default_user_window": False,
+        }
+
+    current_title = (
+        uw._claude_title(norm_thread, root=claude_sessions_root)
+        if norm_tool == "claude"
+        else uw._current_title(norm_tool, norm_thread)
+    )
+    if is_child_card_session(desk, norm_thread, current_title or "", claude_sessions_root=claude_sessions_root):
+        return {
+            "ok": False,
+            "reason": "CHILD_CARD_SESSION",
+            "tool": norm_tool,
+            "thread": norm_thread,
+            "is_default_user_window": False,
+        }
+
+    existing_names = uw._codex_names() if norm_tool == "codex" else []
+    claimed = uw.claim(
+        desk,
+        norm_tool,
+        norm_thread,
+        now=now,
+        existing=existing_names,
+        current=current_title or representative_title,
+    )
+    prefix = str(claimed["title"])
+    schedule_topic = dt._schedule_topic(desk) or ""
+    rep_title = (
+        uw.extract_representative_title(representative_title)
+        or uw.extract_representative_title(current_title)
+        or uw.extract_representative_title(schedule_topic)
+        or DEFAULT_TOPMOST_REP_TITLE
+    )
+    full_title = f"{prefix} {rep_title}".strip()
+
+    def _update_topmost_entry(entry: dict[str, Any]) -> dict[str, Any]:
+        entry["topic"] = rep_title
+        entry["shared_topic"] = schedule_topic or rep_title
+        entry["desired_title"] = full_title
+        entry["adapter_version"] = dt.ADAPTER_VERSION
+        entry["role"] = "TOPMOST_USER_WINDOW"
+        entry["is_default_topmost"] = True
+        entry["converged"] = True
+        entry["title_state"] = "CONVERGED"
+        return dict(entry)
+
+    uw._entry_change(desk, norm_tool, norm_thread, _update_topmost_entry)
+
+    store_status = "SKIPPED"
+    backup_dir = desk / ".work" / f"backup_{(now or datetime.now()).strftime('%Y%m%d')}"
+    if sync_native_store:
+        if norm_tool == "claude":
+            store_status = uw.rename_claude_desktop_session_title(
+                norm_thread,
+                full_title,
+                root=claude_sessions_root,
+                backup_dir=backup_dir,
+            )
+        elif norm_tool == "antigravity":
+            store_status = uw.rename_agy_status(
+                norm_thread,
+                full_title,
+                backup_dir=backup_dir,
+            )
+        elif norm_tool == "codex":
+            store_status = "RPC_READY"
+
+    return {
+        "ok": True,
+        "tool": norm_tool,
+        "thread": norm_thread,
+        "prefix": prefix,
+        "representative_title": rep_title,
+        "full_title": full_title,
+        "is_default_user_window": True,
+        "position": "TOPMOST_ROOT",
+        "store_status": store_status,
+        "native_title_controls": {
+            "claude_desktop": {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "sessionTitle": full_title,
+                },
+                "set_session_title": {
+                    "session_id": "self",
+                    "title": full_title,
+                },
+            },
+            "antigravity": {
+                "conversation_id": norm_thread,
+                "title": full_title,
+                "store_status": store_status,
+            },
+            "codex": {
+                "method": "thread/name/set",
+                "params": {"threadId": norm_thread, "name": full_title},
+            },
+        },
+    }
+
+
+def _preview_topmost_user_window_spec(
+    project: Path,
+    tool: str,
+    parent_session_id: str = "",
+    parent_title: str = "",
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build the topmost user-facing window title specification (`[YYMMDD-N] <대화창 대표 타이틀>`) without mutating
+    stores when `parent_session_id` is not yet provided, or claim it when `parent_session_id` is given."""
+    from . import desk_title as dt
+    from . import user_window as uw
+
+    desk = Path(shared_desk(project)).resolve()
+    norm_tool = str(tool or "claude").strip().lower()
+    if norm_tool not in TOOLS:
+        norm_tool = "claude"
+    if parent_session_id.strip():
+        claimed_res = ensure_topmost_user_window(
+            desk,
+            norm_tool,
+            parent_session_id.strip(),
+            representative_title=parent_title,
+            now=now,
+            sync_native_store=False,
+        )
+        if claimed_res.get("ok"):
+            return claimed_res
+
+    date_str = (now or datetime.now()).strftime("%y%m%d")
+    prefix = f"[{date_str}-1]"
+    try:
+        rec_path = desk / ".coord" / "presence" / "user_windows.json"
+        if rec_path.is_file():
+            rec = json.loads(rec_path.read_text(encoding="utf-8"))
+            entries = (rec.get(norm_tool) or []) if isinstance(rec, dict) else []
+            primary = max(
+                (e for e in entries if isinstance(e, dict) and not e.get("pinned")),
+                key=lambda e: float(e.get("at") or 0),
+                default=None,
+            )
+            if primary and uw.TITLE_RE.search(str(primary.get("title") or "")):
+                prefix = str(primary["title"])
+    except (OSError, ValueError):
+        pass
+
+    rep_title = (
+        uw.extract_representative_title(parent_title)
+        or uw.extract_representative_title(dt._schedule_topic(desk) or "")
+        or DEFAULT_TOPMOST_REP_TITLE
+    )
+    full_title = f"{prefix} {rep_title}".strip()
+    return {
+        "ok": True,
+        "tool": norm_tool,
+        "thread": parent_session_id.strip() or "<topmost-parent-session>",
+        "prefix": prefix,
+        "representative_title": rep_title,
+        "full_title": full_title,
+        "pattern": "[YYMMDD-N] 대화창 대표 타이틀",
+        "is_default_user_window": True,
+        "position": "TOPMOST_ROOT",
+    }
+
+
 def _infer_role_slug(role: str, title: str, lane_id: str) -> str:
     raw = str(role or "").strip().lower()
     if raw and raw not in ("auto", "default"):
@@ -125,16 +384,16 @@ def build_card_parallel_launch_spec(
     source_branch: str = "",
     pr_url: str = "",
     parent_session_id: str = "",
+    parent_title: str = "",
     allowed_files: Sequence[str] = (),
     accept_cmd: str = "",
     explicit_lane: str = "",
 ) -> dict[str, Any]:
     """Build a standardized 3-tool card-parallel child session launch specification.
 
-    Combines:
-    - Claude Desktop `mcp__ccd_session__mark_chapter` + `mcp__ccd_session__start_session` (`context="fresh"`, `use_worktree=True`)
-    - Antigravity `invoke_subagent` (`Workspace="branch"`, `TypeName="self"`) + headless `agy -p`
-    - OpenAI Codex `codex app-server` JSON-RPC (`thread/start`, `turn/start`, `thread/name/set`)
+    Enforces the two-tier window hierarchy:
+    - Topmost (parent/root) session = Default User-Facing Conversation Window (`[YYMMDD-N] <대화창 대표 타이틀>`)
+    - Child card sessions nested underneath = `[U##] <핵심 제목>` / `U## <핵심 제목>`
     """
     from v7_harness.card_pipeline import card_title as resolve_card_title, clean_core_title
     from .windows import window_entry
@@ -167,6 +426,13 @@ def build_card_parallel_launch_spec(
     if selected_tool not in TOOLS:
         selected_tool, _reason = select_active_tool_for_lane(desk, lane_id, requested_target=selected_tool)
 
+    topmost_spec = _preview_topmost_user_window_spec(
+        desk,
+        selected_tool,
+        parent_session_id=parent_session_id,
+        parent_title=parent_title,
+    )
+
     worktree_rel = f".work/wt_{primary_card.lower()}_{role_slug}"
     branch_name = source_branch.strip() or f"{'agy' if selected_tool == 'antigravity' else selected_tool}/{session_slug}"
 
@@ -193,6 +459,7 @@ def build_card_parallel_launch_spec(
     )
     background_text = (
         f"Project: UAOS-RSI ({desk.as_posix()}), 3-tool (Codex, Claude Code, Antigravity) parallel operating system. "
+        f"Topmost User Window: {topmost_spec['full_title']} (default user-facing conversation window). "
         f"Rule: 1 Card = 1 Fresh Isolated Worktree Session (`context=\"fresh\"`) bound to 5 Process Lanes (`{lane_id}`). "
         f"Ownership guard: one owner per step; never modify files belonging to other active card sessions. "
         f"Report in Korean brief-ko style (<=5 lines, <=600 chars, core title required, no bare IDs)."
@@ -224,6 +491,7 @@ def build_card_parallel_launch_spec(
         "card_window_id": card_uuid,
         "native_claude_id": native_claude_id,
         "parent_session_id": parent_session_id,
+        "topmost_user_window": topmost_spec,
         "worktree_path": worktree_rel,
         "branch": branch_name,
         "chapter_title": CHAPTER_TITLE_KO,
@@ -231,6 +499,10 @@ def build_card_parallel_launch_spec(
         "background": background_text,
         "native_launchers": {
             "claude_desktop": {
+                "topmost_user_window_title": {
+                    "session_id": "self",
+                    "title": topmost_spec["full_title"],
+                },
                 "mark_chapter": {
                     "name": "mcp__ccd_session__mark_chapter",
                     "input": {"title": CHAPTER_TITLE_KO},
@@ -249,6 +521,10 @@ def build_card_parallel_launch_spec(
                 },
             },
             "antigravity": {
+                "topmost_user_window_title": {
+                    "conversation_id": parent_session_id or "<topmost-parent-session>",
+                    "title": topmost_spec["full_title"],
+                },
                 "invoke_subagent": {
                     "name": "invoke_subagent",
                     "input": {
@@ -268,6 +544,13 @@ def build_card_parallel_launch_spec(
                 },
             },
             "codex": {
+                "topmost_user_window_rpc": {
+                    "method": "thread/name/set",
+                    "params": {
+                        "threadId": parent_session_id or "<topmost-parent-session>",
+                        "name": topmost_spec["full_title"],
+                    },
+                },
                 "app_server_rpc": [
                     {"method": "thread/start", "params": {"cwd": str((desk / worktree_rel).as_posix())}},
                     {
@@ -278,25 +561,52 @@ def build_card_parallel_launch_spec(
                         },
                     },
                     {"method": "thread/name/set", "params": {"threadId": card_uuid, "name": sidebar_title}},
-                ]
+                ],
             },
         },
     }
+
+
+def _load_claude_desktop_session_index(claude_sessions_root: Path | None = None) -> dict[str, dict[str, Any]]:
+    """Index Claude Desktop `local_*.json` metadata by both `sessionId` (`local_<uuid>`) and `cliSessionId` (`<uuid>`)."""
+    from . import user_window as uw
+
+    folder = Path(claude_sessions_root) if claude_sessions_root else uw._claude_sessions_root()
+    index: dict[str, dict[str, Any]] = {}
+    if not folder.is_dir():
+        return index
+    for path in folder.glob("*/*/local_*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        sid = str(data.get("sessionId") or "").strip()
+        cid = str(data.get("cliSessionId") or "").strip()
+        if sid:
+            index[sid] = data
+        if cid:
+            index[cid] = data
+    return index
 
 
 def sync_claude_desktop_card_sessions(
     project: Path,
     *,
     transcripts_root: Path | None = None,
+    claude_sessions_root: Path | None = None,
+    claim_topmost_parent: bool = True,
+    now: datetime | None = None,
     max_files: int = 25,
 ) -> dict[str, Any]:
     """Scan Claude Code Desktop transcripts (`~/.claude/projects/*/*.jsonl`) for `mcp__ccd_session__start_session`
-    calls and automatically bind discovered `local_<uuid>` child card sessions into `.coord/windows/<card>.json`.
-
-    Supports both single-card titles (`"U291 PR #256 비작성자 판정"`) and multi-card titles
-    (`"U276+U284 파일럿·작성자 출처 확인"` -> binds both `U276` and `U284`).
+    calls, automatically bind discovered `local_<uuid>` child card sessions into `.coord/windows/<card>.json`,
+    and claim each parent session (`parent_session_id`) as the default topmost user-facing window with
+    `[YYMMDD-N] <대화창 대표 타이틀>`.
     """
     from v7_harness.card_pipeline import clean_core_title
+    from . import user_window as uw
     from .windows import _record_path, record_window
 
     desk = Path(shared_desk(project)).resolve()
@@ -305,8 +615,15 @@ def sync_claude_desktop_card_sessions(
         transcripts_root = claude_home / "projects"
 
     if not transcripts_root.is_dir():
-        return {"ok": True, "synced_count": 0, "cards": {}, "reason": "NO_TRANSCRIPTS_DIR"}
+        return {
+            "ok": True,
+            "synced_count": 0,
+            "cards": {},
+            "topmost_user_windows": {},
+            "reason": "NO_TRANSCRIPTS_DIR",
+        }
 
+    desktop_index = _load_claude_desktop_session_index(claude_sessions_root)
     candidates = sorted(
         transcripts_root.rglob("*.jsonl"),
         key=lambda p: p.stat().st_mtime if p.is_file() else 0.0,
@@ -315,6 +632,8 @@ def sync_claude_desktop_card_sessions(
 
     # Process oldest-to-newest among the recent slice so the newest session binding wins
     synced_cards: dict[str, dict[str, Any]] = {}
+    topmost_user_windows: dict[str, dict[str, Any]] = {}
+
     for jsonl_path in reversed(candidates):
         parent_session_id = jsonl_path.stem
         try:
@@ -325,6 +644,7 @@ def sync_claude_desktop_card_sessions(
             continue
 
         tool_uses: dict[str, dict[str, Any]] = {}
+        parent_spawned_cards: list[str] = []
         for line in raw_text.splitlines():
             if "start_session" not in line and "Started session " not in line:
                 continue
@@ -378,6 +698,15 @@ def sync_claude_desktop_card_sessions(
                     if not cards:
                         continue
 
+                    child_meta = desktop_index.get(norm_native_id) or desktop_index.get(canonical_uuid) or {}
+                    extra_fields: dict[str, Any] = {}
+                    if child_meta.get("cliSessionId"):
+                        extra_fields["cli_session_id"] = str(child_meta["cliSessionId"])
+                    if child_meta.get("worktreePath"):
+                        extra_fields["worktree_path"] = str(child_meta["worktreePath"])
+                    if child_meta.get("worktreeBranch"):
+                        extra_fields["worktree_branch"] = str(child_meta["worktreeBranch"])
+
                     lane_id = classify_process_lane(
                         {
                             "card": cards[0],
@@ -387,6 +716,8 @@ def sync_claude_desktop_card_sessions(
                         }
                     )
                     for cid in cards:
+                        if cid not in parent_spawned_cards:
+                            parent_spawned_cards.append(cid)
                         lane_win = open_or_reuse_lane_window(desk, lane_id, "claude", card=cid)
                         entry = record_window(
                             desk,
@@ -403,8 +734,8 @@ def sync_claude_desktop_card_sessions(
                             context_mode=str(inp.get("context") or "fresh"),
                             source_branch=str(inp.get("source_branch") or ""),
                             parallel_ready=True,
+                            **extra_fields,
                         )
-                        # Ensure top-level card window record carries the human-readable core title
                         rec_path = _record_path(desk, cid)
                         try:
                             rec_data = json.loads(rec_path.read_text(encoding="utf-8"))
@@ -422,6 +753,8 @@ def sync_claude_desktop_card_sessions(
                             "card": cid,
                             "window_id": canonical_uuid,
                             "native_id": norm_native_id,
+                            "cli_session_id": extra_fields.get("cli_session_id", ""),
+                            "worktree_path": extra_fields.get("worktree_path", ""),
                             "session_name": slug,
                             "session_title": title,
                             "parent_session_id": parent_session_id,
@@ -430,11 +763,32 @@ def sync_claude_desktop_card_sessions(
                             "opened_at": entry.get("opened_at"),
                         }
 
+        if parent_spawned_cards and claim_topmost_parent:
+            parent_meta = desktop_index.get(parent_session_id) or {}
+            parent_raw_title = (
+                str(parent_meta.get("title") or "")
+                or uw._claude_title(parent_session_id, root=claude_sessions_root, transcript=jsonl_path)
+                or ""
+            )
+            top_res = ensure_topmost_user_window(
+                desk,
+                "claude",
+                parent_session_id,
+                representative_title=parent_raw_title,
+                now=now,
+                claude_sessions_root=claude_sessions_root,
+                sync_native_store=True,
+            )
+            if top_res.get("ok"):
+                top_res["spawned_cards"] = parent_spawned_cards
+                topmost_user_windows[parent_session_id] = top_res
+
     return {
         "ok": True,
         "project": str(desk),
         "synced_count": len(synced_cards),
         "cards": synced_cards,
+        "topmost_user_windows": topmost_user_windows,
     }
 
 
@@ -445,24 +799,49 @@ def orchestrate_card_parallel_batch(
     actor: str = "antigravity",
     tools: Sequence[str] = TOOLS,
     parent_session_id: str = "",
+    parent_title: str = "",
     sync_desktop: bool = True,
     transcripts_root: Path | None = None,
+    claude_sessions_root: Path | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """One-stop orchestrator for '카드별 병렬 세션 가동':
-    1. Syncs any live Claude Desktop child card sessions (`local_<uuid>`) from transcripts.
-    2. Provisions unique per-card windows (`.coord/windows/<card>.json`) across all 3 tools and binds each to its
+    1. Syncs any live Claude Desktop child card sessions (`local_<uuid>`) from transcripts and automatically claims
+       their topmost parent session as `[YYMMDD-N] <대화창 대표 타이틀>`.
+    2. If `parent_session_id` is explicitly supplied for `actor`, ensures that topmost session is also claimed and
+       titled as `[YYMMDD-N] <대화창 대표 타이틀>`.
+    3. Provisions unique per-card windows (`.coord/windows/<card>.json`) across all 3 tools and binds each to its
        5-Category Process Classification Lane (`.coord/windows/lanes/<lane>.json`).
-    3. Builds standardized 3-tool native launch specifications (`claude_desktop`, `antigravity`, `codex`) for every
+    4. Builds standardized 3-tool native launch specifications (`claude_desktop`, `antigravity`, `codex`) for every
        card in the batch.
     """
     from .process_lanes import open_or_reuse_card_parallel_windows
 
     desk = Path(shared_desk(project)).resolve()
     sync_res = (
-        sync_claude_desktop_card_sessions(desk, transcripts_root=transcripts_root)
+        sync_claude_desktop_card_sessions(
+            desk,
+            transcripts_root=transcripts_root,
+            claude_sessions_root=claude_sessions_root,
+            now=now,
+        )
         if sync_desktop
-        else {"ok": True, "synced_count": 0, "cards": {}}
+        else {"ok": True, "synced_count": 0, "cards": {}, "topmost_user_windows": {}}
     )
+
+    topmost_windows = dict(sync_res.get("topmost_user_windows") or {})
+    if parent_session_id.strip():
+        explicit_top = ensure_topmost_user_window(
+            desk,
+            actor,
+            parent_session_id.strip(),
+            representative_title=parent_title,
+            now=now,
+            claude_sessions_root=claude_sessions_root,
+            sync_native_store=True,
+        )
+        if explicit_top.get("ok"):
+            topmost_windows[parent_session_id.strip()] = explicit_top
 
     normalized_items: list[dict[str, Any]] = []
     flat_cards: list[str] = []
@@ -505,6 +884,7 @@ def orchestrate_card_parallel_batch(
             source_branch=str(item.get("source_branch") or ""),
             pr_url=str(item.get("pr_url") or ""),
             parent_session_id=parent_session_id,
+            parent_title=parent_title,
             allowed_files=item.get("allowed_files") or (),
             accept_cmd=str(item.get("accept_cmd") or ""),
             explicit_lane=str(item.get("lane") or ""),
@@ -516,6 +896,7 @@ def orchestrate_card_parallel_batch(
         "project": str(desk),
         "actor": actor,
         "chapter_title": CHAPTER_TITLE_KO,
+        "topmost_user_windows": topmost_windows,
         "cards_provisioned": provision_res.get("cards_provisioned", 0),
         "clustered_by_lane": provision_res.get("clustered_by_lane", {}),
         "synced_claude_sessions": sync_res.get("cards", {}),

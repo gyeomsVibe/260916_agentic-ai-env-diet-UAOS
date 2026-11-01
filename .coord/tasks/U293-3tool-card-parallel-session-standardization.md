@@ -93,3 +93,5 @@
 ## Stage 9 ~ 10. 구현, 백신 테스트, 자율 병합 및 런타임 실가동
 
 - `tests/test_u293_card_parallel_sessions.py`를 통해 단위·동시성·백신 테스트 전수 검증 후 자율 병합 및 전역 규칙(`v7.6.3`)·런타임(`~/.uaos/uaos.py`) 배포 완료.
+
+- **최상위 기본 사용자 대상 대화창 규칙 반영**: `ensure_topmost_user_window` 및 `rename_claude_desktop_session_title`을 통해 가장 위에 위치한 부모 대화창이 기본적으로 `[YYMMDD-N] <대화창 대표 타이틀>` 형태를 띠도록 표준화 완료.
