@@ -306,17 +306,7 @@ def _preview_topmost_user_window_spec(
     norm_tool = str(tool or "claude").strip().lower()
     if norm_tool not in TOOLS:
         norm_tool = "claude"
-    if parent_session_id.strip():
-        claimed_res = ensure_topmost_user_window(
-            desk,
-            norm_tool,
-            parent_session_id.strip(),
-            representative_title=parent_title,
-            now=now,
-            sync_native_store=False,
-        )
-        if claimed_res.get("ok"):
-            return claimed_res
+    # Read-only preview: never claim parent_session_id under a child card's selected_tool
 
     date_str = (now or datetime.now()).strftime("%y%m%d")
     prefix = f"[{date_str}-1]"
