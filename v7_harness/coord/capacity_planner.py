@@ -26,6 +26,7 @@ import time
 from typing import Any
 
 from .agy_accounts import antigravity_accounts
+from .helper_telemetry import TELEMETRY as HELPER_TELEMETRY, read_helper_records, summarize as summarize_helpers
 from .hook_context import shared_desk
 from .next_card import TERMINAL
 from .presence import TOOLS, read_all as read_all_presence
@@ -493,6 +494,9 @@ def _parse_ts(row: dict[str, Any]) -> float | None:
 
 
 def _classify_engine(row: dict[str, Any]) -> str:
+    # U287: a helper contract row names its budget engine; label guessing would bill Luna/Flash wrongly.
+    if row.get("telemetry") == HELPER_TELEMETRY and row.get("budget_engine") in ALL_ENGINES:
+        return str(row["budget_engine"])
     worker = str(row.get("worker") or row.get("actor") or row.get("provider") or "").lower().strip()
     model = str(row.get("model") or "").lower().strip()
     if "haiku" in model or worker == "haiku":
@@ -1206,6 +1210,8 @@ def collect_capacity_snapshot(
     # U286 v4: per-account Antigravity facts (registry + 429 log); a test home never reads the real APPDATA
     snapshot["antigravity_accounts"] = antigravity_accounts(
         desk, appdata=(home / "AppData" / "Roaming") if home else None, persist=persist)
+    # U287: helper lanes read through the one telemetry contract, independent of the HUD layout (U286).
+    snapshot["helper_telemetry"] = summarize_helpers(read_helper_records(desk), now=moment)
     snapshot["contextual_hud_widget"] = render_contextual_hud_widget(snapshot)
 
     if persist:
