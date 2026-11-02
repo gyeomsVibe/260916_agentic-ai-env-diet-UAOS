@@ -41,7 +41,10 @@ class GeneralUaosCoreTests(unittest.TestCase):
     def test_version_is_bumped_to_0_3_0(self) -> None:
         version_file = Path(__file__).resolve().parent.parent / "uaos_everywhere" / "VERSION"
         self.assertTrue(version_file.is_file())
-        self.assertEqual("0.3.0", version_file.read_text(encoding="utf-8").strip())
+        # U301: the exact value is governed by `uaos version check`; U45 keeps its floor of 0.3.0.
+        parts = tuple(int(p) for p in version_file.read_text(encoding="utf-8").strip().split("."))
+        self.assertEqual(3, len(parts))
+        self.assertGreaterEqual(parts, (0, 3, 0))
 
     def test_global_rule_block_has_core_invariants(self) -> None:
         block_file = Path(__file__).resolve().parent.parent / "uaos_everywhere" / "uaos_global_rule_block.md"
