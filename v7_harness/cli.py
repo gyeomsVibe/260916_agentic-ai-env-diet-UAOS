@@ -3021,10 +3021,17 @@ def _add_docs_parsers(subparsers) -> None:
         each.add_argument("--project", default=".", help="Project directory (default: .)")
 
 
+def _docs_root(project: str) -> Path:
+    """U302: documents always land in the main checkout's docs/, never in the worktree a tool session runs in."""
+    from .coord.hook_context import shared_desk
+
+    return shared_desk(Path(project).resolve())
+
+
 def cmd_docs_new(args: argparse.Namespace) -> int:
     """Create a new auto-numbered document and register in docs/00_DOCUMENT_INDEX.md."""
     from .docs_manager import register_new_doc
-    project = Path(args.project)
+    project = _docs_root(args.project)
     src = Path(args.from_file) if getattr(args, "from_file", None) else None
     path = register_new_doc(project, title=args.title, slug=args.slug,
                             category=args.category, author_tool=args.tool,
@@ -3039,7 +3046,7 @@ def cmd_docs_new(args: argparse.Namespace) -> int:
 def cmd_docs_next_num(args: argparse.Namespace) -> int:
     """Calculate and return the next sequential document number and prefix."""
     from .docs_manager import allocate_next_doc_number
-    num, prefix = allocate_next_doc_number(Path(args.project))
+    num, prefix = allocate_next_doc_number(_docs_root(args.project))
     print(json.dumps({"ok": True, "next_number": num, "prefix": prefix}, ensure_ascii=False))
     return 0
 
@@ -3049,7 +3056,7 @@ def cmd_docs_next_num(args: argparse.Namespace) -> int:
 def cmd_docs_sync(args: argparse.Namespace) -> int:
     """Audit and synchronize docs/00_DOCUMENT_INDEX.md table with existing documents."""
     from .docs_manager import sync_doc_index
-    count = sync_doc_index(Path(args.project))
+    count = sync_doc_index(_docs_root(args.project))
     print(json.dumps({"ok": True, "synced_count": count, "index": "docs/00_DOCUMENT_INDEX.md"}, ensure_ascii=False))
     return 0
 

@@ -96,7 +96,9 @@ def parse_doc_filename(filename: str) -> tuple[Optional[int], str, str]:
         'note.md' -> (None, '', 'note.md')
     """
     m = re.match(r"^(\d{2,})_(.*)$", filename)
-    if m:
+    # U302: a YYMMDD date prefix (e.g. 261023_usage-accounting.md) is not a sequence number; counting it made
+    # the next document 261024_ instead of 135_.
+    if m and len(m.group(1)) < 6:
         num = int(m.group(1))
         prefix = f"{m.group(1)}_"
         base_name = m.group(2)
