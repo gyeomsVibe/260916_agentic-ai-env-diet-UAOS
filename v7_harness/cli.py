@@ -1163,13 +1163,13 @@ def build_parser() -> argparse.ArgumentParser:
                              help="U279: acquire from the bounded topic-grouped window pool (3 active per tool, LRU eviction, 70k token rotation)")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
-    # U287/U292: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
+    # U287/U292/U293: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
     p_coord_lanes = p_coord_subs.add_parser(
         "lanes",
-        help="U287/U292: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
+        help="U287/U292/U293: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
     )
     p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session"], default="status")
+    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards", "claim-topmost-window"], default="status")
     p_coord_lanes.add_argument("--session-id", default="", help="U292: RSI upgrade session ID for record-rsi-session")
     p_coord_lanes.add_argument("--title", default="", help="U292: RSI upgrade session title")
     p_coord_lanes.add_argument("--rules-version", default="7.6.2", help="U292: Global rules version pinned in RSI session")
@@ -2850,7 +2850,7 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "
 
 
 def cmd_coord_lanes(args: argparse.Namespace) -> int:
-    """U287/U292: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
+    """U287/U292/U293: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
     from .coord.process_lanes import (
         audit_and_clear_nonstop_obstacles,
         classify_process_lane,
@@ -2867,6 +2867,44 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
 
     project = Path(args.project)
     action = getattr(args, "action", "status")
+    if action == "claim-topmost-window":
+        from .coord.card_sessions import ensure_topmost_user_window
+        res = ensure_topmost_user_window(
+            project,
+            args.actor,
+            getattr(args, "session_id", ""),
+            representative_title=getattr(args, "title", ""),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "sync-card-sessions":
+        from .coord.card_sessions import sync_claude_desktop_card_sessions
+        res = sync_claude_desktop_card_sessions(project)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "launch-spec":
+        from .coord.card_sessions import build_card_parallel_launch_spec
+        res = build_card_parallel_launch_spec(
+            project,
+            args.card or "U291",
+            title=getattr(args, "title", ""),
+            parent_session_id=getattr(args, "session_id", ""),
+            parent_title=getattr(args, "message", ""),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "orchestrate-cards":
+        from .coord.card_sessions import orchestrate_card_parallel_batch
+        raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
+        res = orchestrate_card_parallel_batch(
+            project,
+            raw_cards,
+            actor=args.actor,
+            parent_session_id=getattr(args, "session_id", ""),
+            parent_title=getattr(args, "title", ""),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
     if action == "provision-cards":
         raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
         if not raw_cards:
