@@ -115,3 +115,7 @@ See the "Gate receipts" section below (filled from the real runs).
   `usage_limit_exceeded` at 2026-11-02 14:51 local, "try again at Nov 4th, 2026 10:03 PM".
 - Audit: request `relay_0a804dae9019e1cbf8f2072194baacf2` -> Antigravity reply `relay_ab5589d39a200ed025fb5f4b3e784b30`
   verdict PASS.
+- `U295-BG-APPLY3` (same dictation on origin/main 91b53eb, bundle `af0eab04934bdacb...`): acceptance 163 OK, agy
+  judge APPROVE -> APPLIED; the merge commit's cli.py/deliver.py equal this stage (normalised digest).
+- Full suite: r2 (pre-merge) 2948 tests, 1 failure (own test flake: an all-digit 8-char sha prefix, fixed in
+  67b61b7) + 1 u229 subprocess timeout under load (passes alone); r3 (merged tree) 2992 tests OK, skipped 7.
