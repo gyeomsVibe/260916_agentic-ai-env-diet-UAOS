@@ -1,4 +1,4 @@
-"""U300 R2: Regression tests for the 5 UAOS-RSI structural dilemmas, 16 problems (P1-P16), and D1-D13 resolutions."""
+"""U300 R3: Regression tests for the 5 UAOS-RSI structural dilemmas, 16 problems (P1-P16), D1-D13, and Claude F1-F11 + R1-R3."""
 
 from __future__ import annotations
 
@@ -12,10 +12,12 @@ import tempfile
 import time
 import unittest
 
+from v7_harness.adapters.agy import AgyRequest
 from v7_harness.coord import stop_gate
 from v7_harness.coord.process_lanes import (
     CANONICAL_U300_DILEMMAS_RSI_SESSION_ID,
     build_context_diet_and_savings_receipt,
+    build_workspace_garbage_manifest,
     heal_all_rsi_dilemmas_and_record_session,
     heal_stop_gate_overheating,
     reconcile_rsi_worker_defects,
@@ -23,7 +25,9 @@ from v7_harness.coord.process_lanes import (
     split_plan_archive,
 )
 from v7_harness.docs_manager import allocate_next_doc_number
-from v7_harness.isolation.security import DEFAULT_WATCH_EXCLUDES, _watch_path_excluded
+from v7_harness.execution.agy_launcher import AgyProcessLauncher
+from v7_harness.isolation.errors import ExternalWriteDetectedError
+from v7_harness.isolation.security import DEFAULT_WATCH_EXCLUDES, _watch_path_excluded, snapshot_watch_roots
 
 
 class TestU300Rsi5DilemmasResolution(unittest.TestCase):
@@ -33,6 +37,7 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         (self.desk / ".coord" / "presence").mkdir(parents=True, exist_ok=True)
         (self.desk / ".coord" / "mailbox" / "inbox").mkdir(parents=True, exist_ok=True)
         (self.desk / ".coord" / "usage").mkdir(parents=True, exist_ok=True)
+        (self.desk / ".coord" / "rsi").mkdir(parents=True, exist_ok=True)
         (self.desk / ".work" / "wt_u299_active").mkdir(parents=True, exist_ok=True)
 
         canon_src = Path(__file__).resolve().parents[1] / "uaos_everywhere" / "uaos_global_rule_block.md"
@@ -120,13 +125,13 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         self.assertEqual(next_prefix, "135_")
 
     def test_dilemma_1_security_watch_excludes_real_temp_noise_only(self) -> None:
-        # Real transient %TEMP% noise patterns from blocked pilot receipts (U134-F2, U301-L2, R0CLOSE2/3, U23_FIX_SENTINEL2)
+        # R1: Generic tmp???????? globs MUST NOT be in DEFAULT_WATCH_EXCLUDES (no sandbox weakening)
+        self.assertNotIn("tmp????????", DEFAULT_WATCH_EXCLUDES)
+        self.assertNotIn("tmp????????/**", DEFAULT_WATCH_EXCLUDES)
+
         for noisy_rel in (
             "uaos_test_olla_usage_26316.jsonl",
             "uaos_test_olla_usage_26316.lock",
-            "tmpph23ka_j",
-            "tmprsn4161r",
-            "tmpph23ka_j/nested.tmp",
             "codex-clipboard-6fI91y.png",
             "cv_debug.log",
         ):
@@ -135,16 +140,54 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
                 f"Expected transient TEMP noise {noisy_rel!r} to be excluded by DEFAULT_WATCH_EXCLUDES",
             )
 
-        # Real unauthorized writes outside allowed patterns must never be excluded
-        for bad_rel in ("unauthorized_escape.py", "src/core.py", ".coord/tamper.json", "tmp_not_8_chars_long.txt"):
+        for bad_rel in ("unauthorized_escape.py", "src/core.py", ".coord/tamper.json", "tmpABCDEFGH", "tmpABCDEFGH/escape.txt"):
             self.assertFalse(
                 _watch_path_excluded(bad_rel, DEFAULT_WATCH_EXCLUDES),
                 f"Expected {bad_rel!r} NOT to be excluded by DEFAULT_WATCH_EXCLUDES",
             )
 
-        rem = reconcile_rsi_worker_defects(self.desk)
-        self.assertEqual(rem["dilemma_1_status"], "GUARD_VERIFIED")
-        self.assertTrue(rem["security_watch_excludes_verified"])
+        # R1: Worker mkdtemp lands in run-private runs_dir/tmp, while global %TEMP%\tmpABCDEFGH still raises EXTERNAL_WRITE
+        global_temp = self.desk / "global_temp"
+        global_temp.mkdir(parents=True, exist_ok=True)
+        snap = snapshot_watch_roots([global_temp], recursive_roots=[global_temp])
+
+        runs_dir = self.desk / ".coord" / "pilot" / "runs" / "U300-MKDTEMP"
+        stage_dir = self.desk / ".coord" / "pilot" / "stage" / "U300-MKDTEMP"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        probe_out = stage_dir / "mkdtemp_path.txt"
+        worker_script = self.desk / ".work" / "mkdtemp_worker.py"
+        worker_script.write_text(
+            "import json, pathlib, tempfile\n"
+            "d = tempfile.mkdtemp()\n"
+            "(pathlib.Path(d) / 'inner.txt').write_text('ok', encoding='utf-8')\n"
+            f"pathlib.Path({str(probe_out)!r}).write_text(d, encoding='utf-8')\n"
+            "print(json.dumps({'status': 'SUCCESS', 'response': 'ok', 'usage': {'input_tokens': 1, 'output_tokens': 1}}))\n",
+            encoding="utf-8",
+        )
+        req = AgyRequest(
+            task_id="U300-MKDTEMP",
+            title="test",
+            prompt="test",
+            workspace=stage_dir,
+            isolation_mode="staging",
+            print_timeout_s=30,
+        )
+        launcher = AgyProcessLauncher(
+            agy_command=[sys.executable, str(worker_script)],
+            request=req,
+            runs_dir=runs_dir,
+        )
+        decision = launcher.launch(attempt_id="U300-MKDTEMP-a001", acceptance_hash="h1")
+        self.assertTrue(decision.successful)
+        created_tmp_dir = Path(probe_out.read_text(encoding="utf-8").strip()).resolve()
+        self.assertTrue(created_tmp_dir.is_relative_to((runs_dir / "tmp").resolve()))
+        snap.assert_unchanged()
+
+        escape_dir = global_temp / "tmpABCDEFGH"
+        escape_dir.mkdir(parents=True, exist_ok=True)
+        (escape_dir / "escape.txt").write_text("bad\n", encoding="utf-8")
+        with self.assertRaises(ExternalWriteDetectedError):
+            snap.assert_unchanged()
 
     def test_dilemma_2_lossless_plan_split_and_unmeasured_savings(self) -> None:
         plan_path = self.desk / ".coord" / "PLAN.md"
@@ -155,7 +198,6 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         rcp = split_plan_archive(self.desk)
         self.assertTrue(rcp["ok"])
         self.assertTrue(rcp["lossless_verified"])
-        # Per global rule & F4: without a controlled paid-token run pair, token savings MUST remain UNMEASURED
         self.assertEqual(rcp["measurement_status"], "UNMEASURED")
         self.assertEqual(rcp["token_savings_status"], "UNMEASURED")
         self.assertGreater(rcp["saved_bytes"], 0)
@@ -170,14 +212,10 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         active_card_rows = [ln for ln in active_lines if ln.startswith("| ") and not ln.startswith("| ID ") and not ln.startswith("|---")]
         archived_card_rows = [ln for ln in archive_lines if ln.startswith("| ") and not ln.startswith("| ID ") and not ln.startswith("|---")]
 
-        # Active PLAN.md keeps only the 3 non-terminal cards (U298 REVIEW, U300 ACTIVE, U301 READY)
         self.assertEqual(len(active_card_rows), 3)
-        # Archive holds all 36 terminal cards (34 DONE + 1 SUPERSEDED + 1 DECIDED)
         self.assertEqual(len(archived_card_rows), 36)
-        # 100% lossless round-trip: every original card row is preserved verbatim
         self.assertEqual(sorted(active_card_rows + archived_card_rows), sorted(original_card_rows))
 
-        # Idempotency check on second invocation
         rcp2 = build_context_diet_and_savings_receipt(self.desk)
         self.assertTrue(rcp2["lossless_verified"])
         archive_lines_2 = archive_path.read_text(encoding="utf-8").splitlines()
@@ -185,13 +223,10 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         self.assertEqual(len(archived_card_rows_2), 36)
 
     def test_dilemma_4_stop_gate_write_point_dedup_under_parallel_calls(self) -> None:
-        # 1st stop blocks the tool
         first = stop_gate.gate(self.desk, "antigravity", session="sess-u300")
         self.assertIsNotNone(first)
         self.assertEqual(first["decision"], "continue")
 
-        # 2nd through 9th stops (run in parallel across threads) without progress must let stop through
-        # and write AT MOST ONE "BLOCKED" entry to .coord/log/stop_gate.jsonl for the same (card, progress) state.
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(lambda _: stop_gate.gate(self.desk, "antigravity", session="sess-u300"), range(8)))
         for r in results:
@@ -204,7 +239,6 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         self.assertEqual(rows[0]["card"], "U300")
         self.assertTrue(rows[0].get("state_hash"))
 
-        # Simulate verified progress -> resets guard -> blocks once -> next stop logs 1 new state_hash
         run_dir = self.desk / ".coord" / "pilot" / "runs" / "U300-1"
         run_dir.mkdir(parents=True, exist_ok=True)
         summary_file = run_dir / "summary.json"
@@ -221,11 +255,9 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         self.assertEqual(len(rows_after), 2)
         self.assertNotEqual(rows_after[0]["state_hash"], rows_after[1]["state_hash"])
 
-        # Active stop_gate_antigravity.json must NOT be moved/deleted even if its mtime is old
         sg_guard = self.desk / ".coord" / "presence" / "stop_gate_antigravity.json"
         old_ts = time.time() - 172800
         os.utime(sg_guard, (old_ts, old_ts))
-        # Merged card guard IS archived cleanly
         merged_guard = self.desk / ".coord" / "presence" / "stop_gate_U297.json"
         merged_guard.write_text(json.dumps({"card": "U297", "blocks": 2}), encoding="utf-8")
 
@@ -240,6 +272,52 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         ssot = reconcile_ssot_presence_and_schedule(self.desk)
         self.assertTrue(ssot["ssot_aligned"])
         self.assertTrue(ssot["code_gate"]["rules_synced"])
+
+        # R2: Before 50 post-fix runs exist, reconcile_rsi_worker_defects reports UNMEASURED / DEGRADED
+        runs_path = self.desk / ".coord" / "usage" / "runs.jsonl"
+        runs_path.write_text(
+            json.dumps({"work_id": "U300-1", "worker": "ollama", "outcome": "BLOCKED", "reason": "EXTERNAL_WRITE", "ts": "2026-11-02T10:00:00"}) + "\n",
+            encoding="utf-8",
+        )
+        d1_pre = reconcile_rsi_worker_defects(self.desk)
+        self.assertEqual(d1_pre["dilemma_1_status"], "DEGRADED")
+        self.assertFalse(d1_pre["has_post_fix_50_window"])
+
+        res_pre = heal_all_rsi_dilemmas_and_record_session(self.desk, publish_mailbox_notices=False)
+        self.assertEqual(res_pre["operational_status"], "DEGRADED")
+        self.assertFalse(res_pre["all_5_dilemmas_resolved"])
+
+        # R2 + R3: Write 50 post-fix PASS runs and a user-approved deletion_receipt_20261103.json
+        post_fix_lines = [
+            json.dumps({"work_id": f"U300-PF-{i}", "worker": "ollama", "outcome": "PASS", "ts": "2026-11-03T03:00:00"})
+            for i in range(50)
+        ]
+        runs_path.write_text("\n".join(post_fix_lines) + "\n", encoding="utf-8")
+
+        removed_items = (
+            [{"path": f"wt_{i}", "kind": "worktree", "bytes": 1000} for i in range(57)]
+            + [{"path": f"work_{i}", "kind": "work", "bytes": 1000} for i in range(444)]
+        )
+        (self.desk / ".coord" / "rsi" / "deletion_receipt_20261103.json").write_text(
+            json.dumps(
+                {
+                    "schema": "uaos-deletion-receipt-v1",
+                    "apply": True,
+                    "at": "2026-11-03T01:43:33+0900",
+                    "policy": "merged+clean+48h worktrees via git worktree remove; .work >14d not protected",
+                    "removed": removed_items,
+                    "bytes_removed": 3794946516,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        d5 = build_workspace_garbage_manifest(self.desk)
+        self.assertTrue(d5["deletion_receipt_verified"])
+        self.assertEqual(d5["removed_worktrees_count"], 57)
+        self.assertEqual(d5["removed_work_entries_count"], 444)
+        self.assertEqual(d5["deleted_count"], 501)
+        self.assertEqual(d5["bytes_removed"], 3794946516)
 
         res = heal_all_rsi_dilemmas_and_record_session(self.desk, publish_mailbox_notices=True)
         self.assertTrue(res["ok"])

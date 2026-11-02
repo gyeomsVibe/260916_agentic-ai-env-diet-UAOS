@@ -1759,12 +1759,34 @@ def build_workspace_garbage_manifest(project: Path) -> dict[str, Any]:
             except (OSError, ValueError):
                 continue
 
+    rsi_dir = desk / ".coord" / "rsi"
+    rcp_files = sorted(rsi_dir.glob("deletion_receipt_*.json")) if rsi_dir.is_dir() else []
+    latest_rcp = rcp_files[-1] if rcp_files else None
+    rcp_data: dict[str, Any] = {}
+    if latest_rcp and latest_rcp.is_file():
+        try:
+            loaded = json.loads(latest_rcp.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                rcp_data = loaded
+        except (OSError, ValueError):
+            rcp_data = {}
+    removed_list = [r for r in (rcp_data.get("removed") or []) if isinstance(r, dict)]
+    removed_worktrees = sum(1 for r in removed_list if r.get("kind") == "worktree")
+    removed_work_entries = sum(1 for r in removed_list if r.get("kind") == "work")
+    bytes_removed = int(rcp_data.get("bytes_removed") or 0)
+    receipt_verified = bool(rcp_data.get("apply") is True and len(removed_list) > 0 and bytes_removed > 0)
+
     manifest = {
-        "schema": "uaos-workspace-garbage-manifest-v1",
+        "schema": "uaos-workspace-garbage-manifest-v2",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         "project": str(desk),
-        "deletion_policy": "DRY_RUN_MANIFEST_ONLY_FRESH_USER_APPROVAL_REQUIRED",
-        "deleted_count": 0,
+        "deletion_policy": str(rcp_data.get("policy") or "DRY_RUN_MANIFEST_ONLY_FRESH_USER_APPROVAL_REQUIRED"),
+        "deletion_receipt_path": str(latest_rcp) if latest_rcp else None,
+        "deletion_receipt_verified": receipt_verified,
+        "deleted_count": len(removed_list),
+        "removed_worktrees_count": removed_worktrees,
+        "removed_work_entries_count": removed_work_entries,
+        "bytes_removed": bytes_removed,
         "summary": {
             "work_total_entries": sum(len(v) for v in cats.values()),
             "work_active_protected_count": len(cats["active_protected"]),
@@ -1899,16 +1921,15 @@ _ARCHIVE_POINTER_LINE = (
 )
 
 
-def reconcile_rsi_worker_defects(project: Path) -> dict[str, Any]:
-    """U300 R2 (Dilemma 1): Verify `v7_harness.isolation.security.DEFAULT_WATCH_EXCLUDES` excludes real
-    transient `%TEMP%` noise receipts while keeping unauthorized writes fail-closed, and summarize ledger causes.
+def reconcile_rsi_worker_defects(project: Path, *, post_fix_since: str = "2026-11-03T02:00:00") -> dict[str, Any]:
+    """U300 R3 (Dilemma 1): Measure last-50 outcomes per worker (`pass_rate` + `external_write_count`)
+    from `.coord/usage/runs.jsonl`. Reports `UNMEASURED` or `DEGRADED` until a 50-run post-fix window exists.
     """
-    from v7_harness.isolation.security import DEFAULT_WATCH_EXCLUDES, _watch_path_excluded
-
     desk = Path(shared_desk(project)).resolve()
     runs_path = desk / ".coord" / "usage" / "runs.jsonl"
     cause_counts: dict[str, int] = {}
     worker_totals: dict[str, dict[str, int]] = {}
+    worker_rows: dict[str, list[dict[str, Any]]] = {}
     if runs_path.is_file():
         for line in runs_path.read_text(encoding="utf-8", errors="ignore").splitlines():
             try:
@@ -1927,26 +1948,47 @@ def reconcile_rsi_worker_defects(project: Path) -> dict[str, Any]:
                 bucket["blocked"] += 1
                 cause = str(row.get("failure_cause") or row.get("reason") or row.get("exclusion_reason") or "UNKNOWN")
                 cause_counts[cause] = cause_counts.get(cause, 0) + 1
+            worker_rows.setdefault(w, []).append(row)
 
-    transient_probes = (
-        "uaos_test_olla_usage_26316.jsonl",
-        "uaos_test_olla_usage_26316.lock",
-        "tmpph23ka_j",
-        "codex-clipboard-6fI91y.png",
-        "cv_debug.log",
-    )
-    excludes_verified = all(_watch_path_excluded(p, DEFAULT_WATCH_EXCLUDES) for p in transient_probes) and not _watch_path_excluded(
-        "unauthorized_escape.py", DEFAULT_WATCH_EXCLUDES
-    )
-    status = "GUARD_VERIFIED" if excludes_verified else "DEGRADED"
+    last_50_by_worker: dict[str, dict[str, Any]] = {}
+    for w, rows in worker_rows.items():
+        win = rows[-50:]
+        n = len(win)
+        passes = sum(1 for r in win if str(r.get("outcome") or r.get("verdict") or "") in ("PASS", "APPLIED", "APPROVE", "GENERATED"))
+        ext_writes = sum(
+            1
+            for r in win
+            if str(r.get("failure_cause") or r.get("reason") or r.get("error_class") or r.get("exclusion_reason") or "") == "EXTERNAL_WRITE"
+        )
+        post_fix_n = sum(
+            1
+            for r in win
+            if str(r.get("ts") or r.get("timestamp") or r.get("at") or r.get("started_at") or "") >= post_fix_since
+        )
+        last_50_by_worker[w] = {
+            "window_n": n,
+            "pass_count": passes,
+            "pass_rate": round(passes / n, 4) if n > 0 else 0.0,
+            "external_write_count": ext_writes,
+            "post_fix_runs": post_fix_n,
+        }
+
+    tracked = [m for w, m in last_50_by_worker.items() if w in ("agy", "ollama", "claude", "apply")]
+    has_post_fix_window = bool(tracked) and any(m["post_fix_runs"] >= 50 for m in tracked)
+    any_degraded = any(m["external_write_count"] > 0 or (m["window_n"] >= 10 and m["pass_rate"] < 0.7) for m in tracked)
+    if not has_post_fix_window:
+        status = "DEGRADED" if any_degraded else "UNMEASURED"
+    else:
+        status = "DEGRADED" if any_degraded else "MEASURED_PASS"
 
     remediation = {
-        "schema": "uaos-rsi-worker-defect-remediation-v2",
+        "schema": "uaos-rsi-worker-defect-remediation-v3",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         "project": str(desk),
         "dilemma_1_status": status,
-        "security_watch_excludes_verified": excludes_verified,
-        "verified_temp_noise_probes": list(transient_probes),
+        "post_fix_since": post_fix_since,
+        "has_post_fix_50_window": has_post_fix_window,
+        "last_50_by_worker": last_50_by_worker,
         "observed_worker_totals": worker_totals,
         "observed_cause_counts": cause_counts,
     }
@@ -2265,12 +2307,12 @@ def heal_all_rsi_dilemmas_and_record_session(
     )
 
     all_resolved = bool(
-        d1_worker.get("security_watch_excludes_verified") is True
+        d1_worker.get("dilemma_1_status") == "MEASURED_PASS"
         and d2_diet.get("lossless_verified") is True
         and d2_diet.get("measurement_status") == "UNMEASURED"
         and d3_ssot.get("ssot_aligned") is True
         and d4_stopgate.get("consecutive_state_hash_duplicates") == 0
-        and d5_garbage.get("deleted_count") == 0
+        and d5_garbage.get("deletion_receipt_verified") is True
         and u299_sync.get("operational_status") == "LIVE_OPERATING"
     )
 
