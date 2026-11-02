@@ -39,12 +39,12 @@ from types import SimpleNamespace
 from unittest import mock
 
 from v7_harness.coord import agy_dispatch, presence
-from v7_harness.coord.agy_dispatch import _pid_is_definitely_dead, _recover_dead_dispatcher
-from v7_harness.coord.deliver import _project_mailbox, deliver
+from v7_harness.coord.deliver import _project_mailbox, _recover_dead_dispatcher, deliver
 from v7_harness.coord.windows import (
     MAX_ACTIVE_WINDOWS_PER_TOOL,
     RESUME_MAX_INPUT,
     WindowPoolExhaustedError,
+    _pid_is_definitely_dead,
     acquire_topic_window,
     acquire_window_lease,
     active_topic_windows,
@@ -714,6 +714,226 @@ class TestU279ThreeToolWindowCoalescing(unittest.TestCase):
         th2.join(timeout=5.0)
         self.assertEqual(1, len(same_card_calls))
         self.assertEqual({False, True}, {r["reused"] for r in same_results})
+
+    def test_10_post_success_bookkeeping_lock_timeout_never_loses_paid_turn_or_causes_redispatch(self):
+        """P2-1 regression test:
+        - Probe A: `release_window_lease` raises `TimeoutError('WINDOW_LOCK_TIMEOUT:card_U301')` after runner succeeds:
+          `turns_run == 1`, `accepted == 1`, `reason == 'DISPATCHED'`, `WINDOW_BOOKKEEPING_FAILED` receipt written,
+          and a second `deliver()` call returns `DISPATCHED` without running the runner a second time.
+        - Probe B: Claude failover `record_window` raises `TimeoutError('WINDOW_LOCK_TIMEOUT:card_U302')` after retry
+          succeeds: `turns_run == 2`, `accepted == 1`, `reason == 'DISPATCHED'` (never `DELIVERY_FAILED`),
+          `WINDOW_BOOKKEEPING_FAILED` receipt written.
+        - Probe C: `agy_dispatch` `release_window_lease` and `record_window` raise `TimeoutError` after a paid turn:
+          the paid answer is kept (`_replay` exists, ledger state is `ANSWERED`), never lost!
+        - Pre-dispatch `acquire_window_lease` timeout returns structured `WINDOW_LOCK_TIMEOUT` refusal without crashing."""
+        box = _project_mailbox(self.project)
+        accepted_dir = box.root / "delivery" / "accepted"
+        attempts_dir = box.root / "delivery" / "attempts"
+
+        # ── Probe A: `release_window_lease` raises `TimeoutError` after successful turn ──
+        u301_tid = "01993010-0000-7000-8000-000000000301"
+        self._register_codex_rollout(u301_tid)
+        record_window(self.project, "U301", "codex", u301_tid, now=10.0)
+        runner_a = _FakeRunner()
+        msg_a = "ACTIONABLE_DELTA verdict_requested=yes: U301 probe A"
+        with mock.patch(
+            "v7_harness.coord.windows.release_window_lease",
+            side_effect=TimeoutError("WINDOW_LOCK_TIMEOUT:card_U301"),
+        ):
+            res_a = deliver(
+                self.project,
+                message=msg_a,
+                actor="claude",
+                target="codex",
+                runner=runner_a,
+                card="U301-R1",
+            )
+        self.assertEqual("DISPATCHED", res_a.reason)
+        self.assertEqual(1, len(runner_a.calls))
+        self.assertTrue((accepted_dir / f"{res_a.message_id}.json").is_file())
+        # Verify `WINDOW_BOOKKEEPING_FAILED` attempt receipt was recorded
+        attempt_states_a = [
+            json.loads(p.read_text(encoding="utf-8")).get("state")
+            for p in attempts_dir.glob(f"{res_a.message_id}_*.json")
+        ]
+        self.assertIn("DISPATCHED", attempt_states_a)
+        self.assertIn("WINDOW_BOOKKEEPING_FAILED", attempt_states_a)
+        # Re-calling `deliver` with the same letter must see the accepted receipt and NOT run a duplicate turn!
+        res_a_retry = deliver(
+            self.project,
+            message=msg_a,
+            actor="claude",
+            target="codex",
+            runner=runner_a,
+            card="U301-R1",
+        )
+        self.assertEqual("DISPATCHED", res_a_retry.reason)
+        self.assertEqual(1, len(runner_a.calls))
+
+        # ── Probe B: Claude failover `record_window` raises `TimeoutError` after retry succeeds ──
+        busy_sid = "30200000-0000-4000-8000-000000000302"
+        record_window(self.project, "U302", "claude", busy_sid, now=10.0)
+        probe_b_calls: list[list[str]] = []
+
+        def probe_b_runner(argv, **_kwargs):
+            probe_b_calls.append(list(argv))
+            if len(probe_b_calls) == 1:
+                return SimpleNamespace(returncode=1, stdout="", stderr=f"Error: Session ID {busy_sid} is already in use.")
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"result": "probe-b-ok"}), stderr="")
+
+        with mock.patch(
+            "v7_harness.coord.windows.record_window",
+            side_effect=TimeoutError("WINDOW_LOCK_TIMEOUT:card_U302"),
+        ):
+            res_b = deliver(
+                self.project,
+                message="ACTIONABLE_DELTA verdict_requested=yes: U302 probe B",
+                actor="codex",
+                target="claude",
+                runner=probe_b_runner,
+                card="U302-R1",
+            )
+        self.assertEqual("DISPATCHED", res_b.reason)
+        self.assertEqual(2, len(probe_b_calls))
+        self.assertTrue((accepted_dir / f"{res_b.message_id}.json").is_file())
+        failover_warnings = list(attempts_dir.glob("claude_failover_bookkeeping_*.json"))
+        self.assertTrue(failover_warnings)
+
+        # ── Probe C: `agy_dispatch` post-turn `release_window_lease` & `record_window` raise `TimeoutError` ──
+        record_window(self.project, "U303", "antigravity", "conv-u303", now=10.0, last_input_tokens=15_000)
+        agy_turns = {"n": 0}
+
+        def probe_c_runner(argv, **_kwargs):
+            if Path(argv[0]).stem == "agy":
+                agy_turns["n"] += 1
+                env = {
+                    "status": "SUCCESS",
+                    "conversation_id": "conv-u303",
+                    "usage": {"input_tokens": 22_000, "output_tokens": 300},
+                    "response": "VERDICT: PASS probe C preserved.",
+                }
+                return SimpleNamespace(returncode=0, stdout=json.dumps(env).encode("utf-8"), stderr=b"")
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"result": "ok"}), stderr="")
+
+        with mock.patch(
+            "v7_harness.coord.windows.release_window_lease",
+            side_effect=TimeoutError("WINDOW_LOCK_TIMEOUT:card_U303"),
+        ), mock.patch(
+            "v7_harness.coord.windows.record_window",
+            side_effect=TimeoutError("WINDOW_LOCK_TIMEOUT:card_U303"),
+        ):
+            row_c = agy_dispatch.dispatch(
+                self.project,
+                message_id="relay_probe_c_u303",
+                actor="claude",
+                message="Please audit U303",
+                runner=probe_c_runner,
+                card="U303-R1",
+                audit=True,
+            )
+        self.assertEqual("ANSWERED", row_c["state"])
+        self.assertEqual(1, agy_turns["n"])
+        self.assertTrue(agy_dispatch._answered(self.project, "relay_probe_c_u303"))
+        kept_env, kept_err = agy_dispatch._replay(self.project, "relay_probe_c_u303", "claude", "Please audit U303")
+        self.assertEqual("", kept_err)
+        self.assertIsNotNone(kept_env)
+
+        # ── Pre-dispatch `acquire_window_lease` timeout returns structured refusal without raising or spending cap ──
+        with mock.patch(
+            "v7_harness.coord.windows.acquire_window_lease",
+            side_effect=TimeoutError("WINDOW_LOCK_TIMEOUT:card_U301"),
+        ):
+            refused_deliver = deliver(
+                self.project,
+                message="ACTIONABLE_DELTA verdict_requested=yes: U301 pre-dispatch lock timeout",
+                actor="claude",
+                target="codex",
+                runner=runner_a,
+                card="U301-R2",
+            )
+            self.assertEqual("WINDOW_LOCK_TIMEOUT", refused_deliver.reason)
+            self.assertFalse(refused_deliver.delivered)
+
+            refused_agy = agy_dispatch.dispatch(
+                self.project,
+                message_id="relay_probe_pre_timeout_u303",
+                actor="claude",
+                message="Please audit U303 pre-timeout",
+                runner=probe_c_runner,
+                card="U303-R2",
+                audit=False,
+            )
+            self.assertEqual("FAILED", refused_agy["state"])
+            self.assertEqual("WINDOW_LOCK_TIMEOUT", refused_agy["error"])
+            self.assertIsNone(refused_agy["reservation"])
+
+    def test_11_cli_coord_window_pool_flag_and_p3_hardening(self):
+        """P2-2 & P3-1..P3-6 regression test:
+        - `coord window --pool` (and `open_window(..., pool=True)`) routes through `acquire_topic_window` so sub-cards
+          coalesce into canonical topic keys, enforce `MAX_ACTIVE_WINDOWS_PER_TOOL = 3`, and rotate at 70k tokens.
+        - P3-2: `_prune_entry_leases` drops malformed leases (`pid` not int or bool) instead of re-stamping with current PID.
+        - P3-3: `set_window_in_flight(False)` never pops another process's live lease.
+        - P3-4: `_sync_registry_index` writes `.coord/windows/.mirror_sync_warning.json` when `PermissionError` persists."""
+        from v7_harness import cli
+        from v7_harness.card_pipeline import TEMPLATE
+        from v7_harness.coord.windows import _prune_entry_leases, _sync_registry_index
+
+        manual = self.project / "manual_pool.md"
+        manual.write_text(TEMPLATE.format(card="U279", title="Pool CLI"), encoding="utf-8")
+
+        created = iter(["conv-pool-1", "conv-pool-2", "conv-pool-3", "conv-pool-4"])
+
+        def pool_runner(*_a, **_kw):
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"conversation_id": next(created), "usage": {"input_tokens": 12_000}}),
+                stderr="",
+            )
+
+        with mock.patch("v7_harness.coord.windows.subprocess.run", side_effect=pool_runner):
+            for idx, card_arg in enumerate(("U701-R1", "U701-R2", "U702-R1", "U703-R1", "U704-R1"), start=1):
+                with mock.patch("sys.stdout", new_callable=__import__("io").StringIO) as out:
+                    args = cli.build_parser().parse_args([
+                        "coord", "window", "--project", str(self.project),
+                        "--card", card_arg, "--tool", "antigravity",
+                        "--title", f"pool-{idx}", "--prompt-file", str(manual), "--pool",
+                    ])
+                    rc = args.func(args)
+                self.assertEqual(0, rc)
+                payload = json.loads(out.getvalue())
+                if card_arg == "U701-R2":
+                    self.assertTrue(payload["reused"])
+                    self.assertEqual("U701", payload["topic_key"])
+        active_pool = active_topic_windows(self.project, "antigravity")
+        self.assertLessEqual(len(active_pool), MAX_ACTIVE_WINDOWS_PER_TOOL)
+
+        # P3-2: Malformed leases (`pid` is str, None, or bool) are dropped, never re-stamped with `os.getpid()`
+        live_pruned, changed = _prune_entry_leases({
+            "in_flight_leases": {
+                "bad-str": {"pid": "not-an-int", "at": 1.0},
+                "bad-bool": {"pid": True, "at": 1.0},
+                "bad-none": {"pid": None, "at": 1.0},
+                "good-self": {"pid": os.getpid(), "at": 2.0},
+            }
+        })
+        self.assertTrue(changed)
+        self.assertEqual(["good-self"], list(live_pruned.keys()))
+
+        # P3-3: `set_window_in_flight(False)` from PID B never pops PID A's live lease
+        record_window(self.project, "U709", "codex", "01997090-0000-7000-8000-000000000709", now=10.0)
+        acquire_window_lease(self.project, "U709", "codex", lease_id="self-lease", pid=os.getpid(), now=11.0)
+        set_window_in_flight(self.project, "U709", "codex", False, pid=os.getpid() + 99999)
+        self.assertEqual(1, window_entry(self.project, "U709", "codex").get("in_flight_count"))
+        release_window_lease(self.project, "U709", "codex", "self-lease")
+
+        # P3-4: `_sync_registry_index` writes `.mirror_sync_warning.json` when `PermissionError` persists
+        with mock.patch("v7_harness.coord.windows._retry", side_effect=PermissionError("locked")):
+            ok_sync = _sync_registry_index(self.project, "U709", {"card": "U709", "tools": {}})
+        self.assertFalse(ok_sync)
+        warn_file = self.project / ".coord" / "windows" / ".mirror_sync_warning.json"
+        self.assertTrue(warn_file.is_file())
+        warn_data = json.loads(warn_file.read_text(encoding="utf-8"))
+        self.assertEqual("WINDOWS_MIRROR_SYNC_FAILED", warn_data.get("warning"))
 
 
 if __name__ == "__main__":

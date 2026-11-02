@@ -30,8 +30,10 @@ AGY_TIMEOUT_S = 900
 # U127: a record read or replace retries with 10 ms, 20 ms, ... back-off (about 2 s over 20 tries) while a parallel
 # writer swaps it; the parallel test (8 threads x 10 writes) hit PermissionError on the first try without it.
 RECORD_TRIES = 20
-# U279: 3 active windows per tool matches the 3 parallel execution lanes (Lane 1..3) in 3-tool tiki-taka so each tool
-# can hold one active topic conversation per lane without desktop sidebar/RAM sprawl (대화창 남발 방지).
+# U279: 3 active topic windows per tool bounds desktop sidebar/RAM sprawl (대화창 남발 방지) while the 5 process lanes
+# (IMPL_CODE, VERIFY_AUDIT, ARCH_DESIGN, MERGE_RELEASE, RECOVERY_OPS — U287/U292) distribute work across the 3 tools
+# (~1-2 lanes per tool at any instant, so 3 active topic windows per tool = 9 across 3 tools covers all 5 lanes with
+# headroom for handoffs).
 MAX_ACTIVE_WINDOWS_PER_TOOL = 3
 # U127 / U279: maximum input tokens before a topic conversation window is rotated to a fresh window (leaves 30,000
 # tokens headroom under the 100,000-token review cap after one ~28,000-token turn).
@@ -266,13 +268,15 @@ def _retry(op: Callable[[], Any]) -> Any:
 def _load(path: Path) -> dict[str, Any]:
     try:
         return _retry(lambda: json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else {}
-    except ValueError:
+    except (ValueError, PermissionError, OSError):
         return {}
 
 
-def _sync_registry_index(project: Path, card: str, record: dict[str, Any]) -> None:
+def _sync_registry_index(project: Path, card: str, record: dict[str, Any]) -> bool:
     """U279: Mirror per-card window state into `.coord/windows.json` under `registry_index` lock so callers inspecting
-    either `.coord/windows/<card>.json` or `.coord/windows.json` observe identical durable state."""
+    either `.coord/windows/<card>.json` or `.coord/windows.json` observe identical durable state.
+    On a persistent Windows sharing violation (`PermissionError` after `RECORD_TRIES`), records a durable
+    `.coord/windows/.mirror_sync_warning.json` receipt instead of silently dropping the update."""
     reg_path = _registry_path(project)
     with _window_lock(project, "registry_index"):
         reg = _load(reg_path)
@@ -287,13 +291,32 @@ def _sync_registry_index(project: Path, card: str, record: dict[str, Any]) -> No
         tmp.write_text(json.dumps(reg, ensure_ascii=False, indent=2), encoding="utf-8")
         try:
             _retry(lambda: tmp.replace(reg_path))
-        except PermissionError:
+            return True
+        except PermissionError as exc:
             tmp.unlink(missing_ok=True)
+            warn_path = Path(project) / ".coord" / "windows" / ".mirror_sync_warning.json"
+            try:
+                warn_path.write_text(
+                    json.dumps(
+                        {
+                            "warning": "WINDOWS_MIRROR_SYNC_FAILED",
+                            "card": card,
+                            "error": f"{type(exc).__name__}:{exc}",
+                            "at": time.time(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            return False
 
 
 def _prune_entry_leases(entry: dict[str, Any]) -> tuple[dict[str, dict[str, int | float]], bool]:
-    """U279: Prune dead-PID entries from `in_flight_leases: dict[str, dict[str, int | float]]` using
-    `_pid_is_definitely_dead(pid)`. Returns `(live_leases, changed)`."""
+    """U279: Prune dead-PID or malformed entries from `in_flight_leases: dict[str, dict[str, int | float]]` using
+    `_pid_is_definitely_dead(pid)`. Malformed leases (`not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0`)
+    are dropped instead of re-stamped with the current writer's PID (P3-2). Returns `(live_leases, changed)`."""
     raw_leases = entry.get("in_flight_leases")
     live: dict[str, dict[str, int | float]] = {}
     changed = False
@@ -303,10 +326,13 @@ def _prune_entry_leases(entry: dict[str, Any]) -> tuple[dict[str, dict[str, int 
                 changed = True
                 continue
             pid = info.get("pid")
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                changed = True
+                continue
             if _pid_is_definitely_dead(pid):
                 changed = True
                 continue
-            live[str(lid)] = {"pid": int(pid) if type(pid) is int else os.getpid(), "at": float(info.get("at") or 0.0)}
+            live[str(lid)] = {"pid": int(pid), "at": float(info.get("at") or 0.0)}
     return live, changed
 
 
@@ -389,9 +415,7 @@ def window_for(project: Path, card: str, tool: str) -> str | None:
         topic_entry = _load(_record_path(project, topic)).get("tools", {}).get(tool, {})
         if _is_entry_active(topic_entry):
             return str(topic_entry["id"])
-    if exact.get("id") and exact.get("state") not in ("RELEASED", "RESERVING") and not exact.get("released_at"):
-        return str(exact["id"])
-    return str(exact["id"]) if exact.get("id") and "state" not in exact else None
+    return None
 
 
 def window_entry(project: Path, card: str, tool: str) -> dict[str, Any]:
@@ -561,10 +585,12 @@ def window_lease(project: Path, card: str, tool: str):
             release_window_lease(project, card, tool, lid)
 
 
-def set_window_in_flight(project: Path, card: str, tool: str, in_flight: bool) -> None:
-    """U279: Reference-counted dead-PID-safe lease wrapper for callers using boolean `set_window_in_flight`."""
+def set_window_in_flight(project: Path, card: str, tool: str, in_flight: bool, *, pid: int | None = None) -> None:
+    """U279: Reference-counted dead-PID-safe lease wrapper for callers using boolean `set_window_in_flight`.
+    Only removes a lease owned by `target_pid` (defaults to `os.getpid()`), never another process's live lease (P3-3)."""
     project = Path(project)
     ts = time.time()
+    target_pid = os.getpid() if pid is None else int(pid)
     topic, entry = window_entry_for_topic(project, card, tool)
     target_card = topic if entry else (normalize_topic_key(card) or card)
     with _window_lock(project, f"card_{target_card}"):
@@ -573,15 +599,12 @@ def set_window_in_flight(project: Path, card: str, tool: str, in_flight: bool) -
             return
         live, _ = _prune_entry_leases(raw)
         if in_flight:
-            lid = f"turn-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-            live[lid] = {"pid": os.getpid(), "at": ts}
+            lid = f"turn-{target_pid}-{uuid.uuid4().hex[:8]}"
+            live[lid] = {"pid": target_pid, "at": ts}
         else:
-            my_pid = os.getpid()
-            own_keys = [k for k, v in live.items() if v.get("pid") == my_pid]
+            own_keys = [k for k, v in live.items() if v.get("pid") == target_pid]
             if own_keys:
                 live.pop(own_keys[-1], None)
-            elif live:
-                live.pop(next(iter(live)), None)
         updated = {
             **raw,
             "in_flight_leases": live,
@@ -751,9 +774,14 @@ def _open_antigravity(project: Path, prompt: str, runner: Callable[..., Any]) ->
 
 
 def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
-                runner: Callable[..., Any] = subprocess.run, rpc: Callable[[str, dict], dict] | None = None,
-                now: float | None = None, session_id: str | None = None) -> dict[str, Any]:
+                runner: Callable[..., Any] | None = None, rpc: Callable[[str, dict], dict] | None = None,
+                now: float | None = None, session_id: str | None = None, pool: bool = False) -> dict[str, Any]:
     project = Path(project)
+    if runner is None:
+        runner = subprocess.run
+    if pool:
+        return acquire_topic_window(project, card, tool, title, prompt, runner=runner, rpc=rpc, now=now,
+                                    session_id=session_id)
     path = _record_path(project, card)
     if tool not in TOOLS:
         raise ValueError(f"unknown tool: {tool}")
@@ -817,7 +845,7 @@ def acquire_topic_window(
     title: str,
     prompt: str,
     *,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] | None = None,
     rpc: Callable[[str, dict], dict] | None = None,
     now: float | None = None,
     session_id: str | None = None,
@@ -845,6 +873,8 @@ def acquire_topic_window(
       - Transition the `RESERVING` record (matching `reservation_id`) to `state="ACTIVE"` on success, or to
         `state="RELEASED"` (`release_reason="launch_failed"`) on failure/exception."""
     project = Path(project)
+    if runner is None:
+        runner = subprocess.run
     if tool not in TOOLS:
         raise ValueError(f"unknown tool: {tool}")
     if session_id is not None and tool != "claude":

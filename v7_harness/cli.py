@@ -1085,6 +1085,8 @@ def build_parser() -> argparse.ArgumentParser:
                              help="U129: id of a visible Claude desktop session to record (claude only)")
     p_coord_win.add_argument("--release", action="store_true",
                              help="U129: mark the card's window done so its Claude session can take the next card")
+    p_coord_win.add_argument("--pool", action="store_true",
+                             help="U279: acquire from the bounded topic-grouped window pool (3 active per tool, LRU eviction, 70k token rotation)")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
     # U130: one card template (four stage slots with default workers) and an audit of the card's Ollama/Antigravity use.
@@ -1504,8 +1506,11 @@ def cmd_coord_window(args: argparse.Namespace) -> int:
             return 2
     # U129: a Claude window is a visible desktop session the caller names; nothing is launched for it.
     passes_session = args.session_id is not None and (route is None or tool == "claude")
-    extra = {"session_id": args.session_id} if passes_session else {}
-    result = windows.open_window(project, args.card, tool, args.title, prompt, **extra)
+    extra: dict[str, Any] = {"session_id": args.session_id} if passes_session else {}
+    if getattr(args, "pool", False):
+        result = windows.acquire_topic_window(project, args.card, tool, args.title, prompt, **extra)
+    else:
+        result = windows.open_window(project, args.card, tool, args.title, prompt, **extra)
     if route:
         result = {**result, "route": tool, "step": route["step"]}
     print(json.dumps(result, ensure_ascii=False))

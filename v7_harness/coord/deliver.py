@@ -197,14 +197,15 @@ def _deliver_to_codex(
 @contextmanager
 def _claude_turn(project_dir: Path | None, timeout: int, *, lock_key: str = ""):
     """Serialize messages through the persisted Claude conversation, including across processes.
-    U279: when `lock_key` is provided (for an active recorded card/topic window), shard the turn lock per topic/session
-    (`claude-topic-<lock_key>.turn.lock`) so parallel card windows never block each other, while non-windowed letters
-    share `claude-session.turn.lock`."""
+    U279 (P3-6): when `lock_key` is provided (keyed on the resolved Claude window session UUID so two topics sharing a
+    session never resume it concurrently, falling back to topic only when no session UUID is bound), shard the turn lock
+    per session (`claude-win-<lock_key>.turn.lock`) so parallel card windows on distinct sessions never block each other,
+    while non-windowed letters share `claude-session.turn.lock`."""
     if project_dir is None:
         yield
         return
     safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", lock_key.strip()) if lock_key else ""
-    lock_name = f"claude-topic-{safe_key}.turn.lock" if safe_key else "claude-session.turn.lock"
+    lock_name = f"claude-win-{safe_key}.turn.lock" if safe_key else "claude-session.turn.lock"
     lock = project_dir / ".coord" / "mailbox" / "delivery" / lock_name
     lock.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout + 5
@@ -251,10 +252,11 @@ def _deliver_to_claude(
     session: str = "",
     card: str = "",
 ) -> DeliverResult:
-    from v7_harness.coord.windows import normalize_topic_key
+    from v7_harness.coord.windows import claude_session, normalize_topic_key
 
     topic_key = normalize_topic_key(card) if card else ""
-    lock_key = (topic_key or session) if session else ""
+    resolved_session = claude_session(session)[0] if session else ""
+    lock_key = (resolved_session or session or topic_key) if session else ""
     try:
         with _claude_turn(project_dir, timeout, lock_key=lock_key):
             return _deliver_to_claude_locked(
@@ -385,21 +387,42 @@ def _deliver_to_claude_locked(
                              encoding="utf-8")
         os.replace(temporary, session_path)
     elif failover_from_id and session and project_dir and session_id:
-        # U279 (P2-3 fix): when a card window UUID was "already in use" and failed over to `session_id`, durably
-        # persist the fresh `window_id` / `failover_id` into `.coord/windows/<topic>.json` and `.coord/windows.json`.
+        # U279 (P2-3 fix + P2-1 hardening): when a card window UUID was "already in use" and failed over to `session_id`,
+        # durably persist the fresh `window_id` / `failover_id` into `.coord/windows/<topic>.json` and `.coord/windows.json`.
+        # Never let a post-turn `TimeoutError` or `OSError` in window bookkeeping turn the successful paid turn into
+        # `DELIVERY_FAILED`; record a `WINDOW_BOOKKEEPING_FAILED` receipt instead.
         from v7_harness.coord.windows import record_window, window_entry_for_topic
 
-        resolved_card, existing_entry = window_entry_for_topic(project_dir, card or topic_key, "claude")
-        target_records = {c for c in (resolved_card, topic_key, card) if c}
-        for rec_card in target_records:
-            extra_fields = {
-                k: v
-                for k, v in existing_entry.items()
-                if k not in ("id", "window_id", "state", "opened_at", "last_active_at", "updated_at")
-            }
-            extra_fields["failover_from"] = failover_from_id
-            extra_fields["failover_id"] = session_id
-            record_window(project_dir, rec_card, "claude", session_id, **extra_fields)
+        try:
+            resolved_card, existing_entry = window_entry_for_topic(project_dir, card or topic_key, "claude")
+            target_records = {c for c in (resolved_card, topic_key, card) if c}
+            for rec_card in target_records:
+                extra_fields = {
+                    k: v
+                    for k, v in existing_entry.items()
+                    if k not in ("id", "window_id", "state", "opened_at", "last_active_at", "updated_at")
+                }
+                extra_fields["failover_from"] = failover_from_id
+                extra_fields["failover_id"] = session_id
+                record_window(project_dir, rec_card, "claude", session_id, **extra_fields)
+        except (TimeoutError, OSError) as exc:
+            try:
+                attempts_dir = _project_mailbox(project_dir).root / "delivery" / "attempts"
+                _write_receipt(
+                    attempts_dir / f"claude_failover_bookkeeping_{uuid.uuid4().hex}.json",
+                    {
+                        "target": "claude",
+                        "card": card or topic_key,
+                        "state": "WINDOW_BOOKKEEPING_FAILED",
+                        "stage": "claude_failover_record_window",
+                        "failover_from": failover_from_id,
+                        "failover_id": session_id,
+                        "error": f"{type(exc).__name__}:{exc}",
+                        "timestamp_ns": time.time_ns(),
+                    },
+                )
+            except OSError:
+                pass
     reply = str(result_text)[:2000]
     try:
         _check_secrets(reply)
@@ -520,6 +543,64 @@ def _recover_lock(guard: Path, wait_s: float):
         os.close(fd)
 
 
+def _recover_dead_dispatcher(box: Mailbox, message_id: str) -> bool:
+    """U279: Bounded `_recover_lock(guard, RECOVER_WAIT_S)` dead-PID guard recovery.
+    Why `RECOVER_WAIT_S = 0.2` (200 ms): 200 ms is 20x the 10 ms atomic lock poll interval (`WINDOW_LOCK_SLEEP_S`),
+    giving an in-flight atomic guard write (`os.open` + `os.fsync` or `os.replace` on Windows NTFS) time to complete
+    without blocking an active dispatcher for multiple seconds.
+    Reclaims a guard + claimed inbox copy ONLY when the guard contains a valid JSON `pid` proven dead by
+    `_pid_is_definitely_dead(gpid)` (`OpenProcess` returning `0` treats only `ERROR_INVALID_PARAMETER = 87` as dead,
+    never `ERROR_ACCESS_DENIED = 5`). Never unlinks empty or malformed guard files."""
+    from v7_harness.coord.windows import _pid_is_definitely_dead
+
+    if not message_id:
+        return False
+    guard = box.root / "delivery" / "guards" / f"{message_id}.lock"
+    guard.parent.mkdir(parents=True, exist_ok=True)
+    with _recover_lock(guard, 0.2) as held:
+        if not held or not guard.is_file():
+            return False
+        try:
+            raw = guard.read_text(encoding="utf-8")
+            if not raw.strip():
+                return False
+            gdata = json.loads(raw)
+        except (OSError, ValueError):
+            return False
+        if not isinstance(gdata, dict):
+            return False
+        gpid = gdata.get("pid")
+        if not _pid_is_definitely_dead(gpid):
+            return False
+        stale = guard.with_name(f"{guard.name}.stale-{uuid.uuid4().hex}")
+        try:
+            os.replace(guard, stale)
+        except OSError:
+            return False
+        try:
+            _write_receipt(
+                box.root / "delivery" / "attempts" / f"{message_id}_{uuid.uuid4().hex}.json",
+                {
+                    "message_id": message_id,
+                    "digest": str(gdata.get("digest") or ""),
+                    "state": "GUARD_RECOVERED",
+                    "stale_guard": str(stale),
+                    "dead_pid": gpid,
+                    "timestamp_ns": time.time_ns(),
+                },
+            )
+        except OSError:
+            pass
+        inbox_file = box.inbox_dir / f"{message_id}.json"
+        for claimed in sorted(box.claimed_dir.glob(f"{message_id}_*.json")):
+            if not inbox_file.is_file():
+                try:
+                    os.replace(claimed, inbox_file)
+                except OSError:
+                    pass
+        return True
+
+
 def _acquire_guard(
     guard: Path, box: Mailbox, message_id: str, digest: str, *, initial_bytes: bytes | None = None
 ) -> int | None:
@@ -544,6 +625,21 @@ def _acquire_guard(
         fd = _open_excl(guard)
         if fd is not None:
             return fd
+    if _recover_dead_dispatcher(box, message_id):
+        if initial_bytes is not None:
+            with _recover_lock(guard, RELEASE_WAIT_S) as held:
+                if held:
+                    fd = _open_excl(guard)
+                    if fd is not None:
+                        with os.fdopen(fd, "wb") as handle:
+                            handle.write(initial_bytes)
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                        return -1
+        else:
+            fd = _open_excl(guard)
+            if fd is not None:
+                return fd
     try:
         if time.time() - guard.stat().st_mtime < GUARD_STALE_S:
             return None
@@ -1299,9 +1395,30 @@ def _deliver_unlocked(
         fallback: dict[str, str] = {}
         sent_thread = ""  # U147: the receipt names the Codex thread, so a misrouted letter is visible
         from v7_harness.coord.windows import acquire_window_lease, release_window_lease, record_window, window_entry_for_topic
+        attempts = box.root / "delivery" / "attempts"
         lease_id = ""
         if card and target in ("codex", "claude") and window:
-            lease_id = acquire_window_lease(project, card, target)
+            try:
+                lease_id = acquire_window_lease(project, card, target)
+            except (TimeoutError, OSError) as exc:
+                attempt_path = attempts / f"{message_id}_{uuid.uuid4().hex}.json"
+                _write_receipt(
+                    attempt_path,
+                    {
+                        "message_id": message_id,
+                        "digest": digest,
+                        "target": target,
+                        "state": "FAILED",
+                        "reason": "WINDOW_LOCK_TIMEOUT",
+                        "error": f"{type(exc).__name__}:{exc}",
+                        "attempt": _dispatch_count(attempts, message_id) + 1,
+                        "timestamp_ns": time.time_ns(),
+                        "output": "",
+                    },
+                )
+                return DeliverResult(False, str(target), "WINDOW_LOCK_TIMEOUT", (), "", message_id, digest, str(attempt_path))
+        codex_failover_thread = ""
+        codex_failover_from = ""
         try:
             if target == "codex":
                 if window:  # U115: the card's own Codex thread replaces the default thread
@@ -1322,16 +1439,8 @@ def _deliver_unlocked(
                             result = _deliver_to_codex(envelope, alt_thread, runner=runner)
                             sent_thread = alt_thread
                             if result.delivered and card:
-                                resolved_card, existing_entry = window_entry_for_topic(desk, card, "codex")
-                                for rec_card in {c for c in (resolved_card, card) if c}:
-                                    extra_fields = {
-                                        k: v
-                                        for k, v in existing_entry.items()
-                                        if k not in ("id", "window_id", "state", "opened_at", "last_active_at", "updated_at")
-                                    }
-                                    extra_fields["failover_from"] = chosen_thread
-                                    extra_fields["failover_id"] = alt_thread
-                                    record_window(desk, rec_card, "codex", alt_thread, **extra_fields)
+                                codex_failover_from = chosen_thread
+                                codex_failover_thread = alt_thread
             elif target == "claude":
                 prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
                     "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
@@ -1339,27 +1448,74 @@ def _deliver_unlocked(
                                             card=card)
             else:
                 result = DeliverResult(False, str(target), f"UNKNOWN_TARGET:{target}", (), "")
+
+            # U279 (P2-1): Write the accepted receipt and attempt receipt FIRST as soon as the remote turn succeeds,
+            # BEFORE any post-turn window bookkeeping (`record_window`, `release_window_lease`) so a lock timeout
+            # during bookkeeping never loses the delivery or causes a duplicate paid turn.
+            receipt = {"message_id": message_id, "digest": digest, "target": target,
+                       "state": "DISPATCHED" if result.delivered else "FAILED", "reason": result.reason,
+                       "attempt": _dispatch_count(attempts, message_id) + 1, "timestamp_ns": time.time_ns(),
+                       "output": result.output, **({"thread_fallback": fallback} if fallback else {}),
+                       **({"thread": sent_thread} if sent_thread else {})}
+            attempt_path = attempts / f"{message_id}_{uuid.uuid4().hex}.json"
+            _write_receipt(attempt_path, receipt)
+            if result.delivered:
+                try:
+                    _write_receipt(accepted, receipt)
+                except FileExistsError:
+                    pass
+                if codex_failover_thread and card:
+                    try:
+                        resolved_card, existing_entry = window_entry_for_topic(desk, card, "codex")
+                        for rec_card in {c for c in (resolved_card, card) if c}:
+                            extra_fields = {
+                                k: v
+                                for k, v in existing_entry.items()
+                                if k not in ("id", "window_id", "state", "opened_at", "last_active_at", "updated_at")
+                            }
+                            extra_fields["failover_from"] = codex_failover_from
+                            extra_fields["failover_id"] = codex_failover_thread
+                            record_window(desk, rec_card, "codex", codex_failover_thread, **extra_fields)
+                    except (TimeoutError, OSError) as exc:
+                        try:
+                            _write_receipt(
+                                attempts / f"{message_id}_{uuid.uuid4().hex}.json",
+                                {
+                                    "message_id": message_id,
+                                    "digest": digest,
+                                    "target": target,
+                                    "state": "WINDOW_BOOKKEEPING_FAILED",
+                                    "stage": "codex_failover_record_window",
+                                    "error": f"{type(exc).__name__}:{exc}",
+                                    "timestamp_ns": time.time_ns(),
+                                },
+                            )
+                        except OSError:
+                            pass
+                return DeliverResult(False, target, "DISPATCHED", result.command, result.output,
+                                     message_id, digest, str(accepted))
+            return DeliverResult(False, str(target), result.reason, result.command, result.output,
+                                 message_id, digest, str(attempt_path))
         finally:
             if card and target in ("codex", "claude") and lease_id:
-                release_window_lease(project, card, target, lease_id)
-
-        attempts = box.root / "delivery" / "attempts"
-        receipt = {"message_id": message_id, "digest": digest, "target": target,
-                   "state": "DISPATCHED" if result.delivered else "FAILED", "reason": result.reason,
-                   "attempt": _dispatch_count(attempts, message_id) + 1, "timestamp_ns": time.time_ns(),
-                   "output": result.output, **({"thread_fallback": fallback} if fallback else {}),
-                   **({"thread": sent_thread} if sent_thread else {})}
-        attempt_path = attempts / f"{message_id}_{uuid.uuid4().hex}.json"
-        _write_receipt(attempt_path, receipt)
-        if result.delivered:
-            try:
-                _write_receipt(accepted, receipt)
-            except FileExistsError:
-                pass
-            return DeliverResult(False, target, "DISPATCHED", result.command, result.output,
-                                 message_id, digest, str(accepted))
-        return DeliverResult(False, str(target), result.reason, result.command, result.output,
-                             message_id, digest, str(attempt_path))
+                try:
+                    release_window_lease(project, card, target, lease_id)
+                except (TimeoutError, OSError) as exc:
+                    try:
+                        _write_receipt(
+                            attempts / f"{message_id}_{uuid.uuid4().hex}.json",
+                            {
+                                "message_id": message_id,
+                                "digest": digest,
+                                "target": target,
+                                "state": "WINDOW_BOOKKEEPING_FAILED",
+                                "stage": "release_window_lease",
+                                "error": f"{type(exc).__name__}:{exc}",
+                                "timestamp_ns": time.time_ns(),
+                            },
+                        )
+                    except OSError:
+                        pass
     finally:
         _clear_owned_pending(pending, pending_owner)
         try:
