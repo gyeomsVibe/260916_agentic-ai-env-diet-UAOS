@@ -273,23 +273,36 @@ class TestU300Rsi5DilemmasResolution(unittest.TestCase):
         self.assertTrue(ssot["ssot_aligned"])
         self.assertTrue(ssot["code_gate"]["rules_synced"])
 
-        # R2: Before 50 post-fix runs exist, reconcile_rsi_worker_defects reports UNMEASURED / DEGRADED
+        # R2 + R4 + R5: Before 50 post-fix runs exist, reconcile_rsi_worker_defects reports UNMEASURED / DEGRADED
+        cutoff_epoch = time.mktime(time.strptime("2026-11-03T02:00:00", "%Y-%m-%dT%H:%M:%S"))
         runs_path = self.desk / ".coord" / "usage" / "runs.jsonl"
         runs_path.write_text(
-            json.dumps({"work_id": "U300-1", "worker": "ollama", "outcome": "BLOCKED", "reason": "EXTERNAL_WRITE", "ts": "2026-11-02T10:00:00"}) + "\n",
+            "\n".join(
+                [
+                    json.dumps({"work_id": "U300-1", "worker": "ollama", "outcome": "BLOCKED", "reason": "EXTERNAL_WRITE", "ts": cutoff_epoch - 3600.0}),
+                    json.dumps({"work_id": "U300-2", "worker": "ollama", "outcome": "REWORK", "reason": "CODE", "ts": cutoff_epoch - 1800.0}),
+                    json.dumps({"work_id": "U300-3", "worker": "ollama", "outcome": "UNUSABLE", "reason": "EMPTY_OUTPUT", "ts": "not-a-float"}),
+                    json.dumps({"work_id": "U300-4", "worker": "ollama", "outcome": "PASS", "ts": cutoff_epoch + 60.0}),
+                ]
+            )
+            + "\n",
             encoding="utf-8",
         )
         d1_pre = reconcile_rsi_worker_defects(self.desk)
         self.assertEqual(d1_pre["dilemma_1_status"], "DEGRADED")
         self.assertFalse(d1_pre["has_post_fix_50_window"])
+        self.assertEqual(d1_pre["last_50_by_worker"]["ollama"]["post_fix_runs"], 1)
+        self.assertEqual(d1_pre["observed_worker_totals"]["ollama"]["blocked"], 3)
+        self.assertEqual(d1_pre["observed_cause_counts"].get("CODE"), 1)
+        self.assertEqual(d1_pre["observed_cause_counts"].get("EMPTY_OUTPUT"), 1)
 
         res_pre = heal_all_rsi_dilemmas_and_record_session(self.desk, publish_mailbox_notices=False)
         self.assertEqual(res_pre["operational_status"], "DEGRADED")
         self.assertFalse(res_pre["all_5_dilemmas_resolved"])
 
-        # R2 + R3: Write 50 post-fix PASS runs and a user-approved deletion_receipt_20261103.json
+        # R2 + R3 + R4: Write 50 post-fix PASS runs with epoch float ts >= cutoff_epoch and a user-approved deletion_receipt_20261103.json
         post_fix_lines = [
-            json.dumps({"work_id": f"U300-PF-{i}", "worker": "ollama", "outcome": "PASS", "ts": "2026-11-03T03:00:00"})
+            json.dumps({"work_id": f"U300-PF-{i}", "worker": "ollama", "outcome": "PASS", "ts": cutoff_epoch + 120.0 + float(i)})
             for i in range(50)
         ]
         runs_path.write_text("\n".join(post_fix_lines) + "\n", encoding="utf-8")

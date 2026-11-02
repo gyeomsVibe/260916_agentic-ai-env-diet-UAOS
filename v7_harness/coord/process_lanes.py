@@ -1944,11 +1944,24 @@ def reconcile_rsi_worker_defects(project: Path, *, post_fix_since: str = "2026-1
             bucket["total"] += 1
             if outcome in ("PASS", "APPLIED", "APPROVE", "GENERATED"):
                 bucket["pass"] += 1
-            elif outcome in ("BLOCKED", "FAILED", "REJECTED", "ERROR"):
+            elif outcome in ("BLOCKED", "FAILED", "REJECTED", "ERROR", "REWORK", "UNUSABLE"):
                 bucket["blocked"] += 1
                 cause = str(row.get("failure_cause") or row.get("reason") or row.get("exclusion_reason") or "UNKNOWN")
                 cause_counts[cause] = cause_counts.get(cause, 0) + 1
             worker_rows.setdefault(w, []).append(row)
+
+    cutoff_epoch = time.mktime(time.strptime(post_fix_since[:19], "%Y-%m-%dT%H:%M:%S"))
+
+    def _row_ts_epoch(r: dict[str, Any]) -> float | None:
+        raw = r.get("ts")
+        if raw is None:
+            raw = r.get("timestamp") or r.get("at") or r.get("started_at")
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
 
     last_50_by_worker: dict[str, dict[str, Any]] = {}
     for w, rows in worker_rows.items():
@@ -1963,7 +1976,7 @@ def reconcile_rsi_worker_defects(project: Path, *, post_fix_since: str = "2026-1
         post_fix_n = sum(
             1
             for r in win
-            if str(r.get("ts") or r.get("timestamp") or r.get("at") or r.get("started_at") or "") >= post_fix_since
+            if (ep := _row_ts_epoch(r)) is not None and ep >= cutoff_epoch
         )
         last_50_by_worker[w] = {
             "window_n": n,
