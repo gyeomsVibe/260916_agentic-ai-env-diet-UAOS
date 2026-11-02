@@ -60,7 +60,17 @@ def wake_owners(project: Path, box: Any, *, now: float) -> list[str]:
     sent = []
     steps = ready_steps(schedule, now=now, seen=seen)
     _write_json(seen_path, seen)
+    from .branch_guard import wake_recipient
+    from .presence import read_all
+
+    desk = read_all(Path(project), now=now)
     for step in steps:
+        # U295 B8: a LIMITED/ABSENT owner never gets the wake; the acting conductor does, or nobody when none acts.
+        recipient = wake_recipient(step["owner"], desk)
+        if recipient is None:
+            continue
+        if recipient != step["owner"]:
+            step = {**step, "owner": recipient, "away_owner": step["owner"]}
         # One id per step instance (state and start) and per 6 h window, so an ignored wake repeats but never floods.
         key = f"{step['phase_id']}|{step['state']}|{step['owner']}|{step['since']}|{int(now // NOTICE_KEEP_S)}"
         message_id = "owner_wake_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
@@ -68,6 +78,8 @@ def wake_owners(project: Path, box: Any, *, now: float) -> list[str]:
             continue
         delta = (f"OWNER WAKE (U205): {step['phase_id']} is {step['state']} with its dependencies DONE and untouched "
                  f"{int((now - step['since']) // 60)} min; you own it: take it now or hand it off by coord deliver")
+        if step.get("away_owner"):
+            delta = f"[owner {step['away_owner']} away; you conduct] " + delta
         box.publish(message_id=message_id, payload={
             "recipient": step["owner"], "requested_target": step["owner"], "wake_class": "ACTIONABLE",
             "delta": delta[:200], "wake_reason": delta, "actor": "sentinel", "card": step["phase_id"]})

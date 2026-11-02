@@ -14,6 +14,7 @@ import datetime as _dt
 import fnmatch
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -145,6 +146,96 @@ def letter_hold(project: Path, tool: str, now: float | None = None, session: str
     return {"decision": HOLD_DECISION.get(tool, "block"),
             "reason": f"Unread letter(s) for {tool}: {', '.join(new[:LETTER_NAMES])}{more}. Open each, act on it, "
                       "deliver the result, then `coord ack --id <full id>`"}
+
+
+# U294: an approval or choice question to the user is an OS fault (U265 forbade it, nothing enforced it). Only the tail of
+# the final message is read: a question mid-report is context, one at the end is the turn's last word.
+ASK_TAIL_CHARS = 400
+# Transcript bytes read from the end when the payload carries no `last_assistant_message`; one assistant turn fits.
+TRANSCRIPT_TAIL_BYTES = 262144
+ASK_PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in (
+    r"할까요", r"하시겠습니까", r"승인해\s*주세요", r"승인하시겠", r"허용하시겠", r"원하시면",
+    r"\bshall\s+i\b", r"\bshould\s+i\b", r"\bdo\s+you\s+want\s+me\s+to\b", r"\bwould\s+you\s+like\s+me\s+to\b",
+    r"\bwant\s+me\s+to\b", r"\bplease\s+approve\b", r"\bapprove\s*[?？]"))
+# Human-only safety items are stated, not asked: a `남은 일` line without a question mark is a statement.
+REMAINING_LINE = re.compile(r"^\s*(?:[-*]\s*)?\**\s*남은\s*일")
+ASK_HOLD_REASON = ("U294: never end a turn with an approval or choice question to the user. Pick the best-evidenced "
+                   "option, log why, and continue; a human-only item is stated as `- **남은 일**: ...` and the action "
+                   "waits, it is not asked.")
+
+
+def _text_of(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(b.get("text")) for b in content
+                         if isinstance(b, dict) and b.get("type") in (None, "text", "output_text")
+                         and isinstance(b.get("text"), str))
+    return ""
+
+
+def _last_assistant_text(transcript: Path) -> str:
+    """Last assistant text entry of a Claude or Codex style JSONL transcript; "" when unreadable."""
+    try:
+        size = transcript.stat().st_size
+        with open(transcript, "rb") as f:
+            f.seek(max(0, size - TRANSCRIPT_TAIL_BYTES))
+            raw = f.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+    for line in reversed(raw.splitlines()):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        message = row.get("message") if isinstance(row.get("message"), dict) else row
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        role = message.get("role") or payload.get("role") or row.get("type")
+        if role != "assistant":
+            continue
+        text = _text_of(message.get("content")) or _text_of(payload.get("content"))
+        if text.strip():
+            return text
+    return ""
+
+
+def final_message(payload: Any) -> str:
+    """The turn's last assistant message: `last_assistant_message`, else the transcript's last assistant text."""
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("last_assistant_message", "lastAssistantMessage"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    path = payload.get("transcript_path")
+    if isinstance(path, str) and path.strip():
+        return _last_assistant_text(Path(path))
+    return ""
+
+
+def asks_for_approval(message: str) -> bool:
+    tail = message.strip()[-ASK_TAIL_CHARS:]
+    for line in tail.splitlines():
+        if REMAINING_LINE.match(line) and "?" not in line and "？" not in line:
+            continue
+        if any(p.search(line) for p in ASK_PATTERNS):
+            return True
+    return False
+
+
+def approval_ask_hold(payload: Any, tool: str) -> dict[str, Any] | None:
+    """U294: hold once when the final message asks the user to approve or choose; `stop_hook_active` means this stop
+    is already a re-entry, so no second hold (no infinite block). Any failure returns None."""
+    try:
+        if not isinstance(payload, dict) or payload.get("stop_hook_active") or payload.get("stopHookActive"):
+            return None
+        if asks_for_approval(final_message(payload)):
+            return {"decision": HOLD_DECISION.get(tool, "block"), "reason": ASK_HOLD_REASON}
+    except Exception:  # noqa: BLE001 - a broken check must not trap the turn
+        pass
+    return None
 
 
 def _write_atomic(path: Path, data: dict) -> None:

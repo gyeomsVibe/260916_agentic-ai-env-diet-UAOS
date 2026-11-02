@@ -173,8 +173,11 @@ def brief_line(project: Path, presence: dict[str, Any]) -> str:
     reviews = sum(1 for item in inbox if item.startswith("rsi_review_"))
     desk = ", ".join(f"{tool}={desk_label(info)}" for tool, info in presence.items())
     from .mode import mode_phrase  # U95-T: every session learns the operating mode from code, not only the rules
+    from .process_lanes import latest_rsi_upgrade_session
 
-    return (f"UAOS project {Path(project).name}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
+    rsi_latest = latest_rsi_upgrade_session(project)
+    rsi_tag = f" [RSI:{rsi_latest['session_id']}]" if rsi_latest else ""
+    return (f"UAOS project {Path(project).name}{rsi_tag}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
             f"{mode_phrase(project)} "
             "Read .coord/PLAN.md; `coord inbox` lists what waits. "
             # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
