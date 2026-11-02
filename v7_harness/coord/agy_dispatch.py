@@ -424,3 +424,40 @@ def answered_today(project: Path, now: float) -> list[str]:
         if seoul_day(ts) == day and message_id not in kept:
             kept.append(message_id)
     return kept
+
+
+SPOOL_CODE = ("import sys; from pathlib import Path; from v7_harness.coord.agy_dispatch import _run_spool; "
+              "raise SystemExit(_run_spool(Path(sys.argv[1])))")
+
+
+def dispatch_detached(project: Path, *, message_id: str, actor: str, message: str, card: str = "",
+                      audit: bool = False) -> bool:
+    """U296 (B11): run `dispatch` in a detached child so `coord deliver` returns right after PUBLISHED.
+
+    The child owns the request through dispatch()'s own lock and replay record, so a second start is REQUEST_BUSY or
+    ALREADY_ANSWERED, never a second paid call. The answer is mailed as a normal letter. False means the child could
+    not start; the caller then falls back to the synchronous call."""
+    from v7_harness.coord.presence import _spawn_detached
+
+    spool = Path(project) / ".coord" / "mailbox" / "delivery" / "agy_spool" / f"{message_id}.json"
+    try:
+        spool.parent.mkdir(parents=True, exist_ok=True)
+        spool.write_text(json.dumps({"project": str(project), "message_id": message_id, "actor": actor,
+                                     "message": message, "card": card, "audit": audit}, ensure_ascii=False),
+                         encoding="utf-8")
+        # The one reviewed detached-spawn helper (U54 audit): a fixed code constant plus the spool path as argv.
+        _spawn_detached(SPOOL_CODE, str(spool))
+    except OSError:
+        return False
+    return True
+
+
+def _run_spool(spool: Path) -> int:
+    try:
+        job = json.loads(spool.read_text(encoding="utf-8"))
+        spool.unlink(missing_ok=True)
+        dispatch(Path(job["project"]), message_id=job["message_id"], actor=job["actor"], message=job["message"],
+                 card=job.get("card", ""), audit=bool(job.get("audit")))
+    except (OSError, ValueError, KeyError):
+        return 1
+    return 0
