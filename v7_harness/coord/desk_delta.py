@@ -148,6 +148,17 @@ def absence_items(
             for path in sorted(base.glob("*")):
                 if path.is_file() and path.stat().st_mtime > since and f"{folder}/{path.name}" not in tracked:
                     items.append(f"file {folder}/{path.name}")
+    # U292: Standalone RSI upgrade sessions (.coord/rsi/sessions/*/SESSION.json) visible to all 3 tools
+    rsi_sessions = root / ".coord" / "rsi" / "sessions"
+    if rsi_sessions.is_dir():
+        for sjson in sorted(rsi_sessions.glob("*/SESSION.json")):
+            if sjson.is_file() and sjson.stat().st_mtime > since:
+                body = _payload(sjson)
+                sid = body.get("session_id") or sjson.parent.name
+                stitle = body.get("title") or body.get("work_id") or sid
+                rver = body.get("global_rules_version") or ""
+                ver_tag = f" (rules v{rver})" if rver else ""
+                items.append(f"rsi_session {sid}: {stitle}{ver_tag} -> .coord/rsi/sessions/{sjson.parent.name}/REPORT.md")
     return items
 
 def cursor_path(project: Path, tool: str, session: str | None) -> Path:
