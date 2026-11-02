@@ -371,3 +371,83 @@ def compute_always_on_quality_parallel_plan(
         ),
         "target_golden_ratio": dict(CLAUDE_GOLDEN_RATIO if caller == "claude" else NON_CLAUDE_GOLDEN_RATIO),
     }
+
+
+
+def compute_3tool_helper_parallel_plan(
+    paths: list[str],
+    *,
+    caller_tool: str = "antigravity",
+    card: str = "",
+    role: str = "implementer",
+    lane_id: str | None = None,
+    purpose: str = "",
+    sub_stage: str = "SP3_CODE_EXECUTION",
+    is_keypoint: bool = False,
+    utilization_5h_pct: float = 0.0,
+    exhaustion_risk: str = "SAFE",
+) -> dict[str, Any]:
+    """U297/U297: Partition candidate files into 3-tool 5:3:2 Disjoint Parallel lanes
+    (50% Ollama CLI calculator || 30% Official Helper Model || 20% Core Reasoning Model)
+    with automatic Helper Model & Thinking Level (`Low`/`Medium`/`High`) selection.
+    """
+    from v7_harness.coord.helper_thinking_router import (
+        normalize_tool_name,
+        select_optimal_helper_and_thinking,
+    )
+
+    norm_tool = normalize_tool_name(caller_tool)
+    norm_paths = [_normalize(str(p)) for p in paths if str(p).strip()]
+    boost_active = float(utilization_5h_pct) >= 70.0
+    slice_limit = CRITICAL_OFFLOAD_CODE_LINE_LIMIT if boost_active else DICTATION_CODE_LINE_LIMIT
+
+    ollama_code_lane: list[str] = []
+    helper_test_doc_lane: list[str] = []
+    reasoning_core_lane: list[str] = []
+
+    for p in norm_paths:
+        if p.startswith("tests/") or p.startswith("docs/") or p.lower().endswith((".md", ".html")):
+            helper_test_doc_lane.append(p)
+        elif p.lower().endswith(CODE_SUFFIXES):
+            ollama_code_lane.append(p)
+        else:
+            reasoning_core_lane.append(p)
+
+    selection = select_optimal_helper_and_thinking(
+        norm_tool,
+        card=card,
+        role=role,
+        lane_id=lane_id,
+        purpose=purpose,
+        sub_stage=sub_stage,
+        is_keypoint=is_keypoint,
+        utilization_5h_pct=utilization_5h_pct,
+        exhaustion_risk=exhaustion_risk,
+        multi_file=len(norm_paths) > 1,
+    )
+    disjoint_ok = set(ollama_code_lane).isdisjoint(set(helper_test_doc_lane))
+
+    return {
+        "schema": "uaos-3tool-helper-parallel-plan-v1",
+        "caller_tool": norm_tool,
+        "card": str(card or ""),
+        "role": str(role or "implementer"),
+        "lane_id": selection["lane_id"],
+        "sub_stage": selection["sub_stage"],
+        "ollama_boost_active": boost_active,
+        "ollama_slice_line_limit": slice_limit,
+        "calculator_model": selection["calculator_model"],
+        "designated_helper_model": selection["designated_helper_model"],
+        "designated_helper_display": selection["designated_helper_display"],
+        "helper_thinking_level": selection["helper_thinking_level"],
+        "helper_preflight_cap_tokens": selection["helper_preflight_cap_tokens"],
+        "designated_reasoning_model": selection["designated_reasoning_model"],
+        "designated_reasoning_display": selection["designated_reasoning_display"],
+        "reasoning_thinking_level": selection["reasoning_thinking_level"],
+        "ollama_code_lane": ollama_code_lane,
+        "helper_test_doc_lane": helper_test_doc_lane,
+        "reasoning_core_lane": reasoning_core_lane,
+        "disjoint_verified": disjoint_ok,
+        "target_532_ratio": selection["target_532_ratio"],
+        "native_config": selection["native_config"],
+    }
