@@ -1169,7 +1169,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="U287/U292/U293: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
     )
     p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards", "claim-topmost-window"], default="status")
+    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards", "claim-topmost-window", "heal-dilemmas"], default="status")
     p_coord_lanes.add_argument("--session-id", default="", help="U292: RSI upgrade session ID for record-rsi-session")
     p_coord_lanes.add_argument("--title", default="", help="U292: RSI upgrade session title")
     p_coord_lanes.add_argument("--rules-version", default="7.6.2", help="U292: Global rules version pinned in RSI session")
@@ -2717,13 +2717,23 @@ def cmd_rsi_watch(args: argparse.Namespace) -> int:
         or (project / ".coord" / "sub_process_schedule.json").is_file()
     ):
         try:
-            from .coord.process_lanes import sync_and_record_helper_parallel_rsi_session
+            from .coord.process_lanes import (
+                heal_all_rsi_dilemmas_and_record_session,
+                sync_and_record_helper_parallel_rsi_session,
+            )
 
             u299_res = sync_and_record_helper_parallel_rsi_session(project, publish_mailbox_notices=False)
             res["u299_rsi_session"] = {
                 "ok": bool(u299_res.get("ok", True)),
                 "session_id": u299_res.get("session_id"),
                 "operational_status": u299_res.get("operational_status"),
+            }
+            u300_res = heal_all_rsi_dilemmas_and_record_session(project, publish_mailbox_notices=False)
+            res["u300_rsi_session"] = {
+                "ok": bool(u300_res.get("ok", True)),
+                "session_id": u300_res.get("session_id"),
+                "operational_status": u300_res.get("operational_status"),
+                "all_5_dilemmas_resolved": bool(u300_res.get("all_5_dilemmas_resolved")),
             }
         except Exception as exc:  # noqa: BLE001
             from .coord.stream import StreamRejected, append_event
@@ -2884,11 +2894,20 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
         audit_and_clear_nonstop_obstacles,
         classify_process_lane,
         handoff_lane_result,
+        heal_all_rsi_dilemmas_and_record_session,
         list_lane_windows,
         multiplex_and_dispatch_parallel,
         open_or_reuse_card_parallel_windows,
         record_rsi_upgrade_session,
     )
+    if getattr(args, "action", "status") == "heal-dilemmas":
+        res = heal_all_rsi_dilemmas_and_record_session(
+            Path(args.project),
+            actor=args.actor,
+            rules_version=getattr(args, "rules_version", "7.6.3") or "7.6.3",
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
     if getattr(args, "action", "status") == "clear-obstacles":
         res = audit_and_clear_nonstop_obstacles(Path(args.project))
         print(json.dumps(res, ensure_ascii=False, indent=2))

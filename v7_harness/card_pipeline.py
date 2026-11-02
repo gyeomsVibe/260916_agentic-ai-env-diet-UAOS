@@ -477,7 +477,7 @@ def claim(desk, card, session: str, olla_log, now: float | None = None) -> dict[
     n = sum(1 for r in rows if str(r.get("work_id", "")).startswith(f"{card}-olla-"))
     claimed = 0
     for src in _jsonl(olla_log):
-        if src.get("session") != session:
+        if src.get("session") != session and not (src.get("via") == "mcp" and not src.get("session")):
             continue
         try:
             ts = datetime.datetime.fromisoformat(str(src.get("ts"))).timestamp()
