@@ -325,27 +325,39 @@ def gate(project: Path, tool: str, session: str | None = None, now: float | None
             pass
     if step.get("state") != "NEXT":
         return None
+    import hashlib
+    from v7_harness.coord import stream
+
     card = step["card"]
     guard_path = project / ".coord" / "presence" / f"stop_gate_{tool}.json"
-    try:
-        guard = json.loads(guard_path.read_text(encoding="utf-8"))
-        if not isinstance(guard, dict):
+    lock_path = project / ".coord" / "log" / "stop_gate.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with stream._exclusive(lock_path):
+        try:
+            guard = json.loads(guard_path.read_text(encoding="utf-8"))
+            if not isinstance(guard, dict):
+                guard = {}
+        except (OSError, ValueError):
             guard = {}
-    except (OSError, ValueError):
-        guard = {}
-    progress = progress_signature(project)
-    blocks = guard.get("blocks") if isinstance(guard.get("blocks"), int) else 0
-    if guard.get("card") != card or guard.get("progress") != progress:
-        blocks = 0
-    if blocks >= MAX_BLOCKS:
-        log = project / ".coord" / "log" / "stop_gate.jsonl"
-        log.parent.mkdir(parents=True, exist_ok=True)
-        row = {"kind": "BLOCKED", "tool": tool, "card": card, "blocks": blocks,
-               "at": time.time() if now is None else now}
-        with open(log, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        return None
-    _write_atomic(guard_path, {"card": card, "blocks": blocks + 1, "progress": progress})
+        progress = progress_signature(project)
+        blocks = guard.get("blocks") if isinstance(guard.get("blocks"), int) else 0
+        if guard.get("card") != card or guard.get("progress") != progress:
+            blocks = 0
+        if blocks >= MAX_BLOCKS:
+            state_hash = hashlib.sha256(
+                json.dumps({"tool": tool, "card": card, "blocks": blocks, "progress": progress}, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:16]
+            if guard.get("logged_state_hash") != state_hash:
+                log = project / ".coord" / "log" / "stop_gate.jsonl"
+                log.parent.mkdir(parents=True, exist_ok=True)
+                row = {"kind": "BLOCKED", "tool": tool, "card": card, "blocks": blocks,
+                       "state_hash": state_hash, "at": time.time() if now is None else now}
+                with open(log, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                _write_atomic(guard_path, {"card": card, "blocks": blocks, "progress": progress,
+                                           "logged_state_hash": state_hash})
+            return None
+        _write_atomic(guard_path, {"card": card, "blocks": blocks + 1, "progress": progress})
     return {"decision": HOLD_DECISION.get(tool, "block"),
             "reason": f"NEXT {card} (owner {step.get('owner')}) is ready: start it now; human-list items go in the "
                       "final batched report"}

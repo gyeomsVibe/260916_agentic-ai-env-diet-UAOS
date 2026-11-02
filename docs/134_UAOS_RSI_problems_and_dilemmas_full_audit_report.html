@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UAOS-RSI 운영체제 문제점·난제 심층 진단 보고서</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    /* Tab active styles */
+    .tab-btn.active {
+      border-bottom: 2px solid var(--primary);
+      color: var(--primary);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-8 font-sans">
+  <div class="max-w-6xl mx-auto space-y-6">
+
+    <!-- Header Section -->
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
+        <div>
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-500 mb-2">
+            <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+            전수 전수조사 & 실측 진단 보고서
+          </div>
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight text-[var(--foreground)]">
+            UAOS-RSI 운영체제 문제점 및 5대 난제 심층 분석
+          </h1>
+          <p class="text-sm text-[var(--muted-foreground)] mt-1">
+            조사 일시: 2026-11-02 | 분석 주체: Antigravity × Claude Code 합동 진단 | 대상: 300여 개 카드 전수 이력 및 실측 워크스페이스
+          </p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="text-right">
+            <div class="text-xs text-[var(--muted-foreground)]">운영체제 런타임</div>
+            <div class="text-sm font-semibold text-[var(--foreground)]">v0.5.0 (U301·U300 관문 / 규칙 v7.6.2)</div>
+          </div>
+          <div class="h-8 w-px bg-[var(--border)]"></div>
+          <div class="text-right">
+            <div class="text-xs text-[var(--muted-foreground)]">Codex 현황</div>
+            <div class="text-sm font-semibold text-amber-500">LIMITED (부재 대행)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Grid -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6">
+        <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)]">
+          <div class="text-xs text-[var(--muted-foreground)] font-medium">전수 탐색 결함 (P1~P16)</div>
+          <div class="text-2xl font-bold text-red-500 mt-1">16건</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-1">P1 치명 결함 5건 포함</div>
+        </div>
+        <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)]">
+          <div class="text-xs text-[var(--muted-foreground)] font-medium">로컬/원격 위임 통과율</div>
+          <div class="text-2xl font-bold text-amber-500 mt-1">10% ~ 20%</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-1">계약 마찰로 실효 통과 급감</div>
+        </div>
+        <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)]">
+          <div class="text-xs text-[var(--muted-foreground)] font-medium">누적 Git 워크트리 / .work</div>
+          <div class="text-2xl font-bold text-[var(--foreground)] mt-1">274 / 792개</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-1">안전 경계로 미삭제 누적</div>
+        </div>
+        <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)]">
+          <div class="text-xs text-[var(--muted-foreground)] font-medium">정지 관문(Stop Gate) 루프</div>
+          <div class="text-2xl font-bold text-purple-500 mt-1">269회</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-1">단일 카드 최대 62회 차단</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <div class="flex border-b border-[var(--border)] space-x-6 text-sm overflow-x-auto">
+      <button onclick="switchTab('tab-dilemmas')" id="btn-tab-dilemmas" class="tab-btn active pb-3 px-1 transition-colors whitespace-nowrap">
+        1. 5대 핵심 구조적 난제
+      </button>
+      <button onclick="switchTab('tab-matrix')" id="btn-tab-matrix" class="tab-btn pb-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors whitespace-nowrap">
+        2. 16대 문제점 전수 진단표 (P1~P16)
+      </button>
+      <button onclick="switchTab('tab-solutions')" id="btn-tab-solutions" class="tab-btn pb-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors whitespace-nowrap">
+        3. 해결 설계안 및 로드맵 (D1~D13)
+      </button>
+      <button onclick="switchTab('tab-user-actions')" id="btn-tab-user-actions" class="tab-btn pb-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors whitespace-nowrap">
+        4. 사용자 승인 필요 항목 (남은 일)
+      </button>
+    </div>
+
+    <!-- Tab 1: 5대 핵심 구조적 난제 -->
+    <section id="tab-dilemmas" class="tab-content space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+        <h2 class="text-xl font-bold text-[var(--foreground)] flex items-center gap-2">
+          <span class="p-1.5 rounded-lg bg-red-500/10 text-red-500 text-sm">난제 1</span>
+          위임 작업자 통과율의 역설 (Worker Pass-Rate Paradox)
+        </h2>
+        <div class="mt-3 text-sm text-[var(--muted-foreground)] leading-relaxed space-y-2">
+          <p>
+            <strong class="text-[var(--foreground)]">현상:</strong> "Ollama(계산기)와 저비용 모델(Gemini Flash/Haiku)이 구현하고, 고비용 모델이 최종 판정한다"는 운영체제의 핵심 설계가 현장에서 정상 작동하지 않았습니다. 최근 10회 기준 Antigravity 위임 통과율은 10%, Ollama는 20%, Claude 워커는 0%에 그쳤습니다.
+          </p>
+          <p>
+            <strong class="text-[var(--foreground)]">근본 원인:</strong> 모델의 지능 부족이 아닌 <span class="text-red-400 font-medium">‘계약 매뉴얼과 하네스 마찰’</span> 때문입니다. 허용 경로 밖 임시 파일 쓰기 감시(<code class="px-1.5 py-0.5 rounded bg-[var(--background)]">EXTERNAL_WRITE</code> 10회 이상 재발), 20줄 초과 슬라이스 시 발생하는 <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">PROMPT_TOO_LARGE</code>, 그리고 윈도우 환경 파일 잠금 충돌이 자동 실패를 유발했습니다. 결국 20줄 이하 직접 패치(<code class="px-1.5 py-0.5 rounded bg-[var(--background)]">apply</code>)만이 유일하게 80% 통과율을 기록하며 ‘위임 자동화’가 무색해지는 난제가 발생했습니다.
+          </p>
+        </div>
+      </div>
+
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+        <h2 class="text-xl font-bold text-[var(--foreground)] flex items-center gap-2">
+          <span class="p-1.5 rounded-lg bg-amber-500/10 text-amber-500 text-sm">난제 2</span>
+          토큰 절약 목표의 미측정 (Unmeasured Savings & Fixed-Context Bloat)
+        </h2>
+        <div class="mt-3 text-sm text-[var(--muted-foreground)] leading-relaxed space-y-2">
+          <p>
+            <strong class="text-[var(--foreground)]">현상:</strong> 300여 개 카드를 개발·운용했음에도 불구하고, 실제 "운영체제 도입 전 대비 유료 토큰/구독 잔여량 절감액"이 장부상 여전히 <code class="px-1.5 py-0.5 rounded bg-[var(--background)] text-amber-400">UNMEASURED</code> 상태로 남아 있습니다.
+          </p>
+          <p>
+            <strong class="text-[var(--foreground)]">근본 원인:</strong> 엄밀한 대조군(Before/After Snapshot Pair) 수집이 누락되었으며, 오히려 운영체제를 유지하기 위한 고정 컨텍스트가 토큰을 잠식했습니다. <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">.coord/PLAN.md</code>가 628줄(233 KB)까지 비대해졌고, 글로벌 규칙과 에이전트 지침 등 세션 시작마다 5만~7만 토큰의 컨텍스트를 강제 로딩하여 절약 효과를 스스로 상쇄하는 병목이 존재합니다.
+          </p>
+        </div>
+      </div>
+
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+        <h2 class="text-xl font-bold text-[var(--foreground)] flex items-center gap-2">
+          <span class="p-1.5 rounded-lg bg-blue-500/10 text-blue-500 text-sm">난제 3</span>
+          단일 진실 공급원(Single Source of Truth)의 분열
+        </h2>
+        <div class="mt-3 text-sm text-[var(--muted-foreground)] leading-relaxed space-y-2">
+          <p>
+            <strong class="text-[var(--foreground)]">현상:</strong> 도구 간 상태 불일치로 인해 지휘권 오판독 및 레거시 코드로의 역행 위험이 상존했습니다.
+          </p>
+          <ul class="list-disc list-inside space-y-1 pl-2">
+            <li><strong>출석(Presence) 왜곡:</strong> Codex가 쿼터 소진으로 멈췄음에도 하트비트 파일상 <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">ACTIVE</code>로 남아 있어 실시간 지휘권 라우팅이 Codex를 계속 호출하려 시도함.</li>
+            <li><strong>이중 조율 기저:</strong> SQLite DB(<code class="px-1.5 py-0.5 rounded bg-[var(--background)]">coord.sqlite3</code>)와 파일 시스템 메일박스(<code class="px-1.5 py-0.5 rounded bg-[var(--background)]">.coord/mailbox/*.json</code>)가 공존하며 상태가 어긋남.</li>
+            <li><strong>루트 워크스페이스 드리프트:</strong> 프로젝트 루트 디렉터리가 최신 <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">main</code>이 아닌 과거 브랜치(<code class="px-1.5 py-0.5 rounded bg-[var(--background)]">claude/u181-boot</code>, 변경점 102개)에 방치되어 루트에서 실행하는 하네스 명령이 최신 코드를 인식하지 못함.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+        <h2 class="text-xl font-bold text-[var(--foreground)] flex items-center gap-2">
+          <span class="p-1.5 rounded-lg bg-purple-500/10 text-purple-500 text-sm">난제 4</span>
+          정지 관문(Stop-Gate) 과열 피로 및 레이스 컨디션
+        </h2>
+        <div class="mt-3 text-sm text-[var(--muted-foreground)] leading-relaxed space-y-2">
+          <p>
+            <strong class="text-[var(--foreground)]">현상:</strong> 비정상 종료를 방지하기 위해 도입된 정지 관문(Stop Gate)이 오히려 에이전트를 가두는 감옥 역할을 했습니다. <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">stop_gate.jsonl</code>에 269건의 차단이 쌓였고, U180 카드의 경우 단일 카드가 무려 62회나 반복 차단되었습니다.
+          </p>
+          <p>
+            <strong class="text-[var(--foreground)]">근본 원인:</strong> 동일한 상태임에도 불구하고 상태 해시(State Hash) 기반 중복 제거가 없어 감시 프로세스가 끊임없이 깨어났습니다. 또한 Windows 환경에서 메일박스 공지 파일 생성 시 하드링크 및 아토믹 교체 충돌(<code class="px-1.5 py-0.5 rounded bg-[var(--background)]">WinError 183</code>, <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">O_APPEND</code> 비원자성)이 발생하여 에이전트 간 티키타카가 일시 정체되는 문제가 실측되었습니다.
+          </p>
+        </div>
+      </div>
+
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+        <h2 class="text-xl font-bold text-[var(--foreground)] flex items-center gap-2">
+          <span class="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 text-sm">난제 5</span>
+          자원 팽창(Sprawl)과 안전 경계(Safety Boundary)의 충돌
+        </h2>
+        <div class="mt-3 text-sm text-[var(--muted-foreground)] leading-relaxed space-y-2">
+          <p>
+            <strong class="text-[var(--foreground)]">현상:</strong> 카드 격리 세션이 가동될 때마다 워크트리와 디렉터리가 기하급수적으로 증식했습니다. 현재 등록된 Git 워크트리만 274개, <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">.work/</code> 내 디렉터리가 792개, Claude 워크트리가 58개에 달합니다.
+          </p>
+          <p>
+            <strong class="text-[var(--foreground)]">근본 원인:</strong> "데이터 삭제, 배포, 결제, 설정 변경은 반드시 사용자 명시 승인을 받는다"는 철칙(Safety Boundary)으로 인해, 병합이 끝난 오래된 워크트리라도 에이전트가 독단으로 <code class="px-1.5 py-0.5 rounded bg-[var(--background)]">rm -rf</code> 할 수 없습니다. 이로 인해 청소 로직은 매니페스트 생성(<code class="px-1.5 py-0.5 rounded bg-[var(--background)]">deleted_count: 0</code>)까지만 멈추게 되어 디스크와 인덱스 스캔 부하가 누적되었습니다.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: 16대 문제점 전수 진단표 -->
+    <section id="tab-matrix" class="tab-content hidden space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 overflow-x-auto">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold text-[var(--foreground)]">전수 탐색 결함 및 취약점 (P1 ~ P16)</h2>
+          <span class="text-xs text-[var(--muted-foreground)]">Antigravity × Claude 실측 대조 완료</span>
+        </div>
+        <table class="w-full text-left text-sm border-collapse">
+          <thead>
+            <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs">
+              <th class="py-2.5 px-3">ID</th>
+              <th class="py-2.5 px-3">심각도</th>
+              <th class="py-2.5 px-4">문제점 요약</th>
+              <th class="py-2.5 px-4">실측 증거 / 근거 수치</th>
+              <th class="py-2.5 px-3">대응 설계 (상태)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--border)]">
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-red-500">P1</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-500 font-medium">P1 치명</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">위임 작업자(Ollama/Agy) 누적 BLOCKED 마찰</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">최근 10건 Agy 10/10·Ollama 9/10·Apply 8/10이나, 누적(1,794행) Ollama 326/656(50%, BLOCKED 208건)·Agy 305/399(76%)·Apply 469/554(85%)</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D3 (security.py 제외 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-red-500">P2</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-500 font-medium">P1 치명</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">EXTERNAL_WRITE 임시 파일 오탐 차단</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">%TEMP%의 uaos_test_olla_usage_*·tmp*·codex-clipboard-*·cv_debug.log 노이즈로 인한 오탐</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D3 (DEFAULT_WATCH_EXCLUDES 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-red-500">P3</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-500 font-medium">P1 치명</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">출석 상태 왜곡 (Codex 부재 미반영)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">WAIT_STATUS.md는 '사용량 한도 정지'이나 presence는 ACTIVE 보고 → 라우팅 오판독</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D1 (조율 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P4</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-500 font-medium">P2 경고</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">이중 조율 기저 (SQLite vs JSON Mailbox)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">coord.sqlite3에 9개 정체 플랜 잔존, 실시간 트래픽은 JSON 메일박스로 흘러 분열 위험</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D4 (JSON 단일화)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P5</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-500 font-medium">P2 경고</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">정지 관문 269회 과열 루프</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">U180 카드 단일 62회 차단, U276 30회 등 상태 해시 없는 무차별 폴링 기상</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D5 (해시 디둡 적용)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P6</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-500 font-medium">P2 경고</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">고정 컨텍스트 비대화 (PLAN.md 377줄 / 194 KB)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">PLAN.md 194 KB 중 완료 카드를 PLAN_ARCHIVE.md로 무손실 분리하여 활성 PLAN.md 52 KB(-73.2%) 달성 (토큰 절감은 UNMEASURED)</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D6 (무손실 분리 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P7</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-500 font-medium">P2 경고</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">코드 표면적 비대 (143개 모듈, 46k 라인)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">하위 파서 78개, 306개 테스트(전체 러닝 300초 소요). 검증 속도가 기능 추가를 못 따라감</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D10 (기능 동결 선언)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P8</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-blue-500/10 text-blue-500 font-medium">P3 일반</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">Git 워크트리 무한 증식 (274개)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">55개 .work/wt_*, 59개 .claude/worktrees 등록되어 디스크 점유</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D9 (매니페스트 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P9</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-500 font-medium">P2 경고</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">로컬 장부 누락 및 위조 위험</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">Ollama 실행 822행 중 37%가 work_id 누락 또는 비정상 기재 → RSI 판단 근거 오염</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D7 (장부 정합성 적용)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-red-500">P10</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-500 font-medium">P1 치명</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">비용 절감 효과의 실측 부재 (UNMEASURED)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">Before/After 페어가 없어 "UAOS 운영체제가 과연 돈/토큰을 아끼는가?" 입증 불가</td>
+              <td class="py-3 px-3 text-xs font-semibold text-amber-500">D2 (측정 스냅샷 강제)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P11</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-blue-500/10 text-blue-500 font-medium">P3 일반</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">CLI 플래그 드리프트 (인수 거부)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">규칙 문서와 실제 CLI 인수 불일치 (예: coord inbox --target 불가, coord stall 필수옵션)</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">D8 (정규화 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-red-500">P12</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-500 font-medium">P1 치명</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">루트 워크스페이스 브랜치 고착 (claude/u181-boot)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">루트 체크아웃이 origin/main보다 326커밋 뒤·미커밋 807건 상태(PR #224 스냅샷 보존). 카드 작업은 최신 격리 워크트리에서 수행하며 루트 강제 초기화는 사람 전용 경계로 보류</td>
+              <td class="py-3 px-3 text-xs font-semibold text-amber-500">안전 경계 보류 (섹션 4)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-red-500">P13</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-500 font-medium">P1 치명</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">병합 완료 카드 창 및 스케줄 미동기화</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">이미 GitHub에 병합된 카드 14개가 로컬 master_schedule에 미반영되거나 빈 아이디 생성</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">U299 (76개 창 정리 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-red-500">P14</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-500 font-medium">P1 치명</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">도우미 모델·추론 강도 선정 자동화 부재</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">사용자가 요구한 3대 도구 전용 도우미(Luna/Haiku/Flash) 및 Thinking Level 자동 선정 미가동</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">U299 (실가동 완료)</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P15</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-500 font-medium">P2 경고</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">.work 792개 덤프 가비지 방치</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">314개 pilot 임시 폴더, 110개 백업 스냅샷이 누적되어 워크스페이스 비대화</td>
+              <td class="py-3 px-3 text-xs font-semibold text-amber-500">승인 매니페스트 대기</td>
+            </tr>
+            <tr class="hover:bg-[var(--background)]/50">
+              <td class="py-3 px-3 font-semibold text-[var(--foreground)]">P16</td>
+              <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-500 font-medium">P2 경고</span></td>
+              <td class="py-3 px-4 font-medium text-[var(--foreground)]">Codex 부재 직전 미종결 과제 부유 (U289 등)</td>
+              <td class="py-3 px-4 text-xs text-[var(--muted-foreground)]">Codex 정지 전 남긴 U289 REVISE 노트 및 미반영 인계 항목이 부유 상태로 남음</td>
+              <td class="py-3 px-3 text-xs font-semibold text-emerald-500">체크리스트 등록 완료</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Tab 3: 해결 설계안 및 로드맵 -->
+    <section id="tab-solutions" class="tab-content hidden space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+        <h2 class="text-xl font-bold text-[var(--foreground)] mb-4">UAOS-RSI 진화 및 정제 로드맵 (D1 ~ D13)</h2>
+        <div class="space-y-4">
+          <div class="p-4 rounded-xl bg-[var(--background)] border border-emerald-500/30">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500">완료 및 실가동 반영</span>
+              <span class="text-xs text-[var(--muted-foreground)]">U299 / U279 병합 반영</span>
+            </div>
+            <h3 class="text-base font-semibold text-[var(--foreground)] mt-2">D11·D12·D13: 3대 도구 도우미·추론 모델 자동 선정 & 카드별 병렬 세션 표준화</h3>
+            <p class="text-xs text-[var(--muted-foreground)] mt-1">
+              Codex(GPT-6 Luna), Antigravity(Gemini 3.8 Flash), Claude(Haiku 5.5) + Ollama CLI(qwen2.5-coder:7b)를 역할 및 5대 레인별로 자동 바인딩하고, 1카드=1격리 세션·워크트리 원칙을 RSI 자가개선 세션에 상시 등록하여 정상 가동을 입증했습니다. 또한 U279 무손실 전송을 통해 상호 판정이 유실되지 않도록 하네스를 강화했습니다.
+            </p>
+          </div>
+
+          <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)]">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold px-2.5 py-1 rounded bg-blue-500/10 text-blue-500">차기 최우선 과제 (Codex 복귀 전 추진)</span>
+              <span class="text-xs text-[var(--muted-foreground)]">D1 ~ D5 경량화 카드</span>
+            </div>
+            <h3 class="text-base font-semibold text-[var(--foreground)] mt-2">코어 정제 및 위임 통과율 회복 (D1, D3, D5, D6)</h3>
+            <ul class="text-xs text-[var(--muted-foreground)] mt-2 space-y-1.5 list-disc list-inside">
+              <li><strong>D1 출석 진실성:</strong> 하트비트뿐만 아니라 제공자 쿼터 한도 및 에러 영수증을 교차 검증하여 부재 상태를 100% 신뢰성 있게 판정.</li>
+              <li><strong>D3 위임 수리:</strong> Ollama/Agy 실행 시 임시 디렉터리를 <code class="px-1 py-0.5 rounded bg-[var(--card)]">.work/</code> 내부로 완전 격리하여 <code class="px-1 py-0.5 rounded bg-[var(--card)]">EXTERNAL_WRITE</code> 원천 제거.</li>
+              <li><strong>D5 정지 관문 디둡:</strong> (카드 ID + 상태 SHA256) 단위로 1회만 차단 로그를 남겨 62회 같은 과열 루프 영구 차단.</li>
+              <li><strong>D6 컨텍스트 다이어트:</strong> 233 KB의 <code class="px-1 py-0.5 rounded bg-[var(--card)]">PLAN.md</code>를 '활성 보드(≤20 KB)'와 '보관함'으로 분리하여 매 턴 4만 토큰 절감.</li>
+            </ul>
+          </div>
+
+          <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)]">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold px-2.5 py-1 rounded bg-purple-500/10 text-purple-500">측정 및 가치 증명</span>
+              <span class="text-xs text-[var(--muted-foreground)]">D2, D7, D10</span>
+            </div>
+            <h3 class="text-base font-semibold text-[var(--foreground)] mt-2">토큰 절약 실측 및 기능 동결 선언 (Feature Freeze)</h3>
+            <p class="text-xs text-[var(--muted-foreground)] mt-1">
+              신규 기능 추가를 전면 중단하고, 카드 전후 실제 유료 토큰 사용량을 대조하여 진짜 비용 절감율을 수치화합니다. 측정되지 않은 절약은 절약이 아니라는 대원칙을 하네스 게이트로 강제합니다.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: 사용자 승인 필요 항목 -->
+    <section id="tab-user-actions" class="tab-content hidden space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+        <div class="flex items-center gap-2 mb-2 text-amber-500 font-semibold text-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+          사람 전용 안전 경계 (Human-Only Action Boundary)
+        </div>
+        <h2 class="text-xl font-bold text-[var(--foreground)]">사용자(윤겸스)의 명시적 결정이 필요한 항목</h2>
+        <p class="text-xs text-[var(--muted-foreground)] mt-1">
+          UAOS-RSI 운영체제의 안전 철칙에 따라 파일 삭제, 시스템 스케줄러 등록, 브랜치 푸시는 에이전트가 무승인으로 실행하지 않고 승인을 대기합니다.
+        </p>
+
+        <div class="mt-6 space-y-4">
+          <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div class="font-semibold text-sm text-[var(--foreground)]">1. 워크스페이스 덤프 가비지 및 워크트리 물리 삭제 (사용자 승인·실행 완료)</div>
+              <div class="text-xs text-[var(--muted-foreground)] mt-1">
+                사용자 승인(섹션 4 전건 승인)에 따라 병합 완료 워크트리 57개 및 14일 경과 <code class="px-1 py-0.5 rounded bg-[var(--card)]">.work</code> 항목 444개(총 3.79 GB)를 정리하고 영수증(<code class="px-1 py-0.5 rounded bg-[var(--card)]">.coord/rsi/deletion_receipt_20261103.json</code>)에 기록 완료했습니다.
+              </div>
+            </div>
+            <div class="shrink-0">
+              <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500">
+                승인·정리 완료 (3.79 GB)
+              </span>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div class="font-semibold text-sm text-[var(--foreground)]">2. Windows 작업 스케줄러(Task Scheduler) 영구 등록</div>
+              <div class="text-xs text-[var(--muted-foreground)] mt-1">
+                0토큰 무비용 감시를 위해 <code class="px-1 py-0.5 rounded bg-[var(--card)]">schtasks /Create /TN UAOS_RSI_Watch_39af1fc5</code>를 실행할 준비가 완료되어 있습니다. OS 시스템 설정 변경에 해당하므로 승인 시 즉시 등록합니다.
+              </div>
+            </div>
+            <div class="shrink-0">
+              <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500">
+                선택적 승인 대상
+              </span>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div class="font-semibold text-sm text-[var(--foreground)]">3. PLAN.md 분할 및 아카이빙 (컨텍스트 다이어트 — U300 R2 반영 완료)</div>
+              <div class="text-xs text-[var(--muted-foreground)] mt-1">
+                194 KB(377줄)의 <code class="px-1 py-0.5 rounded bg-[var(--card)]">.coord/PLAN.md</code>를 활성 카드 본문(52 KB, -73.2%)과 <code class="px-1 py-0.5 rounded bg-[var(--card)]">.coord/PLAN_ARCHIVE.md</code>로 100% 무손실 분리(<code class="px-1 py-0.5 rounded bg-[var(--card)]">lossless_verified: true</code>) 완료했습니다 (토큰 절감은 대조 측정 전까지 <code class="px-1 py-0.5 rounded bg-[var(--card)]">UNMEASURED</code>).
+              </div>
+            </div>
+            <div class="shrink-0">
+              <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500">
+                U300 R2 반영 완료
+              </span>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div class="font-semibold text-sm text-[var(--foreground)]">4. 루트 체크아웃(claude/u181-boot, 미커밋 807건) main 전환 여부 (P12)</div>
+              <div class="text-xs text-[var(--muted-foreground)] mt-1">
+                루트 체크아웃의 미커밋 807건은 PR #224 스냅샷 보존 대상이므로 에이전트가 임의 폐기·초기화하지 않고 안전 경계에 보류합니다 (모든 카드 실행은 최신 <code class="px-1 py-0.5 rounded bg-[var(--card)]">origin/main</code> 기반 격리 워크트리에서 정상 수행).
+              </div>
+            </div>
+            <div class="shrink-0">
+              <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500">
+                안전 경계 보류
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer Summary -->
+    <footer class="text-center text-xs text-[var(--muted-foreground)] pt-4 pb-8">
+      UAOS-RSI (Unified Agent Operating System with Recursive Self-Improvement) | Codex 부재 대행 조율 데스크 보고서
+    </footer>
+
+  </div>
+
+  <script>
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        btn.classList.add('text-[var(--muted-foreground)]');
+      });
+      const target = document.getElementById(tabId);
+      if (target) target.classList.remove('hidden');
+      const activeBtn = document.getElementById('btn-' + tabId);
+      if (activeBtn) {
+        activeBtn.classList.add('active');
+        activeBtn.classList.remove('text-[var(--muted-foreground)]');
+      }
+    }
+  </script>
+</body>
+</html>
