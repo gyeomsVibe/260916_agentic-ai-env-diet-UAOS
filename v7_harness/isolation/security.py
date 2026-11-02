@@ -207,6 +207,14 @@ DEFAULT_WATCH_EXCLUDES = frozenset(
         # lane run hit it (2026-09-23, EXTERNAL_WRITE on ntuser.dat.LOG2 with no worker write). The hive is written
         # lazily by the OS, so this file never was a reliable signal of a worker's registry change.
         "ntuser.dat.log*",
+        # U300: transient %TEMP% test/worker files from real EXTERNAL_WRITE receipts
+        # (U134-F2 uaos_test_olla_usage_*, U301-L2 tmp????????, R0CLOSE2/3 codex-clipboard-*.png, U23_FIX_SENTINEL2 cv_debug.log)
+        "uaos_test_olla_usage_*.jsonl",
+        "uaos_test_olla_usage_*.lock",
+        "tmp????????",
+        "tmp????????/**",
+        "codex-clipboard-*.png",
+        "cv_debug.log",
         "**/node_modules",
         "**/node_modules/**",
         "**/.venv",
