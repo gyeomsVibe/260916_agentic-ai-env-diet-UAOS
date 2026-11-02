@@ -33,10 +33,17 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.project = Path(self._tmp.name)
+        self.codex_sessions_dir = self.project / ".codex_sessions"
+        self.codex_sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._codex_env_patcher = mock.patch.dict(
+            os.environ, {"UAOS_CODEX_SESSIONS": str(self.codex_sessions_dir)}
+        )
+        self._codex_env_patcher.start()
         (self.project / ".coord" / "mailbox").mkdir(parents=True, exist_ok=True)
         (self.project / ".coord" / "PLAN.md").write_text("# Test Plan\n", encoding="utf-8")
 
     def tearDown(self) -> None:
+        self._codex_env_patcher.stop()
         self._tmp.cleanup()
 
     def test_classify_process_lane_taxonomy_and_word_boundaries(self) -> None:
@@ -77,37 +84,59 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
         )
 
     def test_open_and_reuse_dedicated_lane_windows_and_codex_rollout_isolation(self) -> None:
-        """Each (lane_id, tool) pair gets its own isolated conversation window; Codex lane windows verify via rollout stub."""
-        from v7_harness.coord.deliver import _codex_sessions, _codex_thread
+        """Each (lane_id, tool) pair gets its own window; opening lane windows never writes fake rollout stubs into Codex's session store."""
+        from v7_harness.coord.deliver import _codex_thread
+        from v7_harness.coord.process_lanes import _resolve_codex_lane_thread
 
-        sessions_dir = self.project / ".codex_sessions"
-        with mock.patch.dict(os.environ, {"UAOS_CODEX_SESSIONS": str(sessions_dir)}):
-            for lane in PROCESS_LANE_SPECS:
-                seen_ids: set[str] = set()
-                for tool in ("codex", "claude", "antigravity"):
-                    first = open_or_reuse_lane_window(self.project, lane, tool, card="U287")
-                    self.assertTrue(first["ok"])
-                    self.assertFalse(first["reused"])
-                    self.assertTrue(first["id"])
-                    self.assertIn(f"[LANE:{lane}]", first["title"])
-                    seen_ids.add(first["id"])
+        for lane in PROCESS_LANE_SPECS:
+            seen_ids: set[str] = set()
+            for tool in ("codex", "claude", "antigravity"):
+                first = open_or_reuse_lane_window(self.project, lane, tool, card="U287")
+                self.assertTrue(first["ok"])
+                self.assertFalse(first["reused"])
+                self.assertTrue(first["id"])
+                self.assertIn(f"[LANE:{lane}]", first["title"])
+                seen_ids.add(first["id"])
 
-                    second = open_or_reuse_lane_window(self.project, lane, tool, card="U288")
-                    self.assertTrue(second["reused"])
-                    self.assertEqual(first["id"], second["id"])
-                    self.assertEqual(second["cards"], ["U287", "U288"])
-                    self.assertEqual(lane_window_for(self.project, lane, tool), first["id"])
+                second = open_or_reuse_lane_window(self.project, lane, tool, card="U288")
+                self.assertTrue(second["reused"])
+                self.assertEqual(first["id"], second["id"])
+                self.assertEqual(second["cards"], ["U287", "U288"])
+                self.assertEqual(lane_window_for(self.project, lane, tool), first["id"])
 
-                # Distinct tools within the same lane have distinct session/thread UUIDs
-                self.assertEqual(len(seen_ids), 3)
+            # Distinct tools within the same lane have distinct session/thread UUIDs
+            self.assertEqual(len(seen_ids), 3)
 
-                # Verify Codex lane thread resolves directly in _codex_thread without falling back to user desk
-                codex_wid = lane_window_for(self.project, lane, "codex")
-                assert codex_wid is not None
-                chosen, fallback, status = _codex_thread(self.project, codex_wid)
-                self.assertEqual(status, "DISPATCH")
-                self.assertEqual(chosen, codex_wid)
-                self.assertEqual(fallback, {})
+        # P1 guard: opening/reusing lane windows MUST NEVER create or forge rollout files in _codex_sessions()
+        self.assertEqual(list(self.codex_sessions_dir.rglob("*.jsonl")), [])
+        codex_wid = lane_window_for(self.project, "IMPL_CODE", "codex")
+        assert codex_wid is not None
+        self.assertEqual(_resolve_codex_lane_thread(self.project, codex_wid), "")
+
+        # When a real Codex-created rollout exists, _resolve_codex_lane_thread resolves a verified non-desk lane thread,
+        # never an unbound lane UUID and never the designated user desk thread ("user threads stay user-only").
+        from v7_harness.coord.deliver import register_user_desk
+        real_desk_tid = "11111111-2222-4333-8444-555555555555"
+        real_lane_tid = "22222222-3333-4444-8555-666666666666"
+        day_dir = self.codex_sessions_dir / "2026" / "11" / "02"
+        day_dir.mkdir(parents=True, exist_ok=True)
+        for tid in (real_desk_tid, real_lane_tid):
+            rollout = day_dir / f"rollout-2026-11-02T00-00-00-{tid}.jsonl"
+            rollout.write_text(
+                json.dumps({
+                    "timestamp": "2026-11-02T00:00:00Z",
+                    "type": "session_meta",
+                    "payload": {"id": tid, "session_id": tid, "cwd": str(self.project.resolve())},
+                }) + "\n",
+                encoding="utf-8",
+            )
+        register_user_desk(self.project, "codex", real_desk_tid, source="UserPromptSubmit")
+        self.assertEqual(_resolve_codex_lane_thread(self.project, real_lane_tid), real_lane_tid)
+        self.assertEqual(_resolve_codex_lane_thread(self.project, real_desk_tid), "")
+        self.assertEqual(_resolve_codex_lane_thread(self.project, codex_wid), "")
+        chosen, _fb, status = _codex_thread(self.project, "")
+        self.assertEqual(status, "DISPATCH")
+        self.assertEqual(chosen, real_desk_tid)
 
     def test_lane_lock_mutual_exclusion_and_timeout(self) -> None:
         """Direct discriminating test for _lane_lock: same lane blocks/times out, different lane acquires immediately."""
@@ -368,6 +397,32 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
         self.assertNotEqual(w1["id"], w3["id"])
         self.assertIn("MAX_TURNS_REACHED", w3["rotate_reason"])
 
+        # M5 mutation guard: dispatch_single_lane_batch and handoff_lane_result MUST wire ensure_fresh_lane_window
+        # (so when turns >= MAX_LANE_TURNS=12, dispatch and handoff rotate the window to generation+1).
+        from v7_harness.coord.process_lanes import MAX_LANE_TURNS, lane_window_path
+        mark(self.project, "claude", "ACTIVE")
+        mark(self.project, "codex", "LIMITED")
+        mark(self.project, "antigravity", "LIMITED")
+        impl_init = open_or_reuse_lane_window(self.project, "IMPL_CODE", "claude")["id"]
+        impl_rec_path = lane_window_path(self.project, "IMPL_CODE")
+        impl_rec = json.loads(impl_rec_path.read_text(encoding="utf-8"))
+        impl_rec["windows"]["claude"]["turns"] = MAX_LANE_TURNS
+        impl_rec_path.write_text(json.dumps(impl_rec), encoding="utf-8")
+
+        box = Mailbox(self.project / ".coord" / "mailbox")
+        box.publish("msg_m5_1", {"kind": "IMPLEMENT", "actor": "codex", "card": "U292", "message": "M5 rotation check"})
+        m5_items = collect_pending_processes(self.project)["IMPL_CODE"]
+        m5_res = dispatch_single_lane_batch(
+            self.project,
+            "IMPL_CODE",
+            m5_items,
+            actor="antigravity",
+            preferred_tool="claude",
+            custom_sender=lambda lid, tool, wid, env, batch: {"ok": True, "reason": "SENT", "message_id": "m5_ok", "output": "ok"},
+        )
+        self.assertTrue(m5_res["rotated_for_context_bloat"], "dispatch_single_lane_batch must rotate bloated window (M5)")
+        self.assertNotEqual(m5_res["window_id"], impl_init)
+
         stacked_relays = [
             {"message_id": "relay_1", "actor": "claude", "card": "U279", "verdict_requested": True, "message": "Audit U279 rev4"},
             {"message_id": "relay_2", "actor": "claude", "card": "U279", "verdict_requested": True, "message": "Audit U279 rev4"},
@@ -434,6 +489,32 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
         self.assertEqual(len(rsi_res["published_mailbox_ids"]), 3)
         self.assertEqual(rsi_res["code_gate"]["status"], "RECORDED_PENDING_JUDGE")
         self.assertFalse(rsi_res["code_gate"]["self_approved"])
+        self.assertFalse(rsi_res["code_gate"]["rules_synced"], "PLAN.md alone must not mark rules_synced=True")
+        rule_file = self.project / "uaos_everywhere" / "uaos_global_rule_block.md"
+        rule_file.parent.mkdir(parents=True, exist_ok=True)
+        rule_file.write_text("# arbitrary file mentioning UAOS-RSI v7.6.2\n", encoding="utf-8")
+        rsi_unsynced = record_rsi_upgrade_session(
+            self.project,
+            session_id="U292-CARD-LANE-PARALLEL-WINDOWS-20261101",
+            title="3-Tool Card & Process-Lane Parallel Window Execution OS Upgrade",
+            summary_ko="카드별·분류별 병렬 대화창 가동 로직 3대 도구 전역 규칙 고정 및 실가동 완료.",
+            rules_version="7.6.2",
+            runtime_version="7.6.2-u292",
+            actor="antigravity",
+        )
+        self.assertFalse(rsi_unsynced["code_gate"]["rules_synced"], "Substring 'UAOS-RSI' alone must not mark rules_synced=True")
+        installed_canon = Path(__file__).resolve().parents[1] / "uaos_everywhere" / "uaos_global_rule_block.md"
+        rule_file.write_bytes(installed_canon.read_bytes())
+        rsi_synced = record_rsi_upgrade_session(
+            self.project,
+            session_id="U292-CARD-LANE-PARALLEL-WINDOWS-20261101",
+            title="3-Tool Card & Process-Lane Parallel Window Execution OS Upgrade",
+            summary_ko="카드별·분류별 병렬 대화창 가동 로직 3대 도구 전역 규칙 고정 및 실가동 완료.",
+            rules_version="7.6.2",
+            runtime_version="7.6.2-u292",
+            actor="antigravity",
+        )
+        self.assertTrue(rsi_synced["code_gate"]["rules_synced"])
         self.assertTrue(Path(rsi_res["session_json"]).is_file())
         self.assertTrue(Path(rsi_res["report_md"]).is_file())
 
@@ -466,7 +547,9 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
                 counts.append(r["total_items"])
 
         self.assertEqual(counts, [1, 0, 0])
-        self.assertEqual(len(box.peek()), 1)
+        peek_ids = [mid for mid, _ in box.peek()]
+        self.assertIn("m1", peek_ids, "Source letter m1 must NOT be acked when delivery is QUEUED_UNTIL_ACTIVE")
+        self.assertEqual(len(peek_ids), 2, "Inbox must contain only m1 + 1 queued batch envelope (no compounding)")
 
 
 if __name__ == "__main__":

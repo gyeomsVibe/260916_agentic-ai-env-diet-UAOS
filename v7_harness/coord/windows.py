@@ -127,7 +127,7 @@ def window_entry(project: Path, card: str, tool: str) -> dict[str, Any]:
 
 
 def record_window(project: Path, card: str, tool: str, window_id: str, *, now: float | None = None,
-                  **extra: Any) -> dict[str, Any]:
+                  title: str | None = None, **extra: Any) -> dict[str, Any]:
     """U127: write one tool's window for a card and keep the other tools' windows (the U114 record format)."""
     path = _record_path(project, card)
     record = _load(path)
@@ -135,7 +135,7 @@ def record_window(project: Path, card: str, tool: str, window_id: str, *, now: f
     old = record.get("tools", {}).get(tool) or {}
     if old.get("id") == window_id and "opened_at" in old:
         entry["opened_at"] = old["opened_at"]
-    record = {"card": card, "title": record.get("title") or f"[{card}]", "tools": {**record.get("tools", {}), tool: entry}}
+    record = {"card": card, "title": title or record.get("title") or f"[{card}]", "tools": {**record.get("tools", {}), tool: entry}}
     path.parent.mkdir(parents=True, exist_ok=True)
     # U127-A audit: each writer has its own temp file, so two letters for one card never swap a half-written record.
     tmp = path.with_name(f"{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
@@ -254,12 +254,7 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
         window_id, tokens = _open_antigravity(project, prompt, runner)
         if tokens is not None:  # U131: the opening turn's size, so the U127 resume cap can read it
             extra["last_input_tokens"] = tokens
-    entry = {"id": window_id, "opened_at": time.time() if now is None else now, **extra}
-    record = {"card": card, "title": name, "tools": {**record.get("tools", {}), tool: entry}}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    entry = record_window(project, card, tool, window_id, now=now, title=name, **extra)
     return {**entry, "reused": False}
 
 

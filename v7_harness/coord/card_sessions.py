@@ -204,6 +204,36 @@ def ensure_topmost_user_window(
             "is_default_user_window": False,
         }
 
+    # U293 R2 (P2 fix): Fail closed when `claude_sessions_root` is provided for Claude and `norm_thread` is not a
+    # verified topmost desktop session, and NEVER overwrite `local_*.json` directly (which triggers Claude Desktop's
+    # consent prompt — U294). Native title control (`hookSpecificOutput.sessionTitle` / `set_session_title`) is returned
+    # instead.
+    if norm_tool == "claude" and claude_sessions_root is not None:
+        desktop_index = _load_claude_desktop_session_index(claude_sessions_root)
+        meta = desktop_index.get(norm_thread)
+        if not meta:
+            try:
+                canon_uuid, native_id = normalize_claude_session_id(norm_thread)
+                meta = desktop_index.get(native_id) or desktop_index.get(canon_uuid)
+            except ValueError:
+                meta = None
+        if not isinstance(meta, dict):
+            return {
+                "ok": False,
+                "reason": "UNVERIFIED_CLAUDE_SESSION",
+                "tool": norm_tool,
+                "thread": norm_thread,
+                "is_default_user_window": False,
+            }
+        if meta.get("titleSource") == "tool":
+            return {
+                "ok": False,
+                "reason": "CHILD_CARD_SESSION",
+                "tool": norm_tool,
+                "thread": norm_thread,
+                "is_default_user_window": False,
+            }
+
     existing_names = uw._codex_names() if norm_tool == "codex" else []
     claimed = uw.claim(
         desk,
@@ -240,12 +270,7 @@ def ensure_topmost_user_window(
     backup_dir = desk / ".work" / f"backup_{(now or datetime.now()).strftime('%Y%m%d')}"
     if sync_native_store:
         if norm_tool == "claude":
-            store_status = uw.rename_claude_desktop_session_title(
-                norm_thread,
-                full_title,
-                root=claude_sessions_root,
-                backup_dir=backup_dir,
-            )
+            store_status = "NATIVE_HOOK_READY"
         elif norm_tool == "antigravity":
             store_status = uw.rename_agy_status(
                 norm_thread,
@@ -597,9 +622,10 @@ def sync_claude_desktop_card_sessions(
     """
     from v7_harness.card_pipeline import clean_core_title
     from . import user_window as uw
-    from .windows import _record_path, record_window
+    from .windows import record_window
 
     desk = Path(shared_desk(project)).resolve()
+    explicit_transcripts = transcripts_root is not None
     if transcripts_root is None:
         claude_home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
         transcripts_root = claude_home / "projects"
@@ -614,8 +640,14 @@ def sync_claude_desktop_card_sessions(
         }
 
     desktop_index = _load_claude_desktop_session_index(claude_sessions_root)
+    project_slug = re.sub(r"[^A-Za-z0-9]+", "-", desk.name).strip("-").lower()
+    all_jsonl = [
+        p
+        for p in transcripts_root.rglob("*.jsonl")
+        if p.is_file() and (explicit_transcripts or not project_slug or project_slug in p.parent.name.lower())
+    ]
     candidates = sorted(
-        transcripts_root.rglob("*.jsonl"),
+        all_jsonl,
         key=lambda p: p.stat().st_mtime if p.is_file() else 0.0,
         reverse=True,
     )[: max(1, max_files)]
@@ -709,11 +741,14 @@ def sync_claude_desktop_card_sessions(
                         if cid not in parent_spawned_cards:
                             parent_spawned_cards.append(cid)
                         lane_win = open_or_reuse_lane_window(desk, lane_id, "claude", card=cid)
+                        core = clean_core_title(title)
+                        card_record_title = f"[{cid}] {core}" if core else f"[{cid}]"
                         entry = record_window(
                             desk,
                             cid,
                             "claude",
                             canonical_uuid,
+                            title=card_record_title,
                             native_id=norm_native_id,
                             session_name=slug,
                             session_title=title,
@@ -726,18 +761,6 @@ def sync_claude_desktop_card_sessions(
                             parallel_ready=True,
                             **extra_fields,
                         )
-                        rec_path = _record_path(desk, cid)
-                        try:
-                            rec_data = json.loads(rec_path.read_text(encoding="utf-8"))
-                            core = clean_core_title(title)
-                            if isinstance(rec_data, dict) and core:
-                                rec_data["title"] = f"[{cid}] {core}"
-                                rec_path.write_text(
-                                    json.dumps(rec_data, ensure_ascii=False, indent=2),
-                                    encoding="utf-8",
-                                )
-                        except (OSError, ValueError):
-                            pass
 
                         synced_cards[cid] = {
                             "card": cid,

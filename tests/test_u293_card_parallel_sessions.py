@@ -4,6 +4,7 @@ import io
 import json
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,12 @@ from v7_harness.coord.windows import _claude_session_id, open_window, session_bu
 class TestU293CardParallelSessions(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
+        self.codex_sessions_dir = Path(self._tmp.name) / "codex_sessions"
+        self.codex_sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._codex_env_patcher = unittest.mock.patch.dict(
+            "os.environ", {"UAOS_CODEX_SESSIONS": str(self.codex_sessions_dir)}
+        )
+        self._codex_env_patcher.start()
         self.project = Path(self._tmp.name) / "project"
         (self.project / ".coord").mkdir(parents=True, exist_ok=True)
         (self.project / ".coord" / "PLAN.md").write_text("# UAOS Test Plan\n", encoding="utf-8")
@@ -35,6 +42,7 @@ class TestU293CardParallelSessions(unittest.TestCase):
         mark(self.project, "codex", "LIMITED", ttl_s=3600, lease=True, lease_source="manual")
 
     def tearDown(self) -> None:
+        self._codex_env_patcher.stop()
         self._tmp.cleanup()
 
     def test_normalize_claude_session_id_and_open_window_accepts_local_prefix(self) -> None:
@@ -238,12 +246,23 @@ class TestU293CardParallelSessions(unittest.TestCase):
         self.assertEqual(top_entry["prefix"], "[261102-1]")
         self.assertEqual(top_entry["representative_title"], "Codex 사용량 제한 대응")
         self.assertEqual(top_entry["full_title"], "[261102-1] Codex 사용량 제한 대응")
-        self.assertEqual(top_entry["store_status"], "RENAMED")
+        self.assertEqual(top_entry["store_status"], "NATIVE_HOOK_READY")
         self.assertEqual(uw.desk_role(self.project, "claude", "926558e3-548e-4cff-94b3-8fac32aacc94"), "PRIMARY")
 
+        # Verify parent local_*.json is NOT directly overwritten (no consent prompt — U294)
         updated_parent = json.loads(parent_session_file.read_text(encoding="utf-8"))
-        self.assertEqual(updated_parent["title"], "[261102-1] Codex 사용량 제한 대응")
-        self.assertIn("Codex 사용량 제한 대응", updated_parent["previousTitles"])
+        self.assertEqual(updated_parent["title"], "Codex 사용량 제한 대응")
+
+        # Verify unknown Claude session ID fails closed when claude_sessions_root is provided
+        unknown_refused = ensure_topmost_user_window(
+            self.project,
+            "claude",
+            "00000000-0000-4000-8000-000000000999",
+            representative_title="Unknown Session",
+            claude_sessions_root=desktop_root.parent.parent,
+        )
+        self.assertFalse(unknown_refused["ok"])
+        self.assertEqual(unknown_refused["reason"], "UNVERIFIED_CLAUDE_SESSION")
 
         # Verify child card sessions are NEVER claimed or renamed as topmost `[YYMMDD-N]` user windows
         updated_child = json.loads(child_session_file.read_text(encoding="utf-8"))

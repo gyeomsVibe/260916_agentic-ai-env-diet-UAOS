@@ -630,7 +630,7 @@ def _read_rollout_meta(path: Path) -> tuple[str, Path | None, str]:
     if not isinstance(data, dict) or data.get("type") != "session_meta":
         return "", None, "THREAD_UNVERIFIED"
     payload = data.get("payload")
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or payload.get("source") == "uaos-lane-window":
         return "", None, "THREAD_UNVERIFIED"
 
     present_ids: list[str] = []
@@ -1455,16 +1455,29 @@ def _deliver_impl(
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = thread or None
     if lane and not window:
-        from v7_harness.coord.process_lanes import ensure_fresh_lane_window, is_lane_batch_envelope, lane_window_for
+        from v7_harness.coord.process_lanes import (
+            _resolve_codex_lane_thread,
+            ensure_fresh_lane_window,
+            is_lane_batch_envelope,
+            lane_window_for,
+        )
         if (
             target in ("codex", "claude", "antigravity")
             and not is_lane_batch_envelope(message)
             and not message.lstrip().startswith("[LANE:")
         ):
             win_info = ensure_fresh_lane_window(desk, lane, target, card=card)
-            window = None if target == "claude" else str(win_info.get("id") or "")
+            candidate_wid = None if target == "claude" else str(win_info.get("id") or "")
         else:
-            window = None if target == "claude" else lane_window_for(desk, lane, target or "")
+            candidate_wid = None if target == "claude" else lane_window_for(desk, lane, target or "")
+        if target == "codex":
+            codex_lane_tid = _resolve_codex_lane_thread(desk, candidate_wid or "")
+            if not codex_lane_tid:
+                queued_for, target, window = "codex", None, None
+            else:
+                window = codex_lane_tid
+        else:
+            window = candidate_wid
     elif card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published

@@ -286,42 +286,33 @@ def deterministic_lane_session_uuid(project: Path, lane_id: str, tool: str, gene
     return f"{digest[:8]}-{digest[8:12]}-4{digest[13:16]}-a{digest[17:20]}-{digest[20:32]}"
 
 
-def _ensure_codex_lane_rollout(project: Path, thread_id: str) -> Path | None:
-    """Ensure a verified Codex rollout stub exists for a deterministic lane thread ID so `_codex_thread` verifies it
-    as an isolated lane thread instead of falling back to the user desk or newest thread."""
+def deterministic_card_session_uuid(project: Path, card: str, tool: str, generation: int = 0) -> str:
+    """Generate a deterministic UUIDv4/v5-compliant session/window ID for `(project, card, tool, generation)`."""
+    desk = Path(shared_desk(project)).resolve()
+    seed = f"uaos-card-v1:{os.path.normcase(str(desk))}:{str(card).strip().upper()}:{str(tool).strip().lower()}:{generation}"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return f"{digest[:8]}-{digest[8:12]}-4{digest[13:16]}-a{digest[17:20]}-{digest[20:32]}"
+
+
+def _resolve_codex_lane_thread(project: Path, candidate_thread_id: str) -> str:
+    """Return `candidate_thread_id` only if it is a verified non-desk Codex rollout thread; never fall back to the user desk or forge rollout stubs."""
     try:
-        from .deliver import _codex_sessions, _verify_thread
+        from .deliver import UUID_RE, _codex_sessions, _verify_thread, user_desk_state
 
         desk = Path(shared_desk(project)).resolve()
         sessions_root = _codex_sessions()
-        if _verify_thread(desk, sessions_root, thread_id) == "DISPATCH":
-            matched = list(sessions_root.glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
-            return matched[0] if matched else None
-
-        day_dir = sessions_root / time.strftime("%Y/%m/%d", time.gmtime())
-        day_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime())
-        rollout_path = day_dir / f"rollout-{stamp}-{thread_id}.jsonl"
-        if not rollout_path.is_file():
-            meta_row = {
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "type": "session_meta",
-                "payload": {
-                    "id": thread_id,
-                    "session_id": thread_id,
-                    "cwd": str(desk),
-                    "source": "uaos-lane-window",
-                },
-            }
-            tmp = rollout_path.with_name(f"{rollout_path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
-            tmp.write_text(json.dumps(meta_row, ensure_ascii=False) + "\n", encoding="utf-8")
-            try:
-                os.replace(tmp, rollout_path)
-            except OSError:
-                tmp.unlink(missing_ok=True)
-        return rollout_path
+        _desk_state, designated = user_desk_state(desk, "codex")
+        if (
+            candidate_thread_id
+            and candidate_thread_id != designated
+            and UUID_RE.fullmatch(candidate_thread_id)
+            and list(sessions_root.glob(f"*/*/*/rollout-*-{candidate_thread_id}.jsonl"))
+            and _verify_thread(desk, sessions_root, candidate_thread_id) == "DISPATCH"
+        ):
+            return candidate_thread_id
     except Exception:  # noqa: BLE001
-        return None
+        pass
+    return ""
 
 
 def ensure_claude_lane_session(project: Path, lane_id: str, *, rotate: bool = False) -> tuple[str, Path, bool]:
@@ -408,8 +399,6 @@ def open_or_reuse_lane_window(
             record["cards"].append(card)
 
         if isinstance(existing, dict) and existing.get("id") and not rotate:
-            if tool == "codex":
-                _ensure_codex_lane_rollout(desk, str(existing["id"]))
             _write_lane_record_unlocked(path, record)
             return {
                 "ok": True,
@@ -447,7 +436,6 @@ def open_or_reuse_lane_window(
                         cid = live_id
                 except Exception:  # noqa: BLE001 - fallback to deterministic lane thread UUID in headless/test env
                     pass
-            _ensure_codex_lane_rollout(desk, cid)
             win_entry = {
                 "id": cid,
                 "title": full_title,
@@ -843,7 +831,7 @@ def dispatch_single_lane_batch(
             message=envelope,
             actor=actor,
             target=selected_tool,
-            thread=window_id if selected_tool == "codex" else "",
+            thread=_resolve_codex_lane_thread(desk, window_id) if selected_tool == "codex" else "",
             card=first_card,
             lane=lid,
             runner=runner,
@@ -889,7 +877,7 @@ def dispatch_single_lane_batch(
                     message=envelope,
                     actor=actor,
                     target=selected_tool,
-                    thread=window_id if selected_tool == "codex" else "",
+                    thread=_resolve_codex_lane_thread(desk, window_id) if selected_tool == "codex" else "",
                     card=first_card,
                     lane=lid,
                     runner=runner,
@@ -908,11 +896,11 @@ def dispatch_single_lane_batch(
                 }
 
     acked_ids: list[str] = []
-    if send_result.get("ok"):
+    # P2 fix: Preserve recipient-only ACK semantics when delivery is merely queued until active (`QUEUED_UNTIL_ACTIVE`,
+    # `QUEUED_NOTICE`, `QUEUED_ACK_ONLY`, `PUBLISHED`). Source items are only auto-acked when a live recipient turn
+    # actually ran (`SENT`, `DISPATCHED`, `ACKED`); `dispatched_item_ids` below already prevents re-dispatch compounding.
+    if send_result.get("ok") and str(send_result.get("reason") or "") in ("SENT", "DISPATCHED", "ACKED"):
         acked_ids = _ack_dispatched_source_items(desk, items, selected_tool)
-        # Also mark the newly published lane batch envelope itself as dispatched/acked if it is not waiting on an
-        # interactive watcher, or record its message_id in `dispatched_item_ids` so `collect_pending_processes`
-        # never re-collects it.
 
     elapsed_ms = round((time.time_ns() - started_ns) / 1_000_000.0, 2)
     path = lane_window_path(desk, lid)
@@ -1064,7 +1052,7 @@ def handoff_lane_result(
         message=f"[LANE:{lid} HANDOFF {from_tool}->{target_tool}] {summary}",
         actor=from_tool,
         target=target_tool,
-        thread=window_id if target_tool == "codex" else "",
+        thread=_resolve_codex_lane_thread(desk, window_id) if target_tool == "codex" else "",
         card=card,
         lane=lid,
         runner=runner,
@@ -1290,11 +1278,7 @@ def open_or_reuse_card_parallel_windows(
                 wid = existing_id
                 reused = True
             else:
-                try:
-                    from .card_sessions import deterministic_card_session_uuid
-                    wid = deterministic_card_session_uuid(desk, card, tool)
-                except ImportError:
-                    wid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"uaos-card://{desk.name}/{card}/{tool}"))
+                wid = deterministic_card_session_uuid(desk, card, tool)
                 reused = False
             entry = record_window(
                 desk,
@@ -1324,18 +1308,28 @@ def open_or_reuse_card_parallel_windows(
 
 
 def _verify_live_rsi_state(desk: Path, rules_version: str, runtime_version: str) -> dict[str, Any]:
-    """Factually inspect rule sync and runtime files instead of hard-coding self-PASS."""
-    rule_block = desk / "uaos_everywhere" / "uaos_global_rule_block.md"
+    """Factually inspect rule sync against canonical installed rules hash/content and runtime files instead of substring self-PASS."""
+    installed_canon = Path(__file__).resolve().parents[2] / "uaos_everywhere" / "uaos_global_rule_block.md"
+    canon_bytes = installed_canon.read_bytes().replace(b"\r\n", b"\n") if installed_canon.is_file() else b""
+    canon_sha = hashlib.sha256(canon_bytes).hexdigest() if canon_bytes else ""
+
+    candidates = (
+        desk / "uaos_everywhere" / "uaos_global_rule_block.md",
+        desk / "GEMINI.md",
+        desk / "CLAUDE.md",
+        desk / "AGENTS.md",
+    )
     rules_synced = False
-    if rule_block.is_file():
-        try:
-            text = rule_block.read_text(encoding="utf-8", errors="replace")
-            rules_synced = f"v{rules_version}" in text or rules_version in text
-        except OSError:
-            rules_synced = False
-    else:
-        # In unit-test temporary directories without uaos_everywhere checkout, check .coord/PLAN.md presence
-        rules_synced = (desk / ".coord" / "PLAN.md").is_file()
+    for candidate in candidates:
+        if candidate.is_file():
+            try:
+                raw = candidate.read_bytes().replace(b"\r\n", b"\n")
+                cand_sha = hashlib.sha256(raw).hexdigest()
+                if canon_sha and (cand_sha == canon_sha or canon_bytes in raw):
+                    rules_synced = True
+                    break
+            except OSError:
+                continue
 
     cur_runtime = Path.home() / ".uaos" / "runtime" / "current.json"
     uaos_script = Path.home() / ".uaos" / "uaos.py"
@@ -1344,6 +1338,7 @@ def _verify_live_rsi_state(desk: Path, rules_version: str, runtime_version: str)
         "status": "RECORDED_PENDING_JUDGE",
         "self_approved": False,
         "rules_synced": rules_synced,
+        "canonical_rules_sha256": canon_sha,
         "runtime_installed": runtime_installed,
         "three_tool_broadcast": True,
     }
