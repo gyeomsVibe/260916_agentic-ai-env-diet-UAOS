@@ -2736,11 +2736,7 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "
 
 
 def cmd_coord_lanes(args: argparse.Namespace) -> int:
-<<<<<<< HEAD
-    """U287: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
-=======
-    """U287/U292: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
->>>>>>> origin/main
+    """U287/U292/U293: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
     from .coord.process_lanes import (
         audit_and_clear_nonstop_obstacles,
         classify_process_lane,
