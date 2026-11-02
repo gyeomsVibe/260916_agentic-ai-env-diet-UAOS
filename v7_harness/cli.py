@@ -2712,6 +2712,16 @@ def cmd_rsi_watch(args: argparse.Namespace) -> int:
     res = run_scheduler_cycle(project, config, now=time.time(), sleeper=time.sleep, record=_record,
                               fetch=lambda source, timeout: file_source_fetch(project, source, timeout),
                               trigger=lambda bundle: durable_trigger(project, bundle))
+    if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") and (
+        (project / ".coord" / "master_schedule.json").is_file()
+        or (project / ".coord" / "sub_process_schedule.json").is_file()
+    ):
+        try:
+            from .coord.process_lanes import sync_and_record_helper_parallel_rsi_session
+
+            sync_and_record_helper_parallel_rsi_session(project, publish_mailbox_notices=False)
+        except Exception:  # noqa: BLE001
+            pass
     _print_json(res)
     return 0 if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") else 1
 
