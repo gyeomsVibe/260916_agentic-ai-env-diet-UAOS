@@ -1366,6 +1366,7 @@ def deliver(
     head: str = "",
     session: str = "",
     in_reply_to: str = "",
+    agy_wait: bool = True,
 ) -> DeliverResult:
     """U277 rev 2: a verdict request is registered durably before anything is published or dispatched.
 
@@ -1391,7 +1392,7 @@ def deliver(
                                card=card, lane=lane, wake_class=wake_class, verdict_requested=verdict_requested,
                                verdict=verdict, delta=delta, in_reply_to=in_reply_to,
                                _track=track if verdict_requested is True else None,
-                               audit=verdict_requested is True)
+                               audit=verdict_requested is True, agy_wait=agy_wait)
     except RequestError as exc:
         return DeliverResult(False, target or "mailbox_only", exc.code, (), str(exc), tracked.get("id", ""), "")
     if tracked.get("ok"):
@@ -1420,6 +1421,7 @@ def _deliver_impl(
     in_reply_to: str = "",
     _track: Any = None,
     audit: bool = False,
+    agy_wait: bool = True,
 ) -> DeliverResult:
     """Serialize the complete publish-to-dispatch transaction per message.
 
@@ -1554,7 +1556,15 @@ def _deliver_impl(
         if unread and actor in ("claude", "codex") and os.environ.get("UAOS_AGY_AUTO", "1") != "0":
             # U120: a headless one-turn answer (U119 live: 27,989 tokens) is mailed back to the sender; a failure,
             # a loop tag or the daily cap keeps the U118 UNREAD route. UAOS_AGY_AUTO=0 opts out.
-            from v7_harness.coord.agy_dispatch import dispatch
+            from v7_harness.coord.agy_dispatch import dispatch, dispatch_detached
+            if not agy_wait and runner is None:
+                # U296 (B11): the CLI returns right after PUBLISHED; the answer arrives later as a normal letter.
+                # An injected runner (tests) stays synchronous: a detached process cannot call it.
+                started = dispatch_detached(desk, message_id=message_id, actor=actor, message=message, card=card,
+                                            audit=audit)
+                if started:
+                    return DeliverResult(False, "antigravity", "PUBLISHED", (),
+                                         f"AGY_DETACHED answer arrives as a letter (id {message_id})", message_id, digest)
             # U199: a verdict request is the commit-gate audit; its answer is never held back by the daily cap
             row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run,
                            card=card, audit=audit)

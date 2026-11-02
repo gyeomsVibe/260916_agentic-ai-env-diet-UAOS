@@ -54,17 +54,38 @@ STRUCTURED_FIELDS = ("wake_class", "verdict_requested", "verdict", "delta")
 RECEIPT_KEYS = ("target", "message_id", "digest", "pid", "process_created", "created_at")
 
 
-def watch_file(project: Path, tool: str) -> Path:
+def session_key(session: str) -> str:
+    """U296: a stable short file-name key for a session id (the id itself may hold characters a file name rejects)."""
+    return hashlib.sha256(session.encode("utf-8")).hexdigest()[:12]
+
+
+def watch_file(project: Path, tool: str, session: str = "") -> Path:
     if tool not in TOOLS:
         raise ValueError(f"unknown tool: {tool}")
-    return Path(project) / PRESENCE_DIR / f"{tool}.watch.json"
+    # U296: a named session gets its own lease file; no session keeps the per-tool singleton bytes and name.
+    stem = f"{tool}.{session_key(session)}" if session else tool
+    return Path(project) / PRESENCE_DIR / f"{stem}.watch.json"
+
+
+def _watch_records(project: Path, tool: str) -> list[dict[str, Any]]:
+    """U296: every lease record of `tool`: the singleton plus one per named session."""
+    base = watch_file(project, tool)
+    records = []
+    for path in [base, *sorted(base.parent.glob(f"{tool}.*.watch.json"))]:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
 
 
 def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, moment: float,
           wakes_session: bool = False, *, session: str = "", process_created: int | None = None) -> None:
     live_for = max(LIVE_SCANS * interval_s, LIVE_MIN_S)
     for tool in tools:
-        target = watch_file(project, tool)
+        target = watch_file(project, tool, session)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         # U277: the lease names its session and process identity, so a verdict request's stop hold can tell this
@@ -82,10 +103,10 @@ def _beat(project: Path, tools: tuple[str, ...], token: str, interval_s: float, 
             pass
 
 
-def _clear(project: Path, tools: tuple[str, ...], token: str) -> None:
+def _clear(project: Path, tools: tuple[str, ...], token: str, session: str = "") -> None:
     """Remove only this watch's files; a newer watch for the same tool keeps its own."""
     for tool in tools:
-        target = watch_file(project, tool)
+        target = watch_file(project, tool, session)
         try:
             if json.loads(target.read_text(encoding="utf-8")).get("token") == token:
                 target.unlink(missing_ok=True)
@@ -95,21 +116,19 @@ def _clear(project: Path, tools: tuple[str, ...], token: str) -> None:
 
 def watcher_live(project: Path, tool: str, *, now: float | None = None) -> bool:
     moment = time.time() if now is None else now
-    try:
-        record = json.loads(watch_file(project, tool).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    expires_at = record.get("expires_at") if isinstance(record, dict) else None
+    return any(_record_live(record, moment) for record in _watch_records(project, tool))
+
+
+def _record_live(record: dict[str, Any], moment: float) -> bool:
+    expires_at = record.get("expires_at")
     return isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > moment
 
 
 def watcher_wakes(project: Path, tool: str) -> bool:
     """U117: a live watcher whose exit wakes its own session (a Claude Code background task) takes real deltas too."""
-    try:
-        record = json.loads(watch_file(project, tool).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return watcher_live(project, tool) and isinstance(record, dict) and record.get("wakes_session") is True
+    moment = time.time()
+    return any(_record_live(record, moment) and record.get("wakes_session") is True
+               for record in _watch_records(project, tool))
 
 
 WAKE_ADAPTERS = ("claude-bg-task", "claude-async-rewake")
@@ -121,19 +140,18 @@ def watcher_wakes_for(project: Path, tool: str, session: str | None, *, now: flo
     A lease of another session never satisfies the stop hold. An empty session on either side is not compared
     (no session to compare: the lease is accepted, as the stop gate's other checks are lenient on UNKNOWN)."""
     moment = time.time() if now is None else now
-    try:
-        record = json.loads(watch_file(project, tool).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(record, dict) or not watcher_live(project, tool, now=moment):
-        return False
-    if record.get("wakes_session") is not True or record.get("adapter") not in WAKE_ADAPTERS:
-        return False
-    pid, created = record.get("pid"), record.get("process_created")
-    if not isinstance(pid, int) or isinstance(pid, bool) or created is None or process_identity(pid) != created:
-        return False
-    lease_session = str(record.get("session") or "")
-    return not (session and lease_session and lease_session != session)
+    for record in _watch_records(project, tool):  # U296: one lease per session; any matching live one satisfies
+        if not _record_live(record, moment):
+            continue
+        if record.get("wakes_session") is not True or record.get("adapter") not in WAKE_ADAPTERS:
+            continue
+        pid, created = record.get("pid"), record.get("process_created")
+        if not isinstance(pid, int) or isinstance(pid, bool) or created is None or process_identity(pid) != created:
+            continue
+        lease_session = str(record.get("session") or "")
+        if not (session and lease_session and lease_session != session):
+            return True
+    return False
 
 
 def _addressed(payload: Any, tools: tuple[str, ...]) -> bool:
@@ -318,9 +336,10 @@ def claim_wake(project: Path, target: str, message_id: str, digest: Any, *,
     return "CLAIMED"
 
 
-def lock_file(project: Path, tool: str) -> Path:
+def lock_file(project: Path, tool: str, session: str = "") -> Path:
     watch_file(project, tool)
-    return Path(project) / PRESENCE_DIR / f"{tool}.watch.lock.json"
+    stem = f"{tool}.{session_key(session)}" if session else tool  # U296: one lock per (tool, session)
+    return Path(project) / PRESENCE_DIR / f"{stem}.watch.lock.json"
 
 
 def _lock_owner_live(path: Path, *, preempt_non_waking: bool = False) -> bool:
@@ -342,7 +361,7 @@ def _take_locks(project: Path, tools: tuple[str, ...], mine: dict[str, Any]) -> 
     taken: list[str] = []
     preempt = bool(mine.get("wakes_session"))
     for tool in tools:
-        path = lock_file(project, tool)
+        path = lock_file(project, tool, str(mine.get("session") or ""))
         path.parent.mkdir(parents=True, exist_ok=True)
         if _lock_owner_live(path, preempt_non_waking=preempt):
             return taken, tool
@@ -354,7 +373,7 @@ def _take_locks(project: Path, tools: tuple[str, ...], mine: dict[str, Any]) -> 
 def _release_locks(project: Path, tools: list[str], mine: dict[str, Any]) -> None:
     """Remove only this watcher's locks; a replacement watcher keeps its own."""
     for tool in tools:
-        path = lock_file(project, tool)
+        path = lock_file(project, tool, str(mine.get("session") or ""))
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(record, dict) and record.get("pid") == mine["pid"] and \
@@ -364,11 +383,11 @@ def _release_locks(project: Path, tools: list[str], mine: dict[str, Any]) -> Non
             pass
 
 
-def _owns_all_locks(project: Path, locks: list[str], token: str) -> bool:
+def _owns_all_locks(project: Path, locks: list[str], token: str, session: str = "") -> bool:
     """U291: False as soon as any lock file was preempted by another watcher token or removed."""
     for locked_tool in locks:
         try:
-            cur_lock = json.loads(lock_file(project, locked_tool).read_text(encoding="utf-8"))
+            cur_lock = json.loads(lock_file(project, locked_tool, session).read_text(encoding="utf-8"))
             if not isinstance(cur_lock, dict) or cur_lock.get("token") not in (None, token):
                 return False
         except FileNotFoundError:
@@ -398,6 +417,27 @@ def _stalled_wait(project: Path, tools: tuple[str, ...], clock: Callable[[], flo
                         "waiting_on": entry["waiting_on"], "age_s": entry["age_s"], "owner": entry.get("owner"),
                         "requested_target": tool}
     return None
+
+
+def main_desk_session(project: Path) -> str:
+    """U296: the user's main Claude desk (topmost `[YYMMDD-N]` window), '' when no desk record exists."""
+    try:
+        record = json.loads((Path(project) / PRESENCE_DIR / "user_desk_claude.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(record.get("thread") or "") if isinstance(record, dict) else ""
+
+
+def _session_eligible(project: Path, tool: str, body: dict[str, Any], session: str) -> bool:
+    """U296 (B6): may the watcher of `session` take this letter? A letter naming a session or a card window goes only
+    to that session; an unaddressed letter goes to the main desk, so a child card session never takes it. With no
+    desk record the unaddressed letter stays open to any session (UNKNOWN is no ground to refuse it)."""
+    from .stop_gate import _foreign
+
+    if body.get("native_receiver") or body.get("window") or body.get("card"):
+        return not _foreign(Path(project), tool, session, body)
+    desk = main_desk_session(project)
+    return not desk or desk == session
 
 
 def _native_eligible(project, message_id, body, session, now):
@@ -531,6 +571,9 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     locks: list[str] = []
     mine = {"pid": os.getpid(), "process_created": process_identity(os.getpid()), "token": token,
             "wakes_session": bool(wakes_session)}
+    own_session = str(requester_session or "") if structured and not native_session else ""
+    if own_session:
+        mine["session"] = own_session  # U296: the lock and lease are per (tool, session), not per tool
     if structured and not native_session:
         locks, owned_by_other = _take_locks(project, tools, mine)
         if owned_by_other is not None:
@@ -542,7 +585,7 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
     started_at = deadline - timeout_s  # the watch's start, without an extra clock read (see above)
     try:
         while True:
-            if locks and not _owns_all_locks(project, locks, token):
+            if locks and not _owns_all_locks(project, locks, token, own_session):
                 return None  # Preempted by a newer session watcher; exit without stealing wake claims
             if native_session:
                 from .continuity import _desk_matches
@@ -550,7 +593,7 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                     return None
             now = clock()  # one read serves the beat and the request scan (U117 test counts clock reads)
             _beat(project, tools, token, interval_s, now, wakes_session,
-                  session=requester_session or "", process_created=mine["process_created"])
+                  session=own_session, process_created=mine["process_created"])
             if not native_session:
                 # U277: every scan, not on the stall cadence; a request answered while this watch sleeps wakes it.
                 woken = _request_wake(Path(project), tools, requester_session, now, started_at)
@@ -585,12 +628,14 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                     body = payload if isinstance(payload, dict) else {}
                     found = {"id": message_id, "kind": body.get("kind"), "actor": body.get("actor"),
                              "requested_target": body.get("requested_target") or body.get("to")}
-                    if locks and not _owns_all_locks(project, locks, token):
+                    if locks and not _owns_all_locks(project, locks, token, own_session):
                         return None
                     if not structured:
                         return found
                     target = found["requested_target"]
                     target = target if target in tools else tools[0]
+                    if own_session and not _session_eligible(Path(project), target, body, own_session):
+                        continue  # U296: addressed to another session, or to the main desk; never this watcher's wake
                     cls, _diag = classify(body, migration_record(project, message_id, body.get("digest")))
                     if cls == "LEGACY" and wakes_session and str(body.get("actor") or "") not in ("", target):
                         from v7_harness.coord.deliver import _requires_wake
@@ -603,7 +648,7 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                         if acked_wake_path(project, target, digest).is_file():
                             continue
                         digest = hashlib.sha256(f'native:{native_session}:{digest}'.encode()).hexdigest()
-                    if locks and not _owns_all_locks(project, locks, token):
+                    if locks and not _owns_all_locks(project, locks, token, own_session):
                         return None  # Re-check lock ownership immediately before claim_wake so a preempted watcher never claims
                     if claim_wake(project, target, message_id, digest,
                                   clock=clock) == "CLAIMED":
@@ -621,5 +666,5 @@ def watch(project: Path, tools: tuple[str, ...], *, timeout_s: float = DEFAULT_T
                 return None
             sleep(interval_s)
     finally:
-        _clear(project, tools, token)
+        _clear(project, tools, token, own_session)
         _release_locks(project, locks, mine)

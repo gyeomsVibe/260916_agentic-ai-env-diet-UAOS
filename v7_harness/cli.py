@@ -864,6 +864,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_deliver.add_argument("--verdict", default=None,
                                  choices=["PASS", "REVISE", "FAIL", "APPROVE", "PIVOT", "REWORK"])
     p_coord_deliver.add_argument("--delta", default=None, help="U141-A: what changed; an ACTIONABLE letter needs one")
+    p_coord_deliver.add_argument("--session", default="",
+                                 help="U296: address the letter to one receiver session (same as --thread)")
+    p_coord_deliver.add_argument("--wait", action="store_true",
+                                 help="U296: wait for the Antigravity auto-answer (old behavior); default returns "
+                                      "after PUBLISHED and the answer arrives as a letter")
     p_coord_deliver.set_defaults(func=cmd_coord_deliver)
 
     p_coord_sentinel = p_coord_subs.add_parser("sentinel")
@@ -932,6 +937,9 @@ def build_parser() -> argparse.ArgumentParser:
                                help="U117: this watch runs as a background task whose exit wakes its session")
     # U141-A: structured (default) wakes only on an ACTIONABLE letter, once per letter, one watcher per target.
     p_coord_watch.add_argument("--policy", default="structured", choices=["structured", "legacy"])
+    p_coord_watch.add_argument("--session", default="",
+                               help="U296: this session's id; one watcher per (target, session), and it takes only "
+                                    "letters naming it (the main desk also takes unaddressed ones)")
     p_coord_watch.set_defaults(func=cmd_coord_watch)
     p_coord_listen = p_coord_subs.add_parser("listen", help="Fast Claude startup bootstrap; native Stop asyncRewake listener")
     p_coord_listen.add_argument("--tool", required=True, choices=["claude", "codex", "antigravity"])
@@ -1477,11 +1485,12 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     from .coord.deliver import deliver
 
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
-                     target=args.target, thread=args.thread, card=args.card,
+                     target=args.target, thread=args.thread or getattr(args, "session", ""), card=args.card,
                      lane=getattr(args, "lane", "") or "",
                      wake_class=getattr(args, "wake_class", None),
                      verdict_requested=getattr(args, "verdict_requested", None),
-                     verdict=getattr(args, "verdict", None), delta=getattr(args, "delta", None))
+                     verdict=getattr(args, "verdict", None), delta=getattr(args, "delta", None),
+                     **({"agy_wait": bool(args.wait)} if hasattr(args, "wait") else {}))
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
     # U134-C: QUEUED_UNTIL_ACTIVE waits for the target's next ACTIVE turn; also not a failure.
@@ -2089,7 +2098,8 @@ def cmd_coord_watch(args: argparse.Namespace) -> int:
     from .coord.watch import watch
 
     found = watch(Path(args.project), tuple(args.target), timeout_s=args.timeout, interval_s=args.interval,
-                  wakes_session=args.wakes_session, policy=getattr(args, "policy", "structured"))
+                  wakes_session=args.wakes_session, policy=getattr(args, "policy", "structured"),
+                  requester_session=getattr(args, "session", None) or None)
     if found is not None and found.get("state") == "ALREADY_WATCHING":
         # U141-A: one watcher per target; a second one exits instead of waking the session a second time.
         print(json.dumps({"ok": False, "reason": "ALREADY_WATCHING", **found}, ensure_ascii=False))
