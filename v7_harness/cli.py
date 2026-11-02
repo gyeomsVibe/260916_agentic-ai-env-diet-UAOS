@@ -630,6 +630,37 @@ def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coord_helper_matrix(args: argparse.Namespace) -> int:
+    from .coord.helper_thinking_router import (
+        audit_and_optimize_claude_ollama_haiku_parallel,
+        get_official_tool_lineup,
+        optimize_master_and_sub_schedules,
+        select_optimal_helper_and_thinking,
+    )
+
+    project = Path(args.project)
+    action = getattr(args, "action", "optimize-schedules")
+    if action == "lineup":
+        payload = get_official_tool_lineup(getattr(args, "tool", None))
+    elif action == "select":
+        payload = select_optimal_helper_and_thinking(
+            getattr(args, "tool", None) or "antigravity",
+            card=getattr(args, "card", "") or "",
+            role=getattr(args, "role", "implementer") or "implementer",
+            lane_id=getattr(args, "lane", None),
+            purpose=getattr(args, "purpose", "") or "",
+            sub_stage=getattr(args, "sub_stage", "") or "",
+            is_keypoint=bool(getattr(args, "keypoint", False)),
+            utilization_5h_pct=float(getattr(args, "utilization_5h_pct", 0.0) or 0.0),
+        )
+    elif action == "claude-audit":
+        payload = audit_and_optimize_claude_ollama_haiku_parallel(project)
+    else:
+        payload = optimize_master_and_sub_schedules(project)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="v7_harness", description="v7 Minimal Automation Harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -864,6 +895,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_deliver.add_argument("--verdict", default=None,
                                  choices=["PASS", "REVISE", "FAIL", "APPROVE", "PIVOT", "REWORK"])
     p_coord_deliver.add_argument("--delta", default=None, help="U141-A: what changed; an ACTIONABLE letter needs one")
+    p_coord_deliver.add_argument("--session", default="",
+                                 help="U296: address the letter to one receiver session (same as --thread)")
+    p_coord_deliver.add_argument("--wait", action="store_true",
+                                 help="U296: wait for the Antigravity auto-answer (old behavior); default returns "
+                                      "after PUBLISHED and the answer arrives as a letter")
     p_coord_deliver.set_defaults(func=cmd_coord_deliver)
 
     p_coord_sentinel = p_coord_subs.add_parser("sentinel")
@@ -932,6 +968,9 @@ def build_parser() -> argparse.ArgumentParser:
                                help="U117: this watch runs as a background task whose exit wakes its session")
     # U141-A: structured (default) wakes only on an ACTIONABLE letter, once per letter, one watcher per target.
     p_coord_watch.add_argument("--policy", default="structured", choices=["structured", "legacy"])
+    p_coord_watch.add_argument("--session", default="",
+                               help="U296: this session's id; one watcher per (target, session), and it takes only "
+                                    "letters naming it (the main desk also takes unaddressed ones)")
     p_coord_watch.set_defaults(func=cmd_coord_watch)
     p_coord_listen = p_coord_subs.add_parser("listen", help="Fast Claude startup bootstrap; native Stop asyncRewake listener")
     p_coord_listen.add_argument("--tool", required=True, choices=["claude", "codex", "antigravity"])
@@ -960,7 +999,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_push.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_push.add_argument("--branch", required=True)
     p_coord_push.add_argument("--force", action="store_true", help="The push would be forced (always DENY)")
+    p_coord_push.add_argument("--tool", default=None, help="U295: the pushing tool, checked against the branch lease")
+    p_coord_push.add_argument("--session", default="", help="U295: the pushing session, checked against the lease")
+    p_coord_push.add_argument("--supersede", action="store_true",
+                              help="U295: push over an open verdict request; it is recorded STALE and its requester woken")
     p_coord_push.set_defaults(func=cmd_coord_push_check)
+    # U295 B2: one writer per PR branch.
+    p_coord_lease = p_coord_subs.add_parser("lease", help="Acquire, release or show the one-writer lease of a branch")
+    p_coord_lease.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_lease.add_argument("--action", required=True, choices=["acquire", "release", "show", "list"])
+    p_coord_lease.add_argument("--branch", default="")
+    p_coord_lease.add_argument("--tool", default=None, choices=["codex", "claude", "antigravity", "agy"])
+    p_coord_lease.add_argument("--session", default="")
+    p_coord_lease.add_argument("--head", default="")
+    p_coord_lease.set_defaults(func=cmd_coord_lease)
     # U166: a gated PR is merged by Antigravity, else Codex (윤겸스 2026-10-05); a stalled wait is rerouted.
     p_coord_merge = p_coord_subs.add_parser("merge", help="Merge a gated PR through Antigravity, then Codex")
     p_coord_merge.add_argument("--project", default=".", help="Project root (default: .)")
@@ -983,6 +1035,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_cap.add_argument("--debounce", type=float, default=0.0, help="Debounce interval in seconds for 0-paid-token refresh")
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
+
+    p_coord_hm = p_coord_subs.add_parser(
+        "helper-matrix",
+        help="U297: Official 3-tool helper model & reasoning lineup declaration, Thinking Level (Low/Medium/High) auto-selector, and schedule optimizer",
+    )
+    p_coord_hm.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_hm.add_argument(
+        "--action",
+        choices=["optimize-schedules", "lineup", "select", "claude-audit"],
+        default="optimize-schedules",
+    )
+    p_coord_hm.add_argument("--tool", choices=["codex", "claude", "antigravity"], default=None)
+    p_coord_hm.add_argument("--card", default="", help="Card ID (e.g. U297)")
+    p_coord_hm.add_argument("--role", default="implementer", help="Role (conductor, implementer, reviewer, merger, recovery)")
+    p_coord_hm.add_argument("--lane", default=None, help="Process lane (IMPL_CODE, VERIFY_AUDIT, ARCH_DESIGN, MERGE_RELEASE, RECOVERY_OPS)")
+    p_coord_hm.add_argument("--sub-stage", default="", help="Sub-process stage (SP1_RESEARCH_DRAFT..SP5_MERGE_AND_RUNTIME)")
+    p_coord_hm.add_argument("--purpose", default="", help="Implementation purpose description")
+    p_coord_hm.add_argument("--keypoint", action="store_true", help="Whether the task is a keypoint")
+    p_coord_hm.add_argument("--utilization-5h-pct", type=float, default=0.0, help="Observed 5h utilization percentage")
+    p_coord_hm.set_defaults(func=cmd_coord_helper_matrix)
 
     p_coord_rea = p_coord_subs.add_parser(
         "rea-audit",
@@ -1087,6 +1159,8 @@ def build_parser() -> argparse.ArgumentParser:
                              help="U129: id of a visible Claude desktop session to record (claude only)")
     p_coord_win.add_argument("--release", action="store_true",
                              help="U129: mark the card's window done so its Claude session can take the next card")
+    p_coord_win.add_argument("--pool", action="store_true",
+                             help="U279: acquire from the bounded topic-grouped window pool (3 active per tool, LRU eviction, 70k token rotation)")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
     # U287/U292/U293: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
@@ -1477,11 +1551,12 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
     from .coord.deliver import deliver
 
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
-                     target=args.target, thread=args.thread, card=args.card,
+                     target=args.target, thread=args.thread or getattr(args, "session", ""), card=args.card,
                      lane=getattr(args, "lane", "") or "",
                      wake_class=getattr(args, "wake_class", None),
                      verdict_requested=getattr(args, "verdict_requested", None),
-                     verdict=getattr(args, "verdict", None), delta=getattr(args, "delta", None))
+                     verdict=getattr(args, "verdict", None), delta=getattr(args, "delta", None),
+                     **({"agy_wait": bool(args.wait)} if hasattr(args, "wait") else {}))
     # U57-C: QUEUED_INTERACTIVE means a live `coord watch` holds the letter for the interactive session; not a failure.
     # U74-D: QUEUED_ACK_ONLY is an ACK_ONLY letter left in the inbox without a paid turn; also not a failure.
     # U134-C: QUEUED_UNTIL_ACTIVE waits for the target's next ACTIVE turn; also not a failure.
@@ -1536,8 +1611,11 @@ def cmd_coord_window(args: argparse.Namespace) -> int:
             return 2
     # U129: a Claude window is a visible desktop session the caller names; nothing is launched for it.
     passes_session = args.session_id is not None and (route is None or tool == "claude")
-    extra = {"session_id": args.session_id} if passes_session else {}
-    result = windows.open_window(project, args.card, tool, args.title, prompt, **extra)
+    extra: dict[str, Any] = {"session_id": args.session_id} if passes_session else {}
+    if getattr(args, "pool", False):
+        result = windows.acquire_topic_window(project, args.card, tool, args.title, prompt, **extra)
+    else:
+        result = windows.open_window(project, args.card, tool, args.title, prompt, **extra)
     if route:
         result = {**result, "route": tool, "step": route["step"]}
     print(json.dumps(result, ensure_ascii=False))
@@ -2089,7 +2167,8 @@ def cmd_coord_watch(args: argparse.Namespace) -> int:
     from .coord.watch import watch
 
     found = watch(Path(args.project), tuple(args.target), timeout_s=args.timeout, interval_s=args.interval,
-                  wakes_session=args.wakes_session, policy=getattr(args, "policy", "structured"))
+                  wakes_session=args.wakes_session, policy=getattr(args, "policy", "structured"),
+                  requester_session=getattr(args, "session", None) or None)
     if found is not None and found.get("state") == "ALREADY_WATCHING":
         # U141-A: one watcher per target; a second one exits instead of waking the session a second time.
         print(json.dumps({"ok": False, "reason": "ALREADY_WATCHING", **found}, ensure_ascii=False))
@@ -2242,11 +2321,46 @@ def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
 
 def cmd_coord_push_check(args: argparse.Namespace) -> int:
     """U146-A R2: deny-by-default push grant check."""
+    from .coord import branch_guard
     from .coord.stop_gate import push_check
-    result = push_check(Path(args.project), args.branch, force=args.force)
+    result: dict = push_check(Path(args.project), args.branch, force=args.force)
+    if result.get("decision") == "ALLOW":
+        # U295 B2/B4: the grant allows the branch; the lease and an open verdict request may still refuse it.
+        tool = getattr(args, "tool", None) or os.environ.get("UAOS_TOOL") or None
+        result = (branch_guard.lease_check(Path(args.project), args.branch, tool, getattr(args, "session", ""))
+                  or branch_guard.freeze_check(Path(args.project), args.branch,
+                                               supersede=getattr(args, "supersede", False), actor=tool or "")
+                  or result)
+        for row in result.get("stale") or []:
+            branch_guard.wake_stale(Path(args.project), row)
     print(json.dumps(result, ensure_ascii=False))
     # Exit 3 on DENY: a non-zero exit stops a shell `&&` chain before `git push`.
     return 0 if result.get("decision") == "ALLOW" else 3
+
+
+def cmd_coord_lease(args: argparse.Namespace) -> int:
+    """U295 B2: exit 4 when another writer holds the branch; `list` is the briefing's source of who writes where."""
+    from .coord import branch_guard
+    project = Path(args.project)
+    try:
+        if args.action == "list":
+            result: object = branch_guard.leases(project)
+        elif args.action == "show":
+            result = branch_guard.holder(project, args.branch)
+        elif not args.tool:
+            raise ValueError(f"--tool is required to {args.action}")
+        elif args.action == "acquire":
+            result = branch_guard.acquire(project, args.branch, tool=args.tool, session=args.session, head=args.head)
+        else:
+            result = {"released": branch_guard.release(project, args.branch, tool=args.tool, session=args.session)}
+    except branch_guard.LeaseHeld as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        return 4
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
 
 
 def cmd_coord_route(args: argparse.Namespace) -> int:

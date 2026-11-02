@@ -1560,6 +1560,11 @@ def build_capacity_aware_schedule(
         if bool((engines.get(t) or {}).get("wake_on_reset_ready"))
     ]
     # U286: the HUD accordion opens a card's plan; copy only its human-readable master-schedule fields (read-only).
+    from v7_harness.coord.helper_thinking_router import (
+        get_official_tool_lineup,
+        select_optimal_helper_and_thinking,
+    )
+
     by_id = {str(p.get("phase_id")): p for p in phases}
     for a in assignments:
         p = by_id.get(str(a.get("phase_id"))) or {}
@@ -1568,10 +1573,31 @@ def build_capacity_aware_schedule(
         # estimated_tokens gets the policy default (45000 x share), which is a placeholder, not a measurement.
         a["plan_detail"]["ledger_state"] = str(p.get("state") or "")
         a["estimate_basis"] = "CARD" if p.get("estimated_tokens") else "POLICY_DEFAULT"
+        ow_tool = str(a.get("assigned_owner") or "antigravity")
+        rv_tool = str(a.get("assigned_reviewer") or "claude")
+        if rv_tool == "BLOCKED":
+            rv_tool = "claude" if ow_tool != "claude" else "antigravity"
+        ow_util = float((engines.get(ow_tool) or {}).get("budget_utilization_5h_pct") or 0.0)
+        ow_risk = str((((engines.get(ow_tool) or {}).get("predictive_exhaustion")) or {}).get("exhaustion_risk") or "SAFE")
+        a["helper_thinking_selection"] = select_optimal_helper_and_thinking(
+            ow_tool,
+            card=str(a.get("phase_id") or ""),
+            role="implementer",
+            purpose=str(p.get("title") or ""),
+            is_keypoint=bool(p.get("codex_exclusive") or p.get("keypoint")),
+            utilization_5h_pct=ow_util,
+            exhaustion_risk=ow_risk,
+        )
+        a["verifier_helper_thinking_selection"] = select_optimal_helper_and_thinking(
+            rv_tool,
+            card=str(a.get("phase_id") or ""),
+            role="reviewer",
+            lane_id="VERIFY_AUDIT",
+            purpose=str(p.get("title") or ""),
+        )
     return {
         "recommended_conductor": recommended_conductor,
         "ranked_paid_tools": ranked_paid,
-        "wake_ready_tools": wake_ready_tools,
         "wake_ready_tools": wake_ready_tools,
         "argon_tier_mode": argon_mode,
         "argon_used_5h_share_pct": agy_used_share_pct,
@@ -1581,6 +1607,7 @@ def build_capacity_aware_schedule(
         "post_schedule_remaining_tokens": virtual_rem,
         "phase_assignments": assignments,
         "subworker_optimization": compute_subworker_optimization(engines),
+        "three_tool_helper_designation": get_official_tool_lineup(),
     }
 
 
@@ -1732,6 +1759,26 @@ def build_sub_process_schedule(
 
         code_slice_limit = 30 if owner_risk != "SAFE" else 20
         test_doc_worker = "haiku" if effective_owner == "claude" else "ollama"
+        from v7_harness.coord.helper_thinking_router import (
+            get_official_tool_lineup,
+            select_optimal_helper_and_thinking,
+        )
+
+        sp1_sel = select_optimal_helper_and_thinking(
+            effective_owner, card=pid, role="implementer", sub_stage="SP1_RESEARCH_DRAFT", exhaustion_risk=owner_risk
+        )
+        sp2_sel = select_optimal_helper_and_thinking(
+            effective_owner, card=pid, role="implementer", sub_stage="SP2_MIA_DESIGN_AUDIT", exhaustion_risk=owner_risk
+        )
+        sp3_sel = select_optimal_helper_and_thinking(
+            effective_owner, card=pid, role="implementer", sub_stage="SP3_CODE_EXECUTION", exhaustion_risk=owner_risk
+        )
+        sp4_sel = select_optimal_helper_and_thinking(
+            effective_reviewer, card=pid, role="reviewer", sub_stage="SP4_INDEPENDENT_VERIFY", exhaustion_risk=reviewer_risk
+        )
+        sp5_sel = select_optimal_helper_and_thinking(
+            merger_primary, card=pid, role="merger", sub_stage="SP5_MERGE_AND_RUNTIME"
+        )
 
         sub_nodes = [
             {
@@ -1746,6 +1793,10 @@ def build_sub_process_schedule(
                 "allowed_paths": [f".work/cards/{pid}_research.md"],
                 "estimated_paid_tokens": int(round(est_paid * 0.10)),
                 "offload_mode": "ollama:local_search+local_draft (0 paid tokens)",
+                "designated_helper_model": sp1_sel["designated_helper_model"],
+                "helper_thinking_level": sp1_sel["helper_thinking_level"],
+                "designated_reasoning_model": sp1_sel["designated_reasoning_model"],
+                "reasoning_thinking_level": sp1_sel["reasoning_thinking_level"],
             },
             {
                 "sub_id": f"{pid}:SP2_MIA_DESIGN_AUDIT",
@@ -1760,6 +1811,10 @@ def build_sub_process_schedule(
                 "allowed_paths": [f".work/cards/{pid}_frame.md", f".work/cards/{pid}_manual.md"],
                 "estimated_paid_tokens": int(round(est_paid * 0.15)),
                 "offload_mode": "ollama:local_read_map + peer counterexample audit",
+                "designated_helper_model": sp2_sel["designated_helper_model"],
+                "helper_thinking_level": sp2_sel["helper_thinking_level"],
+                "designated_reasoning_model": sp2_sel["designated_reasoning_model"],
+                "reasoning_thinking_level": sp2_sel["reasoning_thinking_level"],
             },
             {
                 "sub_id": f"{pid}:SP3_CODE_EXECUTION",
@@ -1769,18 +1824,25 @@ def build_sub_process_schedule(
                 "depends_on": [f"{pid}:SP2_MIA_DESIGN_AUDIT"],
                 "primary_worker": "ollama",
                 "parallel_companion_worker": test_doc_worker,
+                "designated_helper_model": sp3_sel["designated_helper_model"],
+                "helper_thinking_level": sp3_sel["helper_thinking_level"],
+                "designated_reasoning_model": sp3_sel["designated_reasoning_model"],
+                "reasoning_thinking_level": sp3_sel["reasoning_thinking_level"],
                 "supervisor_tool": effective_owner,
                 "preemptive_handoff_to": preemptive_owner_target,
                 "disjoint_lanes": {
                     "code_lane": {
                         "worker": "ollama",
+                        "model": "qwen2.5-coder:7b",
                         "allow": ["v7_harness/*.py"],
                         "max_changed_lines": code_slice_limit,
                     },
                     "test_doc_lane": {
                         "worker": test_doc_worker,
+                        "designated_helper_model": sp3_sel["designated_helper_model"],
+                        "helper_thinking_level": sp3_sel["helper_thinking_level"],
                         "allow": ["tests/*", "docs/*"],
-                        "budget_cap_tokens": 12000 if test_doc_worker == "haiku" else 0,
+                        "budget_cap_tokens": 12000 if test_doc_worker == "haiku" else sp3_sel["helper_preflight_cap_tokens"],
                     },
                 },
                 "estimated_paid_tokens": int(round(est_paid * 0.40)),
@@ -1798,6 +1860,10 @@ def build_sub_process_schedule(
                 "quality_gate": f"author({effective_owner}) != judge({effective_reviewer}) + uaos card audit",
                 "estimated_paid_tokens": int(round(est_paid * 0.25)),
                 "offload_mode": "ollama:gate_log_summary + deterministic unittest",
+                "designated_helper_model": sp4_sel["designated_helper_model"],
+                "helper_thinking_level": sp4_sel["helper_thinking_level"],
+                "designated_reasoning_model": sp4_sel["designated_reasoning_model"],
+                "reasoning_thinking_level": sp4_sel["reasoning_thinking_level"],
             },
             {
                 "sub_id": f"{pid}:SP5_MERGE_AND_RUNTIME",
@@ -1810,6 +1876,10 @@ def build_sub_process_schedule(
                 "quality_gate": "CI attestation + same-head PASS relay + runtime_install --apply",
                 "estimated_paid_tokens": int(round(est_paid * 0.10)),
                 "offload_mode": "deterministic merge_route + runtime_install",
+                "designated_helper_model": sp5_sel["designated_helper_model"],
+                "helper_thinking_level": sp5_sel["helper_thinking_level"],
+                "designated_reasoning_model": sp5_sel["designated_reasoning_model"],
+                "reasoning_thinking_level": sp5_sel["reasoning_thinking_level"],
             },
         ]
 
@@ -1826,8 +1896,14 @@ def build_sub_process_schedule(
             "verifier_exhaustion_risk": reviewer_risk,
             "quality_invariant": f"{effective_owner} != {effective_reviewer}",
             "estimated_total_paid_tokens": est_paid,
+            "designated_helper_model": sp3_sel["designated_helper_model"],
+            "helper_thinking_level": sp3_sel["helper_thinking_level"],
+            "designated_reasoning_model": sp3_sel["designated_reasoning_model"],
+            "reasoning_thinking_level": sp3_sel["reasoning_thinking_level"],
             "sub_processes": sub_nodes,
         })
+
+    from v7_harness.coord.helper_thinking_router import get_official_tool_lineup
 
     return {
         "schema": "uaos-sub-process-schedule-v1",
@@ -1842,6 +1918,7 @@ def build_sub_process_schedule(
             "haiku_30pct_lane": "tests/*, docs/* (<=12,000 tokens, disjoint from v7_harness/*.py)",
             "paid_20pct_lane": "codex / claude / antigravity (architecture, cross-review, merge)",
         },
+        "official_3tool_helper_designation": get_official_tool_lineup(),
         "card_sub_schedules": card_sub_schedules,
     }
 
@@ -2931,10 +3008,20 @@ def compute_subworker_optimization(engines: dict[str, dict[str, Any]]) -> dict[s
         haiku_remaining_5h_tokens=haiku_rem_int,
     )
     agy_plan = compute_agy_ollama_boost_plan(utilization_5h_pct=agy_util)
+    from v7_harness.coord.helper_thinking_router import (
+        get_official_tool_lineup,
+        select_optimal_helper_and_thinking,
+    )
+
+    lineup = get_official_tool_lineup()
+    agy_sel = select_optimal_helper_and_thinking("antigravity", utilization_5h_pct=agy_util)
+    claude_sel = select_optimal_helper_and_thinking("claude", utilization_5h_pct=claude_util)
+    codex_sel = select_optimal_helper_and_thinking("codex", utilization_5h_pct=codex_util)
 
     return {
         "schema": "uaos-subworker-optimization-v1",
         "antigravity_boost_plan": agy_plan,
+        "official_3tool_helper_designation": lineup,
         "three_tool_ollama_boost": {
             "antigravity": {
                 "active": agy_boost,
@@ -2944,6 +3031,12 @@ def compute_subworker_optimization(engines: dict[str, dict[str, Any]]) -> dict[s
                 "mandatory_read_map_lines": 100 if agy_boost else 150,
                 "target_ollama_offload_pct": 60.0,
                 "haiku_policy": "QUARANTINED_NO_API_SPEND",
+                "designated_helper_model": agy_sel["designated_helper_model"],
+                "designated_helper_models": list(lineup["antigravity"]["designated_helper_models"]),
+                "designated_reasoning_model": agy_sel["designated_reasoning_model"],
+                "helper_thinking_level": agy_sel["helper_thinking_level"],
+                "reasoning_thinking_level": agy_sel["reasoning_thinking_level"],
+                "thinking_levels": list(lineup["antigravity"]["thinking_levels"]),
             },
             "claude": {
                 "active": claude_boost,
@@ -2953,6 +3046,12 @@ def compute_subworker_optimization(engines: dict[str, dict[str, Any]]) -> dict[s
                 "mandatory_read_map_lines": 100 if claude_boost else 150,
                 "target_ollama_offload_pct": 50.0,
                 "haiku_policy": "ACTIVE_DISJOINT_SUBAGENT_12K_CAP",
+                "designated_helper_model": claude_sel["designated_helper_model"],
+                "designated_helper_models": list(lineup["claude"]["designated_helper_models"]),
+                "designated_reasoning_model": claude_sel["designated_reasoning_model"],
+                "helper_thinking_level": claude_sel["helper_thinking_level"],
+                "reasoning_thinking_level": claude_sel["reasoning_thinking_level"],
+                "thinking_levels": list(lineup["claude"]["thinking_levels"]),
             },
             "codex": {
                 "active": codex_boost,
@@ -2962,6 +3061,12 @@ def compute_subworker_optimization(engines: dict[str, dict[str, Any]]) -> dict[s
                 "mandatory_read_map_lines": 100 if codex_boost else 150,
                 "target_ollama_offload_pct": 60.0,
                 "haiku_policy": "QUARANTINED_NO_API_SPEND",
+                "designated_helper_model": codex_sel["designated_helper_model"],
+                "designated_helper_models": list(lineup["codex"]["designated_helper_models"]),
+                "designated_reasoning_model": codex_sel["designated_reasoning_model"],
+                "helper_thinking_level": codex_sel["helper_thinking_level"],
+                "reasoning_thinking_level": codex_sel["reasoning_thinking_level"],
+                "thinking_levels": list(lineup["codex"]["thinking_levels"]),
             },
         },
         "claude_internal_subworker_balance": {
