@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -1676,6 +1677,17 @@ def cmd_card_audit(args: argparse.Namespace) -> int:
     except ValueError as exc:
         _print_json({"ok": False, "error": str(exc)})
         return 2
+    # U301: a repo that ships a UAOS VERSION may not pass audit with a missing, skipped or mismatched version-up.
+    repo = Path(args.project).resolve()
+    if (repo / "uaos_everywhere" / "VERSION").is_file():
+        from . import version_gate
+
+        try:
+            gate = version_gate.check(repo)
+        except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+            gate = {"ok": False, "codes": ["VERSION_GATE_UNAVAILABLE"], "error": str(exc)[:200]}
+        result["version_gate"] = gate
+        result["ok"] = bool(result["ok"] and gate["ok"])
     _print_json(result)
     return 0 if result["ok"] else 1
 
@@ -2861,6 +2873,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if arguments and arguments[0] == "usage":
         from .usage_accounting import main as usage_main
         return usage_main(arguments[1:])
+    if arguments and arguments[0] == "version":
+        from .version_gate import main as version_main
+        return version_main(arguments[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     if (getattr(args, "coord_subcommand", None) in _DESK_COMMANDS or getattr(args, "docs_cmd", None)) and getattr(args, "project", None):
