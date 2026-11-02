@@ -1089,10 +1089,10 @@ def build_parser() -> argparse.ArgumentParser:
                              help="U129: mark the card's window done so its Claude session can take the next card")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
-    # U287: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
+    # U287/U292/U293: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
     p_coord_lanes = p_coord_subs.add_parser(
         "lanes",
-        help="U287: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
+        help="U287/U292/U293: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
     )
     p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards", "claim-topmost-window"], default="status")
@@ -2160,7 +2160,10 @@ def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
         if not should_gate(hook):
             return 0
         # U146a-R: the hook's session owns the claim; without one the gate claims nothing and allows the stop.
-        result = gate(project, args.tool, session=hook_session(hook))
+        from .coord.stop_gate import approval_ask_hold
+        result = approval_ask_hold(hook, args.tool)  # U294: no turn ends on an approval or choice question
+        if result is None:
+            result = gate(project, args.tool, session=hook_session(hook))
         # U201: whenever the turn ends or is held, the user also sees why work waits or stopped; ASCII JSON,
         # since a cp949 console cannot print it and the fail-open handler would swallow the error
         from .coord.wait_reason import stop_output
@@ -2733,7 +2736,11 @@ _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "
 
 
 def cmd_coord_lanes(args: argparse.Namespace) -> int:
+<<<<<<< HEAD
     """U287: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
+=======
+    """U287/U292: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
+>>>>>>> origin/main
     from .coord.process_lanes import (
         audit_and_clear_nonstop_obstacles,
         classify_process_lane,
@@ -2779,8 +2786,6 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
     if action == "orchestrate-cards":
         from .coord.card_sessions import orchestrate_card_parallel_batch
         raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
-        if not raw_cards:
-            raw_cards = ["U291", "U290", "U287", "U276+U284"]
         res = orchestrate_card_parallel_batch(
             project,
             raw_cards,
