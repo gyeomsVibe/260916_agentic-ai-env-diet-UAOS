@@ -177,7 +177,7 @@ def allocate_next_doc_number(project_root: Path, target_date: Optional[datetime]
     Returns (next_num, next_prefix), e.g. (84, '84_').
     """
     entries = scan_docs(project_root)
-    valid_numbers = [e.number for e in entries if e.number is not None and 0 < e.number < 10000 and not e.is_index]
+    valid_numbers = [e.number for e in entries if e.number is not None and not e.is_index]
     
     if not valid_numbers:
         return 1, "01_"

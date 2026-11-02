@@ -128,4 +128,3 @@
 | 105 | [`105_MIA_U275_CRITIC_REDTEAM_자율신호수_3단계_완결보고서.html`](105_MIA_U275_CRITIC_REDTEAM_자율신호수_3단계_완결보고서.html) | [U275] /CRITIC /REDTEAM → /STEPBYSTEP /OPTIMIZE 독립개체 자율 신호수 3단계 고도화 완결 보고서 |
 | 132 | [132_uaos_cockpit_hybrid_dashboard_and_hud_widget.html](132_uaos_cockpit_hybrid_dashboard_and_hud_widget.html) | UAOS-RSI 2계층 하이브리드 모니터링(Tier-1 대시보드 + Tier-2 HUD 맥락 위젯) 및 Cockpit Tools 이식 실가동 계기판 | Dashboard/HUD | antigravity | 2026-10-27 |
 - [`docs/106_MIA_클로드_401재로그인_무한스피너_원인규명_및_신호수_자율구출_보고서.html`](106_MIA_클로드_401재로그인_무한스피너_원인규명_및_신호수_자율구출_보고서.html) — U275 클로드 데스크톱 401 재로그인 무한 스피너 원인 규명 및 독립개체 신호수 자율 구출 보고서 (2026-10-27)
-| 134 | [134_UAOS_RSI_problems_and_dilemmas_full_audit_report.html](134_UAOS_RSI_problems_and_dilemmas_full_audit_report.html) | UAOS-RSI 운영체제 문제점 및 5대 난제 심층 분석 보고서 | Report/Audit | antigravity | 2026-11-02 |

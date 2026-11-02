@@ -52,6 +52,7 @@
 | `deploy_pc.py:237` | FIXED_PLAN | 배포 단계 목록(`steps`)은 `deploy_pc`가 코드로 만든다. push 단계에만 ALLOW_PUSH를 준다. 원격 쓰기는 사람 승인 경계다. |
 | `global_install.py:417` | FIXED_PLAN | `schtasks /Create …`, `schtasks /Run …`. 작업 이름과 .cmd 경로는 설치기가 정한다. |
 | `rsi_release.py:674` | FIXED_PLAN | `rsi schedule`의 예약 작업 명령. 기본 드라이런이고 `--apply`에서만 실행된다. |
+| `version_gate.py:110` | FIXED_PLAN | `_git()`은 실행 파일 `git`이 고정이고, 호출처는 읽기 전용 `merge-base`·`diff --name-only`·`log`·`show`·`ls-files`만 쓴다. 바뀌는 값은 기준 ref와 경로 한 칸뿐이고 `shell=False`다. |
 | `execution/launcher.py:117` | FIXED_PLAN | `taskkill /F /T /PID <pid>`. pid는 이 프로세스가 띄운 자식이다. |
 | `execution/launcher.py:211` | FIXED_PLAN | `python -c <script>`. script는 `build_worker_script()`가 만든 고정 템플릿이다(`custom_script`는 시험용 인자). |
 | `olla.py:562` | FIXED_PLAN | `python -m v7_harness.olla digest -f <파일 경로>`. 경로 한 칸만 바뀐다. |
