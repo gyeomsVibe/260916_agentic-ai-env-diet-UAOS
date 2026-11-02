@@ -455,6 +455,17 @@ def build_card_parallel_launch_spec(
     card_uuid = str(existing.get("id") or deterministic_card_session_uuid(desk, primary_card, selected_tool))
     native_claude_id = str(existing.get("native_id") or f"local_{card_uuid}")
 
+    from .helper_thinking_router import select_optimal_helper_and_thinking
+
+    helper_thinking_sel = select_optimal_helper_and_thinking(
+        selected_tool,
+        card=primary_card,
+        role=role_slug,
+        lane_id=lane_id,
+        purpose=f"{core_title} {role}".strip(),
+        multi_file=len(allowed_files) > 1,
+    )
+
     allowed_clause = ", ".join(allowed_files) if allowed_files else f"files scoped to {card_label} contract manual"
     accept_clause = accept_cmd.strip() or "python -m unittest discover -s tests -t ."
     pr_clause = f" Target PR: {pr_url}." if pr_url else ""
@@ -507,6 +518,7 @@ def build_card_parallel_launch_spec(
         "native_claude_id": native_claude_id,
         "parent_session_id": parent_session_id,
         "topmost_user_window": topmost_spec,
+        "helper_thinking_selection": helper_thinking_sel,
         "worktree_path": worktree_rel,
         "branch": branch_name,
         "chapter_title": CHAPTER_TITLE_KO,

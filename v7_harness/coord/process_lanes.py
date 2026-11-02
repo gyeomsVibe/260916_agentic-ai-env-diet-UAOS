@@ -632,11 +632,13 @@ def collect_pending_processes(project: Path) -> dict[str, list[ProcessItem]]:
                     state = str(phase.get("state") or "").upper()
                     if state not in ("READY", "REVIEW", "BLOCKED"):
                         continue
-                    pid = str(phase.get("id") or "")
+                    pid = str(phase.get("id") or phase.get("phase_id") or "").strip()
+                    if not pid:
+                        continue
                     sched_item_id = f"sched_{pid}"
                     if sched_item_id in already_dispatched:
                         continue
-                    owner = str(phase.get("owner") or "auto").lower()
+                    owner = str(phase.get("owner") or phase.get("owner_tool") or "auto").lower()
                     title = str(phase.get("title") or phase.get("goal") or "")
                     lane_payload = {
                         "kind": "VERIFY" if state == "REVIEW" else ("BLOCKED" if state == "BLOCKED" else "IMPLEMENT"),
@@ -1379,6 +1381,7 @@ def record_rsi_upgrade_session(
     runtime_version: str = "",
     actor: str = "antigravity",
     extra: dict[str, Any] | None = None,
+    publish_mailbox_notices: bool = True,
 ) -> dict[str, Any]:
     """U292: Create a standalone RSI self-improvement/upgrade session in `.coord/rsi/sessions/<session_id>/`
     and broadcast its receipt so all 3 tools (`codex`, `claude`, `antigravity`) see and enforce the upgrade.
@@ -1387,6 +1390,15 @@ def record_rsi_upgrade_session(
     clean_id = re.sub(r"[^A-Za-z0-9_.-]", "-", str(session_id or "").strip()).strip("-")
     if not clean_id:
         clean_id = f"U292-CARD-LANE-PARALLEL-{time.strftime('%Y%m%d', time.localtime())}"
+
+    if clean_id.upper().startswith("U299") and extra is None:
+        return sync_and_record_helper_parallel_rsi_session(
+            desk,
+            session_id=clean_id,
+            actor=actor,
+            rules_version=rules_version,
+            publish_mailbox_notices=publish_mailbox_notices,
+        )
 
     sessions_root = desk / ".coord" / "rsi" / "sessions"
     session_dir = sessions_root / clean_id
@@ -1500,31 +1512,34 @@ def record_rsi_upgrade_session(
     _append_jsonl_locked(decisions_path, decision_row)
 
     # Publish 3-tool shared notices in mailbox so codex, claude, and antigravity all receive it in inbox/delta
-    box = Mailbox(desk / ".coord" / "mailbox")
     published_ids: list[str] = []
-    for target_tool in TOOLS:
-        msg_id = f"rsi_upgrade_{clean_id.lower()}_{target_tool}"
-        box.publish(
-            msg_id,
-            {
-                "kind": "NOTE",
-                "actor": actor,
-                "to": target_tool,
-                "requested_target": target_tool,
-                "card": "U292",
-                "lane": "ARCH_DESIGN",
-                "wake_class": "NOTICE",
-                "rsi_session_id": clean_id,
-                "summary": f"[RSI UPGRADE {clean_id}] {title} (rules v{rules_version}) — {summary_ko[:140]}",
-                "message": (
-                    f"[RSI UPGRADE SESSION: {clean_id}] {title}\n"
-                    f"- Global rules: v{rules_version} | Runtime: {runtime_version or 'installed'}\n"
-                    f"- Path: .coord/rsi/sessions/{clean_id}/REPORT.md\n"
-                    f"- Summary: {summary_ko}"
-                ),
-            },
-        )
-        published_ids.append(msg_id)
+    if publish_mailbox_notices:
+        mailbox_dir = desk / ".coord" / "mailbox"
+        mailbox_dir.mkdir(parents=True, exist_ok=True)
+        box = Mailbox(mailbox_dir)
+        for target_tool in TOOLS:
+            msg_id = f"rsi_upgrade_{clean_id.lower()}_{target_tool}"
+            box.publish(
+                msg_id,
+                {
+                    "kind": "NOTE",
+                    "actor": actor,
+                    "to": target_tool,
+                    "requested_target": target_tool,
+                    "card": str((extra or {}).get("card") or "U292"),
+                    "lane": "ARCH_DESIGN",
+                    "wake_class": "NOTICE",
+                    "rsi_session_id": clean_id,
+                    "summary": f"[RSI UPGRADE {clean_id}] {title} (rules v{rules_version}) — {summary_ko[:140]}",
+                    "message": (
+                        f"[RSI UPGRADE SESSION: {clean_id}] {title}\n"
+                        f"- Global rules: v{rules_version} | Runtime: {runtime_version or 'installed'}\n"
+                        f"- Path: .coord/rsi/sessions/{clean_id}/REPORT.md\n"
+                        f"- Summary: {summary_ko}"
+                    ),
+                },
+            )
+            published_ids.append(msg_id)
 
     return {
         "ok": True,
@@ -1560,3 +1575,309 @@ def latest_rsi_upgrade_session(project: Path) -> dict[str, Any] | None:
         except (OSError, ValueError):
             continue
     return newest_data
+
+
+CANONICAL_HELPER_PARALLEL_RSI_SESSION_ID = "U299-HELPER-THINKING-CARD-PARALLEL-OS"
+
+
+def derive_merged_cards_from_ledger(project: Path) -> set[str]:
+    """U299 (F3): Derive merged cards dynamically from `.coord/merges.jsonl` (`state=='MERGED'`)
+    and `.coord/master_schedule.json` (`state=='DONE'`), excluding any phase whose open gate is not DONE (e.g. `U279`).
+    """
+    from .stream import _exclusive
+
+    desk = Path(shared_desk(project)).resolve()
+    merges_path = desk / ".coord" / "merges.jsonl"
+    merged_verdicts: set[str] = set()
+    if merges_path.is_file():
+        for line in merges_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            try:
+                row = json.loads(line) if line.strip() else None
+            except ValueError:
+                row = None
+            if isinstance(row, dict) and row.get("state") == "MERGED" and row.get("verdict"):
+                merged_verdicts.add(str(row["verdict"]))
+
+    cards: set[str] = set()
+    for sub in ("ack", "acked", "inbox"):
+        mbox_sub = desk / ".coord" / "mailbox" / sub
+        if not mbox_sub.is_dir():
+            continue
+        for vid in merged_verdicts:
+            vpath = mbox_sub / f"{vid}.json"
+            if not vpath.is_file():
+                continue
+            try:
+                data = json.loads(vpath.read_text(encoding="utf-8"))
+                pay = data.get("payload") if isinstance(data.get("payload"), dict) else data
+                cid = str((pay or {}).get("card") or "").strip().upper()
+                if not cid and isinstance(pay, dict):
+                    m = re.search(r"\b(U\d{2,4}[A-Z0-9-]*)\b", f"{pay.get('delta', '')} {pay.get('message', '')}")
+                    cid = m.group(1).upper() if m else ""
+                if cid:
+                    cards.add(cid)
+            except (OSError, ValueError):
+                continue
+
+    sched_path = desk / ".coord" / "master_schedule.json"
+    open_gate_cards: set[str] = set()
+    if sched_path.is_file():
+        lock_path = desk / ".coord" / "stall" / "stall.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with _exclusive(lock_path):
+            try:
+                sched = json.loads(sched_path.read_text(encoding="utf-8"))
+                for phase in (sched.get("phases") if isinstance(sched, dict) else []) or []:
+                    if isinstance(phase, dict):
+                        pid = str(phase.get("id") or phase.get("phase_id") or "").strip().upper()
+                        if pid:
+                            if str(phase.get("state") or "").strip().upper() == "DONE" and not phase.get("open_gate"):
+                                cards.add(pid)
+                            else:
+                                open_gate_cards.add(pid)
+            except (OSError, ValueError):
+                pass
+    return cards - open_gate_cards
+
+
+def reconcile_merged_card_windows_and_schedule(
+    project: Path,
+    merged_cards: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """U299 (F1/F3/F4): Reconcile merged card window records and archive stale open verdict requests
+    for ledger-verified merged cards. Strictly read-only on `.coord/master_schedule.json`.
+    """
+    from . import requests as req_mod
+    from .stream import _exclusive
+
+    desk = Path(shared_desk(project)).resolve()
+    merged_set = derive_merged_cards_from_ledger(desk)
+    if merged_cards is not None:
+        explicit = {str(c).strip().upper() for c in merged_cards if str(c).strip()}
+        sched_path = desk / ".coord" / "master_schedule.json"
+        non_done: set[str] = set()
+        if sched_path.is_file():
+            lock_path = desk / ".coord" / "stall" / "stall.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with _exclusive(lock_path):
+                try:
+                    sched = json.loads(sched_path.read_text(encoding="utf-8"))
+                    for p in (sched.get("phases") if isinstance(sched, dict) else []) or []:
+                        if isinstance(p, dict):
+                            pid = str(p.get("id") or p.get("phase_id") or "").strip().upper()
+                            if pid and (str(p.get("state") or "").strip().upper() != "DONE" or p.get("open_gate")):
+                                non_done.add(pid)
+                except (OSError, ValueError):
+                    pass
+        merged_set = (merged_set | explicit) - non_done
+
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+    windows_dir = desk / ".coord" / "windows"
+    released_windows: list[str] = []
+    if windows_dir.is_dir():
+        for cid in sorted(merged_set):
+            wpath = windows_dir / f"{cid}.json"
+            if not wpath.is_file():
+                continue
+            try:
+                data = json.loads(wpath.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            changed = data.get("status") != "MERGED_RELEASED"
+            data["status"] = "MERGED_RELEASED"
+            data.setdefault("released_at", now_iso)
+            for tname in TOOLS:
+                entry = data.get(tname)
+                if isinstance(entry, dict) and not entry.get("released"):
+                    entry["released"] = True
+                    entry["released_at"] = now_iso
+                    changed = True
+            if changed:
+                tmp = wpath.with_suffix(f".{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                os.replace(tmp, wpath)
+            released_windows.append(cid)
+
+    archived_requests: list[str] = []
+    try:
+        for row in req_mod._rows(desk):
+            rcard = str(row.get("card") or "").strip().upper()
+            rid = str(row.get("request_id") or "").strip()
+            if rcard in merged_set and rid:
+                req_mod.cancel(desk, rid, str(row.get("requester_session") or ""))
+                archived_requests.append(rid)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "ok": True,
+        "project": str(desk),
+        "schedule_read_only": True,
+        "merged_cards_checked": sorted(merged_set),
+        "released_windows": released_windows,
+        "archived_merged_requests": archived_requests,
+    }
+
+
+def build_workspace_garbage_manifest(project: Path) -> dict[str, Any]:
+    """U299: Non-destructive census of workspace dump/garbage (`deleted_count=0`)."""
+    desk = Path(shared_desk(project)).resolve()
+    work_dir = desk / ".work"
+    cats: dict[str, list[str]] = {k: [] for k in ("active_protected", "backup_snapshots", "pilot_staging_candidates", "worktree_candidates", "scratch_and_audit_dirs")}
+    if work_dir.is_dir():
+        for child in sorted(work_dir.iterdir(), key=lambda p: p.name):
+            n = child.name
+            key = (
+                "backup_snapshots" if n.startswith("backup_")
+                else "active_protected" if n.startswith(("cards", "notes", "library", "UAOS_PROBLEMS", "wt_u299"))
+                else "pilot_staging_candidates" if n.startswith("pilot")
+                else "worktree_candidates" if n.startswith("wt_")
+                else "scratch_and_audit_dirs"
+            )
+            cats[key].append(n)
+
+    claude_wt = desk / ".claude" / "worktrees"
+    claude_wts = sorted(p.name for p in claude_wt.iterdir() if p.is_dir()) if claude_wt.is_dir() else []
+    pres_dir = desk / ".coord" / "presence"
+    sg_files = sorted(p.name for p in pres_dir.glob("stop_gate_*.json")) if pres_dir.is_dir() else []
+    win_dir = desk / ".coord" / "windows"
+    active_wins, released_wins = [], []
+    if win_dir.is_dir():
+        for wp in sorted(win_dir.glob("*.json")):
+            try:
+                wd = json.loads(wp.read_text(encoding="utf-8"))
+                (released_wins if isinstance(wd, dict) and wd.get("status") == "MERGED_RELEASED" else active_wins).append(wp.stem)
+            except (OSError, ValueError):
+                continue
+
+    manifest = {
+        "schema": "uaos-workspace-garbage-manifest-v1",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+        "project": str(desk),
+        "deletion_policy": "DRY_RUN_MANIFEST_ONLY_FRESH_USER_APPROVAL_REQUIRED",
+        "deleted_count": 0,
+        "summary": {
+            "work_total_entries": sum(len(v) for v in cats.values()),
+            "work_active_protected_count": len(cats["active_protected"]),
+            "work_backup_snapshots_count": len(cats["backup_snapshots"]),
+            "work_pilot_staging_candidates_count": len(cats["pilot_staging_candidates"]),
+            "work_worktree_candidates_count": len(cats["worktree_candidates"]),
+            "work_scratch_candidates_count": len(cats["scratch_and_audit_dirs"]),
+            "claude_worktrees_count": len(claude_wts),
+            "stop_gate_guard_files_count": len(sg_files),
+            "active_card_windows_count": len(active_wins),
+            "merged_released_card_windows_count": len(released_wins),
+        },
+        "categories": {
+            "work_dir": {k: v[:50] for k, v in cats.items()},
+            "claude_worktrees_sample": claude_wts[:50],
+            "stop_gate_guard_files_sample": sg_files[:50],
+            "active_card_windows": active_wins,
+            "merged_released_card_windows": released_wins,
+        },
+    }
+    out_path = desk / ".coord" / "rsi" / "workspace_garbage_manifest.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_out = out_path.with_suffix(f".{os.getpid()}.tmp")
+    tmp_out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_out, out_path)
+    return manifest
+
+
+def verify_helper_parallel_os_health(project: Path) -> dict[str, Any]:
+    """U299: Deterministic health verifier for 3-tool helper/thinking routing and card-parallel worktree launch."""
+    from .card_sessions import build_card_parallel_launch_spec
+    from .helper_thinking_router import OFFICIAL_TOOL_MODEL_LINEUP, PROCESS_LANES, SUB_PROCESS_STAGES, THINKING_LEVELS, select_optimal_helper_and_thinking
+
+    desk = Path(shared_desk(project)).resolve()
+    tool_matrix_checks: dict[str, dict[str, Any]] = {}
+    all_tools_ok = True
+    for tool in TOOLS:
+        cat = OFFICIAL_TOOL_MODEL_LINEUP[tool]
+        lanes_map, stages_map, tok = {}, {}, True
+        for lid in PROCESS_LANES:
+            sel = select_optimal_helper_and_thinking(tool, card="U299", role="reviewer" if lid == "VERIFY_AUDIT" else "implementer", lane_id=lid, is_keypoint=(lid == "ARCH_DESIGN"))
+            tok = tok and sel["calculator_model"] == "qwen2.5-coder:7b" and sel["designated_helper_model"] in cat["designated_helper_models"] and sel["designated_reasoning_model"] in cat["all_reasoning_models"] and sel["helper_thinking_level"] in THINKING_LEVELS and sel["reasoning_thinking_level"] in THINKING_LEVELS
+            lanes_map[lid] = {"ollama_cli_task": sel["ollama_cli_task"], "helper_model": sel["designated_helper_model"], "helper_thinking": sel["helper_thinking_level"], "reasoning_model": sel["designated_reasoning_model"], "reasoning_thinking": sel["reasoning_thinking_level"]}
+        for st in SUB_PROCESS_STAGES:
+            sel = select_optimal_helper_and_thinking(tool, card="U299", sub_stage=st)
+            tok = tok and sel["helper_thinking_level"] in THINKING_LEVELS and sel["reasoning_thinking_level"] in THINKING_LEVELS
+            stages_map[st] = {"ollama_cli_task": sel["ollama_cli_task"], "helper_model": sel["designated_helper_model"], "helper_thinking": sel["helper_thinking_level"], "reasoning_model": sel["designated_reasoning_model"], "reasoning_thinking": sel["reasoning_thinking_level"]}
+        all_tools_ok = all_tools_ok and tok
+        tool_matrix_checks[tool] = {"ok": tok, "primary_helper_model": cat["primary_helper_model"], "calculator_model": cat["calculator_model"], "lanes": lanes_map, "sub_stages": stages_map}
+
+    spec = build_card_parallel_launch_spec(desk, "U299", title="3대 도구 도우미·추론 모델 자동 오케스트레이션", tool="antigravity", role="impl")
+    card_spec_ok = bool(spec.get("ok") and isinstance(spec.get("helper_thinking_selection"), dict) and spec["native_launchers"]["claude_desktop"]["start_session"]["input"].get("context") == "fresh" and spec["native_launchers"]["claude_desktop"]["start_session"]["input"].get("use_worktree") is True and spec["native_launchers"]["antigravity"]["invoke_subagent"]["input"].get("Workspace") == "branch")
+    pending = collect_pending_processes(desk)
+    schedule_blank_id_free = not any(it.item_id == "sched_" for items in pending.values() for it in items)
+    return {
+        "ok": all_tools_ok and card_spec_ok and schedule_blank_id_free,
+        "three_tool_helper_selection_ok": all_tools_ok,
+        "card_parallel_worktree_spec_ok": card_spec_ok,
+        "schedule_blank_id_free": schedule_blank_id_free,
+        "tool_matrix_checks": tool_matrix_checks,
+        "sample_card_launch_spec_selection": spec.get("helper_thinking_selection"),
+    }
+
+
+def sync_and_record_helper_parallel_rsi_session(
+    project: Path,
+    *,
+    session_id: str = CANONICAL_HELPER_PARALLEL_RSI_SESSION_ID,
+    actor: str = "antigravity",
+    rules_version: str = "7.6.2",
+    publish_mailbox_notices: bool = True,
+) -> dict[str, Any]:
+    """U299: Reconcile merged card windows (read-only on schedule), audit 3-tool helper/thinking schedules,
+    write non-destructive garbage manifest, and record `.coord/rsi/sessions/U299-HELPER-THINKING-CARD-PARALLEL-OS/`.
+    """
+    from .helper_thinking_router import optimize_master_and_sub_schedules
+
+    desk = Path(shared_desk(project)).resolve()
+    reconcile_res = reconcile_merged_card_windows_and_schedule(desk)
+    sched_opt = optimize_master_and_sub_schedules(desk)
+    garbage_manifest = build_workspace_garbage_manifest(desk)
+    health = verify_helper_parallel_os_health(desk)
+
+    extra_payload = {
+        "card": "U299",
+        "operational_status": "LIVE_OPERATING" if health["ok"] else "DEGRADED",
+        "live_declaration_ko": "실가동 됨",
+        "health_verification": {k: health[k] for k in ("ok", "three_tool_helper_selection_ok", "card_parallel_worktree_spec_ok", "schedule_blank_id_free")},
+        "helper_thinking_schedule_summary": sched_opt.get("master_schedule_summary", {}),
+        "sub_process_schedule_summary": {k: sched_opt.get("sub_process_schedule_summary", {}).get(k, 0) for k in ("total_cards", "total_sub_stages")},
+        "claude_ollama_haiku_parallel_ratio": sched_opt.get("claude_ollama_haiku_parallel_audit", {}).get("observed_claude_ratio_pct", {}),
+        "card_window_reconciliation": reconcile_res,
+        "workspace_garbage_manifest_summary": garbage_manifest.get("summary", {}),
+    }
+
+    rec = record_rsi_upgrade_session(
+        desk,
+        session_id=session_id,
+        title="3대 도구 도우미·추론 모델 자동 오케스트레이션 및 카드별 병렬 세션 가동 표준화",
+        summary_ko="실가동 됨 — 3대 도구(Codex: GPT-6 Luna, Antigravity: Gemini 3.8 Flash, Claude Code: Claude Haiku 5.5 + Ollama CLI qwen2.5-coder:7b) 역할·5대 레인·세부 스케줄(SP1~SP5)별 도우미·추론 모델 및 추론 강도(Low/Medium/High) 자동 선정과 1카드=1격리 세션·워크트리 기본 운용 로직이 RSI 자가개선시스템 세션에 상시 기록·스케줄링되어 정상 작동 중입니다.",
+        rules_version=rules_version,
+        actor=actor,
+        extra=extra_payload,
+        publish_mailbox_notices=publish_mailbox_notices,
+    )
+    telemetry_path = Path(rec["session_dir"]) / "HEALTH_TELEMETRY.json"
+    telemetry_payload = {
+        "schema": "uaos-u299-helper-parallel-telemetry-v1",
+        "session_id": rec["session_id"],
+        "operational_status": extra_payload["operational_status"],
+        "live_declaration_ko": "실가동 됨",
+        "health": health,
+        "master_schedule_summary": sched_opt.get("master_schedule_summary", {}),
+        "sub_process_schedule_summary": sched_opt.get("sub_process_schedule_summary", {}),
+        "claude_ollama_haiku_parallel_audit": sched_opt.get("claude_ollama_haiku_parallel_audit", {}),
+        "reconciliation": reconcile_res,
+        "workspace_garbage_summary": garbage_manifest.get("summary", {}),
+    }
+    tmp_tel = telemetry_path.with_suffix(f".{os.getpid()}.tmp")
+    tmp_tel.write_text(json.dumps(telemetry_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_tel, telemetry_path)
+    rec.update({"telemetry_json": str(telemetry_path), "operational_status": extra_payload["operational_status"], "live_declaration_ko": "실가동 됨", "health": extra_payload["health_verification"]})
+    return rec

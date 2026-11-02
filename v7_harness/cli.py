@@ -2712,6 +2712,35 @@ def cmd_rsi_watch(args: argparse.Namespace) -> int:
     res = run_scheduler_cycle(project, config, now=time.time(), sleeper=time.sleep, record=_record,
                               fetch=lambda source, timeout: file_source_fetch(project, source, timeout),
                               trigger=lambda bundle: durable_trigger(project, bundle))
+    if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") and (
+        (project / ".coord" / "master_schedule.json").is_file()
+        or (project / ".coord" / "sub_process_schedule.json").is_file()
+    ):
+        try:
+            from .coord.process_lanes import sync_and_record_helper_parallel_rsi_session
+
+            u299_res = sync_and_record_helper_parallel_rsi_session(project, publish_mailbox_notices=False)
+            res["u299_rsi_session"] = {
+                "ok": bool(u299_res.get("ok", True)),
+                "session_id": u299_res.get("session_id"),
+                "operational_status": u299_res.get("operational_status"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            from .coord.stream import StreamRejected, append_event
+
+            err_msg = f"{type(exc).__name__}: {exc}"[:200]
+            res["u299_rsi_session"] = {"ok": False, "error": err_msg}
+            try:
+                append_event(
+                    project,
+                    actor="antigravity",
+                    kind="BLOCKED",
+                    step="U299",
+                    summary=f"rsi watch U299 session sync failed: {err_msg}"[:200],
+                    evidence={"cmd": "rsi watch", "exit": 1},
+                )
+            except (StreamRejected, OSError, RuntimeError):
+                res["u299_rsi_session"]["log_error"] = "STREAM_REJECTED"
     _print_json(res)
     return 0 if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") else 1
 
