@@ -1170,7 +1170,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="U287/U292/U293: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
     )
     p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards", "claim-topmost-window", "heal-dilemmas"], default="status")
+    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards", "claim-topmost-window"], default="status")
     p_coord_lanes.add_argument("--session-id", default="", help="U292: RSI upgrade session ID for record-rsi-session")
     p_coord_lanes.add_argument("--title", default="", help="U292: RSI upgrade session title")
     p_coord_lanes.add_argument("--rules-version", default="7.6.2", help="U292: Global rules version pinned in RSI session")
@@ -2899,20 +2899,11 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
         audit_and_clear_nonstop_obstacles,
         classify_process_lane,
         handoff_lane_result,
-        heal_all_rsi_dilemmas_and_record_session,
         list_lane_windows,
         multiplex_and_dispatch_parallel,
         open_or_reuse_card_parallel_windows,
         record_rsi_upgrade_session,
     )
-    if getattr(args, "action", "status") == "heal-dilemmas":
-        res = heal_all_rsi_dilemmas_and_record_session(
-            Path(args.project),
-            actor=args.actor,
-            rules_version=getattr(args, "rules_version", "0.4.0") or "0.4.0",
-        )
-        print(json.dumps(res, ensure_ascii=False, indent=2))
-        return 0 if res.get("ok") else 1
     if getattr(args, "action", "status") == "clear-obstacles":
         res = audit_and_clear_nonstop_obstacles(Path(args.project))
         print(json.dumps(res, ensure_ascii=False, indent=2))
@@ -3030,10 +3021,17 @@ def _add_docs_parsers(subparsers) -> None:
         each.add_argument("--project", default=".", help="Project directory (default: .)")
 
 
+def _docs_root(project: str) -> Path:
+    """U302: documents always land in the main checkout's docs/, never in the worktree a tool session runs in."""
+    from .coord.hook_context import shared_desk
+
+    return shared_desk(Path(project).resolve())
+
+
 def cmd_docs_new(args: argparse.Namespace) -> int:
     """Create a new auto-numbered document and register in docs/00_DOCUMENT_INDEX.md."""
     from .docs_manager import register_new_doc
-    project = Path(args.project)
+    project = _docs_root(args.project)
     src = Path(args.from_file) if getattr(args, "from_file", None) else None
     path = register_new_doc(project, title=args.title, slug=args.slug,
                             category=args.category, author_tool=args.tool,
@@ -3048,7 +3046,7 @@ def cmd_docs_new(args: argparse.Namespace) -> int:
 def cmd_docs_next_num(args: argparse.Namespace) -> int:
     """Calculate and return the next sequential document number and prefix."""
     from .docs_manager import allocate_next_doc_number
-    num, prefix = allocate_next_doc_number(Path(args.project))
+    num, prefix = allocate_next_doc_number(_docs_root(args.project))
     print(json.dumps({"ok": True, "next_number": num, "prefix": prefix}, ensure_ascii=False))
     return 0
 
@@ -3058,7 +3056,7 @@ def cmd_docs_next_num(args: argparse.Namespace) -> int:
 def cmd_docs_sync(args: argparse.Namespace) -> int:
     """Audit and synchronize docs/00_DOCUMENT_INDEX.md table with existing documents."""
     from .docs_manager import sync_doc_index
-    count = sync_doc_index(Path(args.project))
+    count = sync_doc_index(_docs_root(args.project))
     print(json.dumps({"ok": True, "synced_count": count, "index": "docs/00_DOCUMENT_INDEX.md"}, ensure_ascii=False))
     return 0
 
