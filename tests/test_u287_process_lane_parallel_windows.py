@@ -113,22 +113,28 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
         assert codex_wid is not None
         self.assertEqual(_resolve_codex_lane_thread(self.project, codex_wid), "")
 
-        # When a real Codex-created rollout exists for the project desk, _resolve_codex_lane_thread routes to it
+        # When a real Codex-created rollout exists, _resolve_codex_lane_thread resolves a verified non-desk lane thread,
+        # never an unbound lane UUID and never the designated user desk thread ("user threads stay user-only").
+        from v7_harness.coord.deliver import register_user_desk
         real_desk_tid = "11111111-2222-4333-8444-555555555555"
+        real_lane_tid = "22222222-3333-4444-8555-666666666666"
         day_dir = self.codex_sessions_dir / "2026" / "11" / "02"
         day_dir.mkdir(parents=True, exist_ok=True)
-        real_rollout = day_dir / f"rollout-2026-11-02T00-00-00-{real_desk_tid}.jsonl"
-        real_rollout.write_text(
-            json.dumps({
-                "timestamp": "2026-11-02T00:00:00Z",
-                "type": "session_meta",
-                "payload": {"id": real_desk_tid, "session_id": real_desk_tid, "cwd": str(self.project.resolve())},
-            }) + "\n",
-            encoding="utf-8",
-        )
-        self.assertEqual(_resolve_codex_lane_thread(self.project, real_desk_tid), real_desk_tid)
+        for tid in (real_desk_tid, real_lane_tid):
+            rollout = day_dir / f"rollout-2026-11-02T00-00-00-{tid}.jsonl"
+            rollout.write_text(
+                json.dumps({
+                    "timestamp": "2026-11-02T00:00:00Z",
+                    "type": "session_meta",
+                    "payload": {"id": tid, "session_id": tid, "cwd": str(self.project.resolve())},
+                }) + "\n",
+                encoding="utf-8",
+            )
+        register_user_desk(self.project, "codex", real_desk_tid, source="UserPromptSubmit")
+        self.assertEqual(_resolve_codex_lane_thread(self.project, real_lane_tid), real_lane_tid)
+        self.assertEqual(_resolve_codex_lane_thread(self.project, real_desk_tid), "")
         self.assertEqual(_resolve_codex_lane_thread(self.project, codex_wid), "")
-        chosen, _fb, status = _codex_thread(self.project, _resolve_codex_lane_thread(self.project, codex_wid))
+        chosen, _fb, status = _codex_thread(self.project, "")
         self.assertEqual(status, "DISPATCH")
         self.assertEqual(chosen, real_desk_tid)
 
@@ -486,7 +492,19 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
         self.assertFalse(rsi_res["code_gate"]["rules_synced"], "PLAN.md alone must not mark rules_synced=True")
         rule_file = self.project / "uaos_everywhere" / "uaos_global_rule_block.md"
         rule_file.parent.mkdir(parents=True, exist_ok=True)
-        rule_file.write_text("# UAOS-RSI canonical global rules v7.6.2\n", encoding="utf-8")
+        rule_file.write_text("# arbitrary file mentioning UAOS-RSI v7.6.2\n", encoding="utf-8")
+        rsi_unsynced = record_rsi_upgrade_session(
+            self.project,
+            session_id="U292-CARD-LANE-PARALLEL-WINDOWS-20261101",
+            title="3-Tool Card & Process-Lane Parallel Window Execution OS Upgrade",
+            summary_ko="카드별·분류별 병렬 대화창 가동 로직 3대 도구 전역 규칙 고정 및 실가동 완료.",
+            rules_version="7.6.2",
+            runtime_version="7.6.2-u292",
+            actor="antigravity",
+        )
+        self.assertFalse(rsi_unsynced["code_gate"]["rules_synced"], "Substring 'UAOS-RSI' alone must not mark rules_synced=True")
+        installed_canon = Path(__file__).resolve().parents[1] / "uaos_everywhere" / "uaos_global_rule_block.md"
+        rule_file.write_bytes(installed_canon.read_bytes())
         rsi_synced = record_rsi_upgrade_session(
             self.project,
             session_id="U292-CARD-LANE-PARALLEL-WINDOWS-20261101",

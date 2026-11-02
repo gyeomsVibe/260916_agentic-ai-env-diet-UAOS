@@ -295,22 +295,21 @@ def deterministic_card_session_uuid(project: Path, card: str, tool: str, generat
 
 
 def _resolve_codex_lane_thread(project: Path, candidate_thread_id: str) -> str:
-    """Return `candidate_thread_id` if it is a verified Codex rollout thread, else resolve the verified Codex desk thread; never forge rollout stubs."""
+    """Return `candidate_thread_id` only if it is a verified non-desk Codex rollout thread; never fall back to the user desk or forge rollout stubs."""
     try:
-        from .deliver import UUID_RE, _codex_sessions, _codex_thread, _verify_thread
+        from .deliver import UUID_RE, _codex_sessions, _verify_thread, user_desk_state
 
         desk = Path(shared_desk(project)).resolve()
         sessions_root = _codex_sessions()
+        _desk_state, designated = user_desk_state(desk, "codex")
         if (
             candidate_thread_id
+            and candidate_thread_id != designated
             and UUID_RE.fullmatch(candidate_thread_id)
             and list(sessions_root.glob(f"*/*/*/rollout-*-{candidate_thread_id}.jsonl"))
             and _verify_thread(desk, sessions_root, candidate_thread_id) == "DISPATCH"
         ):
             return candidate_thread_id
-        chosen, _fb, status = _codex_thread(desk, "")
-        if status == "DISPATCH" and chosen:
-            return chosen
     except Exception:  # noqa: BLE001
         pass
     return ""
@@ -1309,7 +1308,11 @@ def open_or_reuse_card_parallel_windows(
 
 
 def _verify_live_rsi_state(desk: Path, rules_version: str, runtime_version: str) -> dict[str, Any]:
-    """Factually inspect rule sync and runtime files instead of hard-coding self-PASS."""
+    """Factually inspect rule sync against canonical installed rules hash/content and runtime files instead of substring self-PASS."""
+    installed_canon = Path(__file__).resolve().parents[2] / "uaos_everywhere" / "uaos_global_rule_block.md"
+    canon_bytes = installed_canon.read_bytes().replace(b"\r\n", b"\n") if installed_canon.is_file() else b""
+    canon_sha = hashlib.sha256(canon_bytes).hexdigest() if canon_bytes else ""
+
     candidates = (
         desk / "uaos_everywhere" / "uaos_global_rule_block.md",
         desk / "GEMINI.md",
@@ -1320,8 +1323,9 @@ def _verify_live_rsi_state(desk: Path, rules_version: str, runtime_version: str)
     for candidate in candidates:
         if candidate.is_file():
             try:
-                text = candidate.read_text(encoding="utf-8", errors="replace")
-                if f"v{rules_version}" in text or rules_version in text or "UAOS-RSI" in text:
+                raw = candidate.read_bytes().replace(b"\r\n", b"\n")
+                cand_sha = hashlib.sha256(raw).hexdigest()
+                if canon_sha and (cand_sha == canon_sha or canon_bytes in raw):
                     rules_synced = True
                     break
             except OSError:
@@ -1334,6 +1338,7 @@ def _verify_live_rsi_state(desk: Path, rules_version: str, runtime_version: str)
         "status": "RECORDED_PENDING_JUDGE",
         "self_approved": False,
         "rules_synced": rules_synced,
+        "canonical_rules_sha256": canon_sha,
         "runtime_installed": runtime_installed,
         "three_tool_broadcast": True,
     }

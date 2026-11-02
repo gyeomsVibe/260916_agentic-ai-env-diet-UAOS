@@ -843,7 +843,7 @@ def _codex_thread(desk: Path, thread: str) -> tuple[str, dict[str, str], str]:
     why = ""
     if thread and not UUID_RE.fullmatch(thread):
         why = "not_uuid"
-    elif thread and not [p for p in root.glob(f"*/*/*/rollout-*-{thread}.jsonl") if _read_rollout_meta(p)[2] == "OK"]:
+    elif thread and not list(root.glob(f"*/*/*/rollout-*-{thread}.jsonl")):
         why = "no_rollout"
     elif thread:
         status = _verify_thread(desk, root, thread)
@@ -1471,7 +1471,11 @@ def _deliver_impl(
         else:
             candidate_wid = None if target == "claude" else lane_window_for(desk, lane, target or "")
         if target == "codex":
-            window = _resolve_codex_lane_thread(desk, candidate_wid or "") or None
+            codex_lane_tid = _resolve_codex_lane_thread(desk, candidate_wid or "")
+            if not codex_lane_tid:
+                queued_for, target, window = "codex", None, None
+            else:
+                window = codex_lane_tid
         else:
             window = candidate_wid
     elif card:
