@@ -857,6 +857,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_deliver.add_argument("--thread", default="")
     # U115: a card id routes the letter into that card's window (`.coord/windows/<card>.json`, U114).
     p_coord_deliver.add_argument("--card", default="")
+    p_coord_deliver.add_argument("--lane", default="", help="U287: process classification lane id (e.g. IMPL_CODE, VERIFY_AUDIT)")
     # U141-A: structured wake fields. Only these decide a paid wake; the message text is never read for it.
     p_coord_deliver.add_argument("--wake-class", default=None, choices=["ACTIONABLE", "NOTICE"])
     p_coord_deliver.add_argument("--verdict-requested", action="store_true", default=None)
@@ -1075,10 +1076,11 @@ def build_parser() -> argparse.ArgumentParser:
     # U114: one process (card) = one named window per tool; the manual's content is the window's first prompt.
     p_coord_win = p_coord_subs.add_parser("window", help="Open (or reuse) the card's dedicated window in one tool")
     p_coord_win.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_win.add_argument("--card", required=True, help="Card id, e.g. U114")
+    p_coord_win.add_argument("--card", required=False, default="", help="Card id, e.g. U114")
+    p_coord_win.add_argument("--lane", required=False, default="", help="U287: Process classification lane id (e.g. IMPL_CODE, VERIFY_AUDIT)")
     p_coord_win.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity", "auto"],
                              help="auto (U129): the clickless route, Codex (ACTIVE) -> idle Claude session -> agy -p")
-    p_coord_win.add_argument("--title", required=True, help="Window title after [card]")
+    p_coord_win.add_argument("--title", required=False, default="", help="Window title after [card] or [LANE:<id>]")
     p_coord_win.add_argument("--prompt-file", required=False, default=None,
                              help="Manual whose content opens the window (codex, antigravity)")
     p_coord_win.add_argument("--session-id", default=None,
@@ -1088,6 +1090,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_win.add_argument("--pool", action="store_true",
                              help="U279: acquire from the bounded topic-grouped window pool (3 active per tool, LRU eviction, 70k token rotation)")
     p_coord_win.set_defaults(func=cmd_coord_window)
+
+    # U287/U292: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
+    p_coord_lanes = p_coord_subs.add_parser(
+        "lanes",
+        help="U287/U292: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
+    )
+    p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session"], default="status")
+    p_coord_lanes.add_argument("--session-id", default="", help="U292: RSI upgrade session ID for record-rsi-session")
+    p_coord_lanes.add_argument("--title", default="", help="U292: RSI upgrade session title")
+    p_coord_lanes.add_argument("--rules-version", default="7.6.2", help="U292: Global rules version pinned in RSI session")
+    p_coord_lanes.add_argument("--lane", default="", help="Optional specific lane id (IMPL_CODE, VERIFY_AUDIT, ARCH_DESIGN, MERGE_RELEASE, RECOVERY_OPS)")
+    p_coord_lanes.add_argument("--actor", default="antigravity", choices=["codex", "claude", "antigravity"])
+    p_coord_lanes.add_argument("--target", default="", help="Optional target tool for handoff")
+    p_coord_lanes.add_argument("--card", default="", help="Optional card id for handoff")
+    p_coord_lanes.add_argument("--message", default="", help="Message/summary to classify or hand off")
+    p_coord_lanes.add_argument("--verdict-requested", action="store_true", default=False)
+    p_coord_lanes.add_argument("--max-workers", type=int, default=5)
+    p_coord_lanes.set_defaults(func=cmd_coord_lanes)
 
     # U130: one card template (four stage slots with default workers) and an audit of the card's Ollama/Antigravity use.
     p_card = subparsers.add_parser("card", help="U130 default card pipeline: new, claim, skip, audit")
@@ -1459,6 +1480,7 @@ def cmd_coord_deliver(args: argparse.Namespace) -> int:
 
     result = deliver(Path(args.project), message=args.message, actor=args.actor,
                      target=args.target, thread=args.thread, card=args.card,
+                     lane=getattr(args, "lane", "") or "",
                      wake_class=getattr(args, "wake_class", None),
                      verdict_requested=getattr(args, "verdict_requested", None),
                      verdict=getattr(args, "verdict", None), delta=getattr(args, "delta", None))
@@ -1483,6 +1505,16 @@ def cmd_coord_window(args: argparse.Namespace) -> int:
     from .coord import windows
 
     project = Path(args.project)
+    lane = getattr(args, "lane", "") or ""
+    if lane:
+        prompt = Path(args.prompt_file).read_text(encoding="utf-8") if getattr(args, "prompt_file", None) else ""
+        result = windows.open_lane_window(project, lane, args.tool, args.title or "", prompt,
+                                          card=args.card or "", session_id=args.session_id)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("id") else 2
+    if not args.card or not args.title:
+        print(json.dumps({"error": "--card and --title are required unless --lane is used"}, ensure_ascii=False))
+        return 2
     if args.release:
         if args.tool == "auto":
             print(json.dumps({"error": "--release needs --tool codex, claude or antigravity"}, ensure_ascii=False))
@@ -2133,7 +2165,10 @@ def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
         if not should_gate(hook):
             return 0
         # U146a-R: the hook's session owns the claim; without one the gate claims nothing and allows the stop.
-        result = gate(project, args.tool, session=hook_session(hook))
+        from .coord.stop_gate import approval_ask_hold
+        result = approval_ask_hold(hook, args.tool)  # U294: no turn ends on an approval or choice question
+        if result is None:
+            result = gate(project, args.tool, session=hook_session(hook))
         # U201: whenever the turn ends or is held, the user also sees why work waits or stopped; ASCII JSON,
         # since a cp949 console cannot print it and the fail-open handler would swallow the error
         from .coord.wait_reason import stop_output
@@ -2702,7 +2737,75 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window"})
+_DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window", "lanes"})
+
+
+def cmd_coord_lanes(args: argparse.Namespace) -> int:
+    """U287/U292: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
+    from .coord.process_lanes import (
+        audit_and_clear_nonstop_obstacles,
+        classify_process_lane,
+        handoff_lane_result,
+        list_lane_windows,
+        multiplex_and_dispatch_parallel,
+        open_or_reuse_card_parallel_windows,
+        record_rsi_upgrade_session,
+    )
+    if getattr(args, "action", "status") == "clear-obstacles":
+        res = audit_and_clear_nonstop_obstacles(Path(args.project))
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+
+    project = Path(args.project)
+    action = getattr(args, "action", "status")
+    if action == "provision-cards":
+        raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
+        if not raw_cards:
+            raw_cards = ["U287", "U290", "U291", "U292"]
+        res = open_or_reuse_card_parallel_windows(project, raw_cards)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+    if action == "record-rsi-session":
+        res = record_rsi_upgrade_session(
+            project,
+            session_id=getattr(args, "session_id", "") or "U292-CARD-LANE-PARALLEL-WINDOWS-20261101",
+            title=getattr(args, "title", "") or "3-Tool Card & Process-Lane Parallel Window Execution OS Upgrade",
+            summary_ko=args.message or "3대 AI 도구(Antigravity, Claude Code, Codex) 공통 카드별·분류별 병렬 대화창 가동 로직 전역 규칙(v7.6.2) 고정 및 라이브 런타임 실가동 완료.",
+            rules_version=getattr(args, "rules_version", "7.6.2") or "7.6.2",
+            actor=args.actor,
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+    if action == "classify":
+        lane_id = classify_process_lane({"message": args.message, "card": args.card, "verdict_requested": args.verdict_requested}, explicit_lane=args.lane)
+        print(json.dumps({"ok": True, "lane_id": lane_id}, ensure_ascii=False))
+        return 0
+    if action == "handoff":
+        lane_id = args.lane or classify_process_lane({"message": args.message, "card": args.card, "verdict_requested": args.verdict_requested})
+        res = handoff_lane_result(
+            project,
+            lane_id=lane_id,
+            from_tool=args.actor,
+            to_tool=args.target,
+            card=args.card,
+            summary=args.message or f"Lane {lane_id} handoff",
+            verdict_requested=bool(args.verdict_requested),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "dispatch":
+        lanes = [args.lane] if args.lane else None
+        res = multiplex_and_dispatch_parallel(
+            project,
+            actor=args.actor,
+            lanes=lanes,
+            max_workers=int(getattr(args, "max_workers", 5)),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    res = list_lane_windows(project)
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    return 0
 
 
 

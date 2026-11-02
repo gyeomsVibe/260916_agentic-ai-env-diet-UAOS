@@ -58,7 +58,13 @@ class DeliverResult:
 # "STEP1" and "no ACTIONABLE_DELTA since last"; an ACK_ONLY marker always wins.
 _TOKEN = r"(?<![A-Z0-9_=]){}(?![A-Z0-9_])"
 _ACK_RE = re.compile(_TOKEN.format("ACK_ONLY"))
-_NEGATED_RE = re.compile(r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+(?:ACTIONABLE_DELTA|VERDICT_REQUESTED)\b")
+_NEGATED_RE = re.compile(
+    r"\b(?:NO|NOT|WITHOUT|NON)[\s-]+(?:ACTIONABLE_DELTA|VERDICT_REQUESTED)\b|VERDICT_REQUESTED=(?:NO|FALSE|0)\b"
+)
+_ECHO_STORM_RE = re.compile(
+    r"(?:이미\s*수신\s*처리한|수신\s*확인\s*통지|수신\s*확인을\s*처리했습니다|recorded\s+as\s+advisory|already\s+received\s+confirmation)",
+    re.IGNORECASE,
+)
 _WAKE_RES = tuple(re.compile(_TOKEN.format(token)) for token in (
     "ACTIONABLE_DELTA",
     r"VERDICT_REQUESTED(?:=YES|(?!=NO\b|=FALSE\b|=0\b))",
@@ -118,8 +124,9 @@ def _digest(actor: str, message: str, card: str = "", window: str | None = None,
 
 def _requires_wake(message: str) -> bool:
     """Only a real delta may spend a paid turn; ACK_ONLY, negated, incidental or quoted tokens never do."""
-    upper = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()
-    if _ACK_RE.search(upper):
+    unquoted = _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message))
+    upper = unquoted.upper()
+    if _ACK_RE.search(upper) or _ECHO_STORM_RE.search(unquoted):
         return False
     upper = _NEGATED_RE.sub(" ", upper)
     return any(pattern.search(upper) for pattern in _WAKE_RES)
@@ -195,17 +202,19 @@ def _deliver_to_codex(
 
 # ── Claude 전달 ──────────────────────────────────────────────
 @contextmanager
-def _claude_turn(project_dir: Path | None, timeout: int, *, lock_key: str = ""):
-    """Serialize messages through the persisted Claude conversation, including across processes.
-    U279 (P3-6): when `lock_key` is provided (keyed on the resolved Claude window session UUID so two topics sharing a
-    session never resume it concurrently, falling back to topic only when no session UUID is bound), shard the turn lock
-    per session (`claude-win-<lock_key>.turn.lock`) so parallel card windows on distinct sessions never block each other,
-    while non-windowed letters share `claude-session.turn.lock`."""
+def _claude_turn(project_dir: Path | None, timeout: int, *, lock_key: str = "", lane: str = "", session: str = ""):
+    """Serialize messages through a Claude conversation; per-lane or per-session locks prevent Head-of-Line blocking."""
     if project_dir is None:
         yield
         return
-    safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", lock_key.strip()) if lock_key else ""
-    lock_name = f"claude-win-{safe_key}.turn.lock" if safe_key else "claude-session.turn.lock"
+    if lane:
+        from v7_harness.coord.process_lanes import validate_lane_id
+        lock_name = f"claude-lane-{validate_lane_id(lane)}.turn.lock"
+    elif lock_key or session:
+        safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", (lock_key or session).strip())[:48]
+        lock_name = f"claude-win-{safe_key}.turn.lock" if safe_key else "claude-session.turn.lock"
+    else:
+        lock_name = "claude-session.turn.lock"
     lock = project_dir / ".coord" / "mailbox" / "delivery" / lock_name
     lock.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout + 5
@@ -251,6 +260,7 @@ def _deliver_to_claude(
     allowed_tools: tuple[str, ...] = ("Read",),
     session: str = "",
     card: str = "",
+    lane: str = "",
 ) -> DeliverResult:
     from v7_harness.coord.windows import claude_session, normalize_topic_key
 
@@ -258,10 +268,10 @@ def _deliver_to_claude(
     resolved_session = claude_session(session)[0] if session else ""
     lock_key = (resolved_session or session or topic_key) if session else ""
     try:
-        with _claude_turn(project_dir, timeout, lock_key=lock_key):
+        with _claude_turn(project_dir, timeout, lock_key=lock_key, lane=lane, session=session):
             return _deliver_to_claude_locked(
                 message, project_dir=project_dir, runner=runner, timeout=timeout, allowed_tools=allowed_tools,
-                session=session, card=card, topic_key=topic_key,
+                session=session, card=card, topic_key=topic_key, lane=lane,
             )
     except TimeoutError as exc:
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
@@ -277,6 +287,7 @@ def _deliver_to_claude_locked(
     session: str = "",
     card: str = "",
     topic_key: str = "",
+    lane: str = "",
 ) -> DeliverResult:
     claude_bin = shutil.which("claude")
     if not claude_bin:
@@ -286,7 +297,11 @@ def _deliver_to_claude_locked(
     session_id = ""
     resume = False
     window_cwd = ""
-    if session:  # U115: a card window is an existing session; the default delivery session file is left alone
+    if lane and project_dir and not session:
+        from v7_harness.coord.process_lanes import ensure_claude_lane_session
+
+        session_id, session_path, resume = ensure_claude_lane_session(project_dir, lane)
+    elif session:  # U115: a card window is an existing session; the default delivery session file is left alone
         from v7_harness.coord.windows import claude_session
 
         (session_id, window_cwd), resume = claude_session(session), True
@@ -355,9 +370,13 @@ def _deliver_to_claude_locked(
             if rc == 0 and resume:
                 session_path = None
             break
-        if rc != 0 and "already in use" in stderr.lower() and session_id:
+        if rc != 0 and "already in use" in (stderr + " " + stdout).lower() and session_id:
             failover_from_id = session_id
-            fresh_id = str(uuid.uuid4())
+            if lane and project_dir and not session:
+                from v7_harness.coord.process_lanes import ensure_claude_lane_session
+                fresh_id, session_path, _ = ensure_claude_lane_session(project_dir, lane, rotate=True)
+            else:
+                fresh_id = str(uuid.uuid4())
             retry_argv = [
                 "--session-id" if a == "--resume" else (fresh_id if a == session_id else a)
                 for a in argv_list
@@ -382,8 +401,16 @@ def _deliver_to_claude_locked(
         result_text = stdout[:500]
 
     if session_path and session_id:
+        prev_state: dict[str, Any] = {}
+        if session_path.is_file():
+            try:
+                loaded_s = json.loads(session_path.read_text(encoding="utf-8"))
+                if isinstance(loaded_s, dict):
+                    prev_state = loaded_s
+            except (OSError, ValueError):
+                prev_state = {}
         temporary = session_path.with_suffix(f".tmp-{uuid.uuid4().hex}")
-        temporary.write_text(json.dumps({"session_id": session_id, "ready": True}, sort_keys=True) + "\n",
+        temporary.write_text(json.dumps({**prev_state, "session_id": session_id, "ready": True}, sort_keys=True) + "\n",
                              encoding="utf-8")
         os.replace(temporary, session_path)
     elif failover_from_id and session and project_dir and session_id:
@@ -738,7 +765,7 @@ def _read_rollout_meta(path: Path) -> tuple[str, Path | None, str]:
     if not isinstance(data, dict) or data.get("type") != "session_meta":
         return "", None, "THREAD_UNVERIFIED"
     payload = data.get("payload")
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or payload.get("source") == "uaos-lane-window":
         return "", None, "THREAD_UNVERIFIED"
 
     present_ids: list[str] = []
@@ -1317,6 +1344,7 @@ def _deliver_unlocked(
     pending_owner: str | None = None,
     card: str = "",
     window: str = "",
+    lane: str = "",
     identity_digest: str | None = None,
     wants_turn: bool | None = None,
 ) -> DeliverResult:
@@ -1445,7 +1473,7 @@ def _deliver_unlocked(
                 prefix = "[안티그래비티에서 온 대화] " if actor.lower() in ("agy", "antigravity") else (
                     "[코덱스에서 온 대화] " if actor.lower() == "codex" else "")
                 result = _deliver_to_claude(prefix + envelope, project_dir=project, runner=runner, session=window,
-                                            card=card)
+                                            card=card, lane=lane)
             else:
                 result = DeliverResult(False, str(target), f"UNKNOWN_TARGET:{target}", (), "")
 
@@ -1544,6 +1572,7 @@ def deliver(
     thread: str = "",
     runner: Any = None,
     card: str = "",
+    lane: str = "",
     wake_class: str | None = None,
     verdict_requested: bool | None = None,
     verdict: str | None = None,
@@ -1574,7 +1603,7 @@ def deliver(
 
     try:
         result = _deliver_impl(root, message=message, actor=actor, target=target, thread=thread, runner=runner,
-                               card=card, wake_class=wake_class, verdict_requested=verdict_requested,
+                               card=card, lane=lane, wake_class=wake_class, verdict_requested=verdict_requested,
                                verdict=verdict, delta=delta, in_reply_to=in_reply_to,
                                _track=track if verdict_requested is True else None,
                                audit=verdict_requested is True)
@@ -1598,6 +1627,7 @@ def _deliver_impl(
     thread: str = "",
     runner: Any = None,
     card: str = "",
+    lane: str = "",
     wake_class: str | None = None,
     verdict_requested: bool | None = None,
     verdict: str | None = None,
@@ -1639,7 +1669,31 @@ def _deliver_impl(
     # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = thread or None
-    if card:
+    if lane and not window:
+        from v7_harness.coord.process_lanes import (
+            _resolve_codex_lane_thread,
+            ensure_fresh_lane_window,
+            is_lane_batch_envelope,
+            lane_window_for,
+        )
+        if (
+            target in ("codex", "claude", "antigravity")
+            and not is_lane_batch_envelope(message)
+            and not message.lstrip().startswith("[LANE:")
+        ):
+            win_info = ensure_fresh_lane_window(desk, lane, target, card=card)
+            candidate_wid = None if target == "claude" else str(win_info.get("id") or "")
+        else:
+            candidate_wid = None if target == "claude" else lane_window_for(desk, lane, target or "")
+        if target == "codex":
+            codex_lane_tid = _resolve_codex_lane_thread(desk, candidate_wid or "")
+            if not codex_lane_tid:
+                queued_for, target, window = "codex", None, None
+            else:
+                window = codex_lane_tid
+        else:
+            window = candidate_wid
+    elif card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
     token = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
@@ -1758,7 +1812,7 @@ def _deliver_impl(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", identity_digest=digest, wants_turn=wants_turn)
+                                 card=card, window=window or "", lane=lane, identity_digest=digest, wants_turn=wants_turn)
     finally:
         _release_guard(guard, owner)
 

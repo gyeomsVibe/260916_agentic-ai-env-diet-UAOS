@@ -1174,3 +1174,22 @@ def route_window(project: Path, card: str, *, session_id: str | None = None) -> 
     if busy:
         route["busy"] = busy
     return route
+
+
+def open_lane_window(project: Path, lane: str, tool: str, title: str = "", prompt: str = "", **extra: Any) -> dict[str, Any]:
+    """U287: Open or reuse a dedicated process-classification lane conversation window across any of the 3 tools."""
+    from .process_lanes import open_or_reuse_lane_window, select_active_tool_for_lane
+
+    resolved_tool = tool
+    if tool == "auto":
+        resolved_tool, _reason = select_active_tool_for_lane(project, lane)
+    return open_or_reuse_lane_window(
+        project,
+        lane,
+        resolved_tool,
+        title=title,
+        prompt=prompt,
+        card=str(extra.get("card") or ""),
+        session_id=extra.get("session_id"),
+        rotate=bool(extra.get("rotate", False)),
+    )
