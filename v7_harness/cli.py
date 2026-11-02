@@ -2128,7 +2128,10 @@ def cmd_coord_stop_gate(args: argparse.Namespace) -> int:
         if not should_gate(hook):
             return 0
         # U146a-R: the hook's session owns the claim; without one the gate claims nothing and allows the stop.
-        result = gate(project, args.tool, session=hook_session(hook))
+        from .coord.stop_gate import approval_ask_hold
+        result = approval_ask_hold(hook, args.tool)  # U294: no turn ends on an approval or choice question
+        if result is None:
+            result = gate(project, args.tool, session=hook_session(hook))
         # U201: whenever the turn ends or is held, the user also sees why work waits or stopped; ASCII JSON,
         # since a cp949 console cannot print it and the fail-open handler would swallow the error
         from .coord.wait_reason import stop_output
