@@ -630,6 +630,37 @@ def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coord_helper_matrix(args: argparse.Namespace) -> int:
+    from .coord.helper_thinking_router import (
+        audit_and_optimize_claude_ollama_haiku_parallel,
+        get_official_tool_lineup,
+        optimize_master_and_sub_schedules,
+        select_optimal_helper_and_thinking,
+    )
+
+    project = Path(args.project)
+    action = getattr(args, "action", "optimize-schedules")
+    if action == "lineup":
+        payload = get_official_tool_lineup(getattr(args, "tool", None))
+    elif action == "select":
+        payload = select_optimal_helper_and_thinking(
+            getattr(args, "tool", None) or "antigravity",
+            card=getattr(args, "card", "") or "",
+            role=getattr(args, "role", "implementer") or "implementer",
+            lane_id=getattr(args, "lane", None),
+            purpose=getattr(args, "purpose", "") or "",
+            sub_stage=getattr(args, "sub_stage", "") or "",
+            is_keypoint=bool(getattr(args, "keypoint", False)),
+            utilization_5h_pct=float(getattr(args, "utilization_5h_pct", 0.0) or 0.0),
+        )
+    elif action == "claude-audit":
+        payload = audit_and_optimize_claude_ollama_haiku_parallel(project)
+    else:
+        payload = optimize_master_and_sub_schedules(project)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="v7_harness", description="v7 Minimal Automation Harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -983,6 +1014,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_cap.add_argument("--debounce", type=float, default=0.0, help="Debounce interval in seconds for 0-paid-token refresh")
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
+
+    p_coord_hm = p_coord_subs.add_parser(
+        "helper-matrix",
+        help="U297: Official 3-tool helper model & reasoning lineup declaration, Thinking Level (Low/Medium/High) auto-selector, and schedule optimizer",
+    )
+    p_coord_hm.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_hm.add_argument(
+        "--action",
+        choices=["optimize-schedules", "lineup", "select", "claude-audit"],
+        default="optimize-schedules",
+    )
+    p_coord_hm.add_argument("--tool", choices=["codex", "claude", "antigravity"], default=None)
+    p_coord_hm.add_argument("--card", default="", help="Card ID (e.g. U297)")
+    p_coord_hm.add_argument("--role", default="implementer", help="Role (conductor, implementer, reviewer, merger, recovery)")
+    p_coord_hm.add_argument("--lane", default=None, help="Process lane (IMPL_CODE, VERIFY_AUDIT, ARCH_DESIGN, MERGE_RELEASE, RECOVERY_OPS)")
+    p_coord_hm.add_argument("--sub-stage", default="", help="Sub-process stage (SP1_RESEARCH_DRAFT..SP5_MERGE_AND_RUNTIME)")
+    p_coord_hm.add_argument("--purpose", default="", help="Implementation purpose description")
+    p_coord_hm.add_argument("--keypoint", action="store_true", help="Whether the task is a keypoint")
+    p_coord_hm.add_argument("--utilization-5h-pct", type=float, default=0.0, help="Observed 5h utilization percentage")
+    p_coord_hm.set_defaults(func=cmd_coord_helper_matrix)
 
     p_coord_rea = p_coord_subs.add_parser(
         "rea-audit",
