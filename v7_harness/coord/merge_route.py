@@ -38,7 +38,7 @@ AUTHOR_PREFIX = {"claude": "claude", "codex": "codex", "antigravity": "antigravi
 # One `gh pr merge` finished in 14-40 s in the 2026-10-05 Antigravity run (#124-#127); 300 s leaves room for a cold
 # start of either CLI without letting a hung merger hold the route for long.
 TOOL_TIMEOUT_S = 300
-PR_FIELDS = "state,mergeable,headRefOid,headRefName,url"
+PR_FIELDS = "state,mergeable,headRefOid,headRefName,url,title"  # U295: the title names the cards to close
 LEDGER = Path(".coord") / "merges.jsonl"
 # U174-B: the judge letter is same-account data (Codex decision D1, .work/u169/codex_gate_decision.md); a receipt that
 # GitHub's OIDC identity signed for the CI workflow is not (https://docs.github.com/en/actions/concepts/security/
@@ -114,7 +114,9 @@ def gate(view: dict[str, Any], head: str, letter: dict[str, Any]) -> None:
         raise MergeRefused("verdict comes from the PR's own author")
     message = str(letter.get("message", ""))
     words = VERDICT_WORD_RE.findall(message.upper())
-    if head not in message or not words or words[0] not in ("PASS", "APPROVE"):
+    # U295 B3: a structured letter may name the head in its `delta`; the verdict word still comes from the message.
+    if (head not in message and head not in str(letter.get("delta") or "")) or not words \
+            or words[0] not in ("PASS", "APPROVE"):
         raise MergeRefused("verdict letter does not pass this exact head")
 
 
@@ -332,6 +334,27 @@ def sync_runtime_after_merge(project: Path, *, head: str, home: Path | None = No
         return {"synced": False, "reason": f"{type(exc).__name__}:{exc}"[:160]}
 
 
+def after_merge(project: Path, view: dict[str, Any], pr: int, head: str) -> dict[str, Any]:
+    """U295 B8: close the PR title's card phases and end the branch lease; a failure here never undoes the merge."""
+    from . import branch_guard
+
+    done: dict[str, Any] = {}
+    try:
+        done["closed_phases"] = branch_guard.close_merged_phases(project, title=str(view.get("title") or ""),
+                                                                 pr=pr, head=head)
+    except (OSError, ValueError) as exc:
+        done["closed_phases_error"] = type(exc).__name__
+    branch = str(view.get("headRefName") or "")
+    try:
+        live = branch_guard.holder(project, branch) if branch else None
+        if live is not None:
+            done["lease_released"] = branch_guard.release(project, branch, tool=str(live.get("tool")),
+                                                          session=str(live.get("session") or ""))
+    except (OSError, ValueError) as exc:
+        done["lease_error"] = type(exc).__name__
+    return done
+
+
 def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None,
           now: float | None = None, desk: dict[str, dict[str, Any]] | None = None,
           sync_runtime: bool = False, home: Path | None = None) -> dict[str, Any]:
@@ -376,6 +399,7 @@ def merge(project: Path, pr: int, head: str, verdict: str, *, runner: Any = None
         if after.get("state") == "MERGED" and after.get("headRefOid") == head:
             row = {"ts": moment, "pr": pr, "head": head, "verdict": verdict, "state": "MERGED", "merged_by": tool,
                    "ci_run": ci_run, "attempts": attempts}
+            row["after_merge"] = after_merge(project, view, pr, head)
             if sync_runtime:
                 row["runtime_sync"] = sync_runtime_after_merge(project, head=head, home=home)
             _record(project, row)

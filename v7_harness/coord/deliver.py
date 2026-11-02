@@ -1340,6 +1340,10 @@ def deliver(
     from v7_harness.coord.requests import RequestError, mark_delivered, register
 
     root = Path(project).resolve()
+    if verdict_requested is True or verdict:
+        from v7_harness.coord.branch_guard import embed_full_head
+
+        message = embed_full_head(root, message)  # U295 B3: the merge gate matches only a full 40-char head
     tracked: dict[str, str] = {}
     subject_val = subject or _first(_PR_URL_RE, message)
     head_val = (head or _first(_SHA_RE, message)).lower()
