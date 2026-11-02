@@ -968,7 +968,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_push.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_push.add_argument("--branch", required=True)
     p_coord_push.add_argument("--force", action="store_true", help="The push would be forced (always DENY)")
+    p_coord_push.add_argument("--tool", default=None, help="U295: the pushing tool, checked against the branch lease")
+    p_coord_push.add_argument("--session", default="", help="U295: the pushing session, checked against the lease")
+    p_coord_push.add_argument("--supersede", action="store_true",
+                              help="U295: push over an open verdict request; it is recorded STALE and its requester woken")
     p_coord_push.set_defaults(func=cmd_coord_push_check)
+    # U295 B2: one writer per PR branch.
+    p_coord_lease = p_coord_subs.add_parser("lease", help="Acquire, release or show the one-writer lease of a branch")
+    p_coord_lease.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_lease.add_argument("--action", required=True, choices=["acquire", "release", "show", "list"])
+    p_coord_lease.add_argument("--branch", default="")
+    p_coord_lease.add_argument("--tool", default=None, choices=["codex", "claude", "antigravity", "agy"])
+    p_coord_lease.add_argument("--session", default="")
+    p_coord_lease.add_argument("--head", default="")
+    p_coord_lease.set_defaults(func=cmd_coord_lease)
     # U166: a gated PR is merged by Antigravity, else Codex (윤겸스 2026-10-05); a stalled wait is rerouted.
     p_coord_merge = p_coord_subs.add_parser("merge", help="Merge a gated PR through Antigravity, then Codex")
     p_coord_merge.add_argument("--project", default=".", help="Project root (default: .)")
@@ -2257,11 +2270,46 @@ def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
 
 def cmd_coord_push_check(args: argparse.Namespace) -> int:
     """U146-A R2: deny-by-default push grant check."""
+    from .coord import branch_guard
     from .coord.stop_gate import push_check
-    result = push_check(Path(args.project), args.branch, force=args.force)
+    result: dict = push_check(Path(args.project), args.branch, force=args.force)
+    if result.get("decision") == "ALLOW":
+        # U295 B2/B4: the grant allows the branch; the lease and an open verdict request may still refuse it.
+        tool = getattr(args, "tool", None) or os.environ.get("UAOS_TOOL") or None
+        result = (branch_guard.lease_check(Path(args.project), args.branch, tool, getattr(args, "session", ""))
+                  or branch_guard.freeze_check(Path(args.project), args.branch,
+                                               supersede=getattr(args, "supersede", False), actor=tool or "")
+                  or result)
+        for row in result.get("stale") or []:
+            branch_guard.wake_stale(Path(args.project), row)
     print(json.dumps(result, ensure_ascii=False))
     # Exit 3 on DENY: a non-zero exit stops a shell `&&` chain before `git push`.
     return 0 if result.get("decision") == "ALLOW" else 3
+
+
+def cmd_coord_lease(args: argparse.Namespace) -> int:
+    """U295 B2: exit 4 when another writer holds the branch; `list` is the briefing's source of who writes where."""
+    from .coord import branch_guard
+    project = Path(args.project)
+    try:
+        if args.action == "list":
+            result: object = branch_guard.leases(project)
+        elif args.action == "show":
+            result = branch_guard.holder(project, args.branch)
+        elif not args.tool:
+            raise ValueError(f"--tool is required to {args.action}")
+        elif args.action == "acquire":
+            result = branch_guard.acquire(project, args.branch, tool=args.tool, session=args.session, head=args.head)
+        else:
+            result = {"released": branch_guard.release(project, args.branch, tool=args.tool, session=args.session)}
+    except branch_guard.LeaseHeld as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        return 4
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
 
 
 def cmd_coord_route(args: argparse.Namespace) -> int:
