@@ -419,10 +419,11 @@ def _stalled_wait(project: Path, tools: tuple[str, ...], clock: Callable[[], flo
     return None
 
 
-def main_desk_session(project: Path) -> str:
+def main_desk_session(project: Path, tool: str = "claude") -> str:
     """U296: the user's main Claude desk (topmost `[YYMMDD-N]` window), '' when no desk record exists."""
     try:
-        record = json.loads((Path(project) / PRESENCE_DIR / "user_desk_claude.json").read_text(encoding="utf-8"))
+        norm_tool = "antigravity" if str(tool or "claude").strip().lower() == "agy" else str(tool or "claude").strip().lower()
+        record = json.loads((Path(project) / PRESENCE_DIR / f"user_desk_{norm_tool}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return ""
     return str(record.get("thread") or "") if isinstance(record, dict) else ""
@@ -436,7 +437,7 @@ def _session_eligible(project: Path, tool: str, body: dict[str, Any], session: s
 
     if body.get("native_receiver") or body.get("window") or body.get("card"):
         return not _foreign(Path(project), tool, session, body)
-    desk = main_desk_session(project)
+    desk = main_desk_session(project, tool)
     return not desk or desk == session
 
 
