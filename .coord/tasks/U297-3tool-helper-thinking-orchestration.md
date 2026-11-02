@@ -1,10 +1,10 @@
-# [U295] 3대 도구 공식 도우미 모델·추론 모델 라인업 선언 및 마스터·세부 스케줄 기반 Thinking Level 자동 선정·병렬 오케스트레이션
+# [U297] 3대 도구 공식 도우미 모델·추론 모델 라인업 선언 및 마스터·세부 스케줄 기반 Thinking Level 자동 선정·병렬 오케스트레이션
 
 - **State**: `ACTIVE`
 - **Owner**: `antigravity`
 - **Reviewer**: `claude`
-- **Branch**: `agy/u295-helper-thinking-orchestration`
-- **Worktree**: `.work/wt_u295_helper_thinking_orchestration`
+- **Branch**: `agy/u297-helper-thinking-orchestration`
+- **Worktree**: `.work/wt_u297_helper_thinking_orchestration`
 
 ## 핵심 목표
 1. **Codex·Antigravity·Claude Code 공식 도우미 모델(Helper Model) 및 추론 모델 라인업 선언·지정**:

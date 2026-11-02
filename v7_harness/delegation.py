@@ -387,7 +387,7 @@ def compute_3tool_helper_parallel_plan(
     utilization_5h_pct: float = 0.0,
     exhaustion_risk: str = "SAFE",
 ) -> dict[str, Any]:
-    """U295/U297: Partition candidate files into 3-tool 5:3:2 Disjoint Parallel lanes
+    """U297/U297: Partition candidate files into 3-tool 5:3:2 Disjoint Parallel lanes
     (50% Ollama CLI calculator || 30% Official Helper Model || 20% Core Reasoning Model)
     with automatic Helper Model & Thinking Level (`Low`/`Medium`/`High`) selection.
     """

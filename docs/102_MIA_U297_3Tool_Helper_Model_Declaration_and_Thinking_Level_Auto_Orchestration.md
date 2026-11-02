@@ -1,6 +1,6 @@
-# MIA U295 — 3대 도구(Codex·Antigravity·Claude Code) 공식 도우미 모델 선언·지정 및 마스터·세부 스케줄 기반 Thinking Level 자동 선정·병렬 오케스트레이션 설계서
+# MIA U297 — 3대 도구(Codex·Antigravity·Claude Code) 공식 도우미 모델 선언·지정 및 마스터·세부 스케줄 기반 Thinking Level 자동 선정·병렬 오케스트레이션 설계서
 
-- **카드 ID**: `U295`
+- **카드 ID**: `U297`
 - **작성일**: 2026-11-02
 - **작성 도구**: Antigravity (`mia-strategic` 11단계 전략 프레임워크 엄격 적용)
 - **연관 문서**: `docs/98_MIA_Claude_전속일꾼_올라마_Haiku55_전수분석_및_병렬운용_개선설계서.md`, `docs/27_token-budget-routing-policy.md`, `.coord/master_schedule.json`, `.coord/sub_process_schedule.json`
@@ -128,4 +128,4 @@
   - `v7_harness/delegation.py`: 3대 도구 5:3:2 도우미 병렬 라우팅 헬퍼(`compute_3tool_helper_parallel_plan`) 연동.
   - `v7_harness/cli.py`: `coord helper-matrix` 서브커맨드(또는 `coord capacity` 통합 출력) 지원.
   - `uaos_everywhere/uaos_global_rule_block.md`: 3대 도구 공식 도우미 모델·추론 라인업·Thinking Level 자동 선정 규칙 반영.
-- **검증 테스트**: `tests/test_u295_helper_thinking_orchestration.py`
+- **검증 테스트**: `tests/test_u297_helper_thinking_orchestration.py`

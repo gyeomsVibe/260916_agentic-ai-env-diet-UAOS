@@ -1,4 +1,4 @@
-"""U295: Official 3-Tool Helper Model Declaration, Reasoning Model Lineup Catalog,
+"""U297: Official 3-Tool Helper Model Declaration, Reasoning Model Lineup Catalog,
 and Master/Sub-Process Schedule Thinking Level (Low/Medium/High) Auto-Selector.
 
 Officially declares and designates the maximum-performance-per-token low-cost Helper Models

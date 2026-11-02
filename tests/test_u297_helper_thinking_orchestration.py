@@ -1,4 +1,4 @@
-"""U295/U297: Comprehensive tests for Official 3-Tool Helper Model Declaration,
+"""U297/U297: Comprehensive tests for Official 3-Tool Helper Model Declaration,
 Reasoning Model Lineup Catalog, Thinking Level (Low/Medium/High) Auto-Selection,
 Master/Sub-Process Schedule Optimization, and Claude Code Ollama+Haiku 5.5 Parallel Audit.
 """
@@ -32,7 +32,7 @@ from v7_harness.coord.helper_thinking_router import (
 from v7_harness.delegation import compute_3tool_helper_parallel_plan
 
 
-class TestU295HelperThinkingOrchestration(unittest.TestCase):
+class TestU297HelperThinkingOrchestration(unittest.TestCase):
     def test_official_3tool_helper_and_reasoning_lineup_declaration(self) -> None:
         lineup = get_official_tool_lineup()
         self.assertEqual(set(lineup.keys()), {"codex", "antigravity", "claude"})
@@ -109,7 +109,7 @@ class TestU295HelperThinkingOrchestration(unittest.TestCase):
             for stage in SUB_PROCESS_STAGES:
                 sel = select_optimal_helper_and_thinking(
                     tool,
-                    card="U295",
+                    card="U297",
                     sub_stage=stage,
                     purpose=f"Stage test {stage}",
                 )
@@ -166,8 +166,8 @@ class TestU295HelperThinkingOrchestration(unittest.TestCase):
         paths = [
             "v7_harness/coord/helper_thinking_router.py",
             "v7_harness/coord/capacity_planner.py",
-            "tests/test_u295_helper_thinking_orchestration.py",
-            "docs/101_MIA_U295_3Tool_Helper_Model_Declaration_and_Thinking_Level_Auto_Orchestration.md",
+            "tests/test_u297_helper_thinking_orchestration.py",
+            "docs/102_MIA_U297_3Tool_Helper_Model_Declaration_and_Thinking_Level_Auto_Orchestration.md",
         ]
         for tool, expected_helper in (
             ("codex", "gpt-6-luna"),
@@ -177,7 +177,7 @@ class TestU295HelperThinkingOrchestration(unittest.TestCase):
             plan = compute_3tool_helper_parallel_plan(
                 paths,
                 caller_tool=tool,
-                card="U295",
+                card="U297",
                 role="implementer",
                 sub_stage="SP3_CODE_EXECUTION",
             )
@@ -221,7 +221,7 @@ class TestU295HelperThinkingOrchestration(unittest.TestCase):
             master_data = {
                 "phases": [
                     {
-                        "phase_id": "U295",
+                        "phase_id": "U297",
                         "title": "3대 도구 공식 도우미 모델 선언 및 자동 선정",
                         "state": "ACTIVE",
                         "owner_tool": "antigravity",
@@ -357,7 +357,7 @@ class TestU295HelperThinkingOrchestration(unittest.TestCase):
                 "--tool",
                 "codex",
                 "--card",
-                "U295",
+                "U297",
                 "--lane",
                 "ARCH_DESIGN",
                 "--keypoint",
