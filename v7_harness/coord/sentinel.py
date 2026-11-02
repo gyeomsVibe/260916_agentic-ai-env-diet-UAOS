@@ -567,6 +567,37 @@ def consume_exhaustion(project_root: Path, box: Mailbox, current_keys: set[str])
         os.close(fd)
 
 
+STOP_UNGUARDED_STEP = "U277-STOP-UNGUARDED"
+
+
+def stop_unguarded_request(payload: dict[str, Any]) -> str | None:
+    """U296 (B5): the request id of a STOP_UNGUARDED event, None for any other payload."""
+    if payload.get("kind") != "BLOCKED" or payload.get("step") != STOP_UNGUARDED_STEP:
+        return None
+    for ref in payload.get("refs") or ():
+        if isinstance(ref, str) and ref.startswith("request:"):
+            return ref[len("request:"):]
+    return ""
+
+
+def stop_unguarded_is_noise(project_root: Path, request_id: str) -> bool:
+    """U296 (B5): a STOP_UNGUARDED event matters only while its request is still open and belongs to the main desk.
+    A child card session ending a turn, an answered or cancelled request, and an unknown request are noise: they
+    neither wake nor block the main desk. Any read failure keeps the event (a wake too many beats a lost alert)."""
+    from . import requests
+    from .watch import main_desk_session
+
+    try:
+        row = requests.get(project_root, request_id) if request_id else None
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(row, dict) or row.get("state") not in requests.OPEN_STATES:
+        return True
+    bound = str(row.get("requester_session") or "")
+    desk = main_desk_session(project_root)
+    return bool(bound and desk and bound != desk)
+
+
 def run_sentinel_cycle(
     project_root: Path,
     box: Mailbox,
@@ -612,6 +643,7 @@ def run_sentinel_cycle(
 
     passed = _last_pass_by_step(project_root)
     p1_superseded: list[str] = []
+    unguarded_seen: set[str] = set()
     # Read only. Claiming to look hid each message from real consumers for the length of the check.
     for msg_id, payload in box.peek():
         if not isinstance(payload, dict):
@@ -627,6 +659,15 @@ def run_sentinel_cycle(
             _passed_since(passed, payload) or _schedule_closed_since(project_root, payload)
         ):
             p1_superseded.append(str(payload.get("step")))
+            continue
+        unguarded = stop_unguarded_request(payload)
+        if unguarded is not None:
+            # U296 (B5): one event per open main-desk request; the fingerprint sees the request set, not event ids.
+            if unguarded in unguarded_seen or stop_unguarded_is_noise(project_root, unguarded):
+                continue
+            unguarded_seen.add(unguarded)
+            p1_reasons.append(f"STOP_UNGUARDED: request {unguarded}")
+            p1_events.append({"kind": "stop_unguarded", "request_id": unguarded})
             continue
         if payload.get("kind") == "BLOCKED" or payload.get("is_p1"):
             p1_reasons.append(f"BLOCKED_TASK: {payload.get('step')}")
@@ -648,8 +689,20 @@ def run_sentinel_cycle(
         ).encode("utf-8")
         event_fingerprint = hashlib.sha256(canonical).hexdigest()
         wake_id = f"wake_{event_fingerprint[:24]}"
+        # U296 (B5): a set of only STOP_UNGUARDED items wakes once per distinct set, even after the wake was acked.
+        only_unguarded = all(event.get("kind") == "stop_unguarded" for event in p1_events)
+        unguarded_state = Path(project_root) / ".coord" / "presence" / "sentinel_stop_unguarded.json"
+        try:
+            last_set = json.loads(unguarded_state.read_text(encoding="utf-8")).get("fingerprint")
+        except (OSError, ValueError, AttributeError):
+            last_set = None
+        unchanged_set = only_unguarded and last_set == event_fingerprint
         # has_message also sees a wake that someone has claimed but not yet acked, so it is not sent twice.
-        if not box.has_message(wake_id):
+        if not unchanged_set and not box.has_message(wake_id):
+            if only_unguarded:
+                from .watch import _write_atomic
+                unguarded_state.parent.mkdir(parents=True, exist_ok=True)
+                _write_atomic(unguarded_state, {"fingerprint": event_fingerprint})
             box.publish(
                 message_id=wake_id,
                 payload={
