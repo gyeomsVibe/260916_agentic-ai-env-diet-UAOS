@@ -140,12 +140,19 @@ class FreezeAndHeadTest(unittest.TestCase):
         path.write_text(json.dumps(row), encoding="utf-8")
         self.assertIsNone(branch_guard.freeze_check(self.project, "agy/u1-x"))
 
+    @staticmethod
+    def _short(sha: str, size: int) -> str:
+        # An all-digit prefix reads as a number, not a sha (by design); a random commit has one ~2% of the time at 8.
+        while sha[:size].isdigit():
+            size += 1
+        return sha[:size]
+
     def test_short_sha_is_resolved_to_the_full_head(self):
-        message = f"PASS PR #9 at {self.c2[:9]}"
+        message = f"PASS PR #9 at {self._short(self.c2, 9)}"
         self.assertEqual(branch_guard.embed_full_head(self.project, message), f"{message} head={self.c2}")
         full = f"PASS at {self.c2}"
         self.assertEqual(branch_guard.embed_full_head(self.project, full), full)
-        both = f"PASS {self.c1[:8]} then {self.c2[:8]}"
+        both = f"PASS deadbee then {self._short(self.c2, 8)}"
         self.assertEqual(branch_guard.embed_full_head(self.project, both), both)  # ambiguous: unchanged
         self.assertEqual(branch_guard.embed_full_head(self.project, "PASS 1234567"), "PASS 1234567")
 
