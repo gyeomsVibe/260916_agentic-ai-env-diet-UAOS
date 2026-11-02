@@ -1777,7 +1777,7 @@ def build_workspace_garbage_manifest(project: Path) -> dict[str, Any]:
     receipt_verified = bool(rcp_data.get("apply") is True and len(removed_list) > 0 and bytes_removed > 0)
 
     manifest = {
-        "schema": "uaos-workspace-garbage-manifest-v2",
+        "schema": "uaos-workspace-garbage-manifest-v1",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         "project": str(desk),
         "deletion_policy": str(rcp_data.get("policy") or "DRY_RUN_MANIFEST_ONLY_FRESH_USER_APPROVAL_REQUIRED"),
