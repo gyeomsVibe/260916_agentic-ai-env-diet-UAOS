@@ -122,7 +122,9 @@ class DarkReadableHtml(unittest.TestCase):
         self.assertNotIn('id="donut-box"', html)
         self.assertIn('id="budget-board"', html)
         self.assertIn('id="budget-headline"', html)
-        self.assertIn("리셋 시각 미수집", html)  # no captured reset time is said, never guessed
+        # U303 (user 2026-11-03: no "미수집/미확인" wording): a missing reset time shows "-", still never guessed
+        self.assertNotIn("리셋 시각 미수집", html)
+        self.assertIn('row("5시간 리셋", q.reset5 ?', html)
         self.assertIn('querySelectorAll(".countdown")', html)
         # v4: one tool console replaces the lanes and the budget cards, which said the same thing twice (user receipt
         # 2026-10-29); a ring of the 5 h remainder, bars for the week and 24 h, a drifting call strip, calm motion only
@@ -143,7 +145,10 @@ class DarkReadableHtml(unittest.TestCase):
         self.assertIn("장부 상태", html)
         self.assertIn("실행 증거가 아님", html)
         self.assertIn("계획기 제안(장부 아님)", html)
-        self.assertIn('"미측정"', html)
+        # U303 (user 2026-11-03: no unmeasured wording): a card without an estimate shows the owner's measured
+        # average card cost, labelled as such
+        self.assertNotIn('"미측정"', html)
+        self.assertIn("담당 도구 평균 카드 비용", html)
 
 
 if __name__ == "__main__":
