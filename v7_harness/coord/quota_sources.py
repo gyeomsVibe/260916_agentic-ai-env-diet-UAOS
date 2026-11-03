@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .helper_telemetry import designated_helper_names, designated_helper_view
+
 FIVE_HOUR_MIN = 300  # Codex primary and Claude five_hour window length (minutes), from the rollout payload
 SEVEN_DAY_MIN = 10080  # Codex secondary and Claude seven_day window length (minutes)
 ROLLOUT_SCAN_FILES = 60  # newest rollouts scanned; 66 exist on this PC and each holds hundreds of rows
@@ -435,13 +437,20 @@ def measured_accounts(home: Path, now: float, events: list[dict[str, Any]] | Non
         rows = mix.get(eng, [])
         main = rows[0]["model"] if rows else None
         out[eng]["model_mix_7d"] = rows
-        out[eng]["helpers"] = [r for r in rows[1:]] if rows else []
+        # U304-B: the helper line shows the tool's one designated helper, never "every other model" (Sonnet).
+        out[eng]["helpers"] = designated_helper_view(eng, rows)
         out[eng]["main_model_7d"] = main
-    # Antigravity's helper is the other quota pool's model family (U299 flash lane); its quota is measured above.
+    # Antigravity's helper quota is the pool that holds its designated helper model (U304-B).
     pools = ag.get("pools") or []
-    helper_pool = next((p for p in pools if p is not sel_pool and p is not None), None)
+    names = designated_helper_names("antigravity")
+    helper_pool = next((p for p in pools if p is not None and names & set(p.get("models") or [])), None)
+    if helper_pool is None:
+        # A cockpit snapshot that omits the helper's name still bills it to its family's shared pool ("Gemini").
+        family = {n.split()[0] for n in names if " " in n}
+        helper_pool = next((p for p in pools if p is not None
+                            and any(str(m).split(" ")[0] in family for m in p.get("models") or [])), None)
     out["antigravity"]["helper_pool"] = helper_pool
-    out["antigravity"]["helpers"] = [{"model": m} for m in (helper_pool or {}).get("models", []) if "Flash" in m][:3]
+    out["antigravity"]["helpers"] = designated_helper_view("antigravity")
     return out
 
 

@@ -40,53 +40,20 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
         # 1. Codex official lineup & helper designation
         codex = lineup["codex"]
         self.assertEqual(codex["calculator_model"], "qwen2.5-coder:7b")
+        # U304-B: one helper per tool; main GPT-6.1 Sol with Astra as the keypoint-only escalation (U257)
         self.assertEqual(codex["primary_helper_model"], "gpt-6-luna")
-        self.assertIn("gpt-6-luna", codex["designated_helper_models"])
-        self.assertIn("gpt-5.6-luna", codex["designated_helper_models"])
-        self.assertIn("gpt-5.6-terra", codex["designated_helper_models"])
-        self.assertIn("gpt-5.6-sol", codex["designated_helper_models"])
-        self.assertIn("gpt-6-sol", codex["designated_helper_models"])
-        self.assertEqual(
-            codex["reasoning_model_lineup"]["gpt_6_1_flagship"],
-            ("gpt-6.1-sol", "gpt-6.1-terra"),
-        )
-        self.assertEqual(
-            codex["reasoning_model_lineup"]["gpt_6_standard"],
-            ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna"),
-        )
-        self.assertEqual(
-            codex["reasoning_model_lineup"]["gpt_5_6_lightweight_stable"],
-            ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"),
-        )
+        self.assertEqual(codex["designated_helper_models"], ("gpt-6-luna",))
+        self.assertEqual(codex["all_reasoning_models"], ("gpt-6.1-sol", "gpt-6-astra"))
         self.assertEqual(codex["thinking_levels"], ("Low", "Medium", "High"))
         self.assertEqual(codex["thinking_param_name"], "reasoning_effort")
 
         # 2. Antigravity official lineup & helper designation
         agy = lineup["antigravity"]
         self.assertEqual(agy["calculator_model"], "qwen2.5-coder:7b")
-        self.assertEqual(agy["primary_helper_model"], "gemini-3.8-flash")
-        self.assertEqual(
-            agy["designated_helper_models"],
-            ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gpt-oss-120b"),
-        )
-        self.assertEqual(
-            agy["reasoning_model_lineup"]["gemini_series"],
-            (
-                "gemini-4-argon",
-                "gemini-3.8-flash",
-                "gemini-3.7-flash",
-                "gemini-3.6-flash",
-                "gemini-3.1-pro",
-            ),
-        )
-        self.assertEqual(
-            agy["reasoning_model_lineup"]["claude_thinking_series"],
-            ("claude-sonnet-5-5-thinking", "claude-opus-5-5-thinking"),
-        )
-        self.assertEqual(
-            agy["reasoning_model_lineup"]["open_source_series"],
-            ("gpt-oss-120b",),
-        )
+        # U304-B: one helper per tool, Gemini 3.5 Flash-Lite
+        self.assertEqual(agy["primary_helper_model"], "gemini-3.5-flash-lite")
+        self.assertEqual(agy["designated_helper_models"], ("gemini-3.5-flash-lite",))
+        self.assertEqual(agy["all_reasoning_models"], ("gemini-4-argon",))
         self.assertEqual(agy["thinking_levels"], ("Low", "Medium", "High"))
         self.assertEqual(agy["thinking_param_name"], "thinking_level")
 
@@ -96,10 +63,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
         self.assertEqual(claude["primary_helper_model"], "claude-haiku-5-5")
         self.assertEqual(claude["designated_helper_models"], ("claude-haiku-5-5",))
         self.assertEqual(claude["helper_preflight_cap_tokens"], 12000)
-        self.assertEqual(
-            claude["reasoning_model_lineup"]["claude_series"],
-            ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"),
-        )
+        self.assertEqual(claude["all_reasoning_models"], ("claude-opus-5-5",))  # U304-B: sonnet removed
         self.assertEqual(claude["thinking_levels"], ("Low", "Medium", "High"))
         self.assertEqual(claude["thinking_param_name"], "effort")
 
@@ -136,22 +100,22 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
             self.assertEqual(sp5["helper_thinking_level"], "Low")
             self.assertEqual(sp5["reasoning_thinking_level"], "Low")
 
-        # Verify Codex keypoint flagship vs high pressure lightweight selection
+        # U304-B: a Codex keypoint escalates to Astra (U257); everything else stays on the main model
         codex_kp = select_optimal_helper_and_thinking("codex", lane_id="ARCH_DESIGN", is_keypoint=True)
-        self.assertEqual(codex_kp["designated_reasoning_model"], "gpt-6.1-sol")
+        self.assertEqual(codex_kp["designated_reasoning_model"], "gpt-6-astra")
         self.assertEqual(codex_kp["reasoning_thinking_level"], "High")
 
         codex_verify = select_optimal_helper_and_thinking("codex", lane_id="VERIFY_AUDIT")
-        self.assertEqual(codex_verify["designated_helper_model"], "gpt-5.6-terra")
-        self.assertEqual(codex_verify["designated_reasoning_model"], "gpt-6.1-terra")
+        self.assertEqual(codex_verify["designated_helper_model"], "gpt-6-luna")
+        self.assertEqual(codex_verify["designated_reasoning_model"], "gpt-6.1-sol")
 
-        # Verify Antigravity Claude-thinking and GPT-OSS-120b options
+        # U304-B: the retired Claude-thinking / GPT-OSS routes are ignored flags now
         agy_claude = select_optimal_helper_and_thinking(
             "antigravity",
             lane_id="VERIFY_AUDIT",
             prefer_claude_thinking_on_agy=True,
         )
-        self.assertEqual(agy_claude["designated_reasoning_model"], "claude-sonnet-5-5-thinking")
+        self.assertEqual(agy_claude["designated_reasoning_model"], "gemini-4-argon")
         self.assertEqual(agy_claude["reasoning_thinking_level"], "High")
 
         agy_oss = select_optimal_helper_and_thinking(
@@ -159,7 +123,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
             lane_id="IMPL_CODE",
             prefer_open_source_on_agy=True,
         )
-        self.assertEqual(agy_oss["designated_helper_model"], "gpt-oss-120b")
+        self.assertEqual(agy_oss["designated_helper_model"], "gemini-3.5-flash-lite")
         self.assertEqual(agy_oss["helper_thinking_level"], "Low")
 
     def test_3tool_disjoint_parallel_plan_partitions_paths_cleanly(self) -> None:
@@ -171,7 +135,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
         ]
         for tool, expected_helper in (
             ("codex", "gpt-6-luna"),
-            ("antigravity", "gemini-3.8-flash"),
+            ("antigravity", "gemini-3.5-flash-lite"),
             ("claude", "claude-haiku-5-5"),
         ):
             plan = compute_3tool_helper_parallel_plan(
@@ -317,7 +281,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
             )
             self.assertEqual(
                 sub_opt["three_tool_ollama_boost"]["antigravity"]["designated_helper_model"],
-                "gemini-3.8-flash",
+                "gemini-3.5-flash-lite",
             )
             self.assertEqual(
                 sub_opt["three_tool_ollama_boost"]["claude"]["designated_helper_model"],
@@ -368,7 +332,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
         )
         out = json.loads(proc.stdout)
         self.assertEqual(out["tool"], "codex")
-        self.assertEqual(out["designated_reasoning_model"], "gpt-6.1-sol")
+        self.assertEqual(out["designated_reasoning_model"], "gpt-6-astra")
         self.assertEqual(out["reasoning_thinking_level"], "High")
 
 
