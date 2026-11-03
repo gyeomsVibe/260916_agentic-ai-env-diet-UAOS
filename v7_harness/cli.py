@@ -622,6 +622,22 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
 
 
 
+def cmd_coord_hud(args: argparse.Namespace) -> int:
+    """U303: live cockpit HUD from the installed runtime (`uaos coord hud --project <root>`)."""
+    from .coord.hud_live import serve
+
+    res = serve(Path(args.project), once=bool(args.once), open_page=not args.no_open)
+    print(json.dumps(res, ensure_ascii=False))
+    return 0
+
+
+def cmd_coord_statusline_claude(args: argparse.Namespace) -> int:
+    """U303-B: Claude Code statusLine command; records measured rate limits, prints one status line."""
+    from .coord.claude_statusline import main as statusline_main
+
+    return statusline_main()
+
+
 def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
     from .disjoint_mediator import run_independent_flagman_pulse
 
@@ -1036,6 +1052,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_cap.add_argument("--debounce", type=float, default=0.0, help="Debounce interval in seconds for 0-paid-token refresh")
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
+
+    p_coord_hud = p_coord_subs.add_parser("hud", help="U303: live cockpit HUD (measured quota, models, schedule) from the installed runtime")
+    p_coord_hud.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_hud.add_argument("--once", action="store_true", help="Render one page and exit")
+    p_coord_hud.add_argument("--no-open", action="store_true", help="Do not open the page in the browser")
+    p_coord_hud.set_defaults(func=cmd_coord_hud)
+
+    p_coord_sl = p_coord_subs.add_parser("statusline-claude", help="U303-B: Claude Code statusLine recorder of measured rate limits")
+    p_coord_sl.set_defaults(func=cmd_coord_statusline_claude)
 
     p_coord_hm = p_coord_subs.add_parser(
         "helper-matrix",
