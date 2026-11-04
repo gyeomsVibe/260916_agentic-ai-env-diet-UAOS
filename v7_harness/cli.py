@@ -678,6 +678,42 @@ def cmd_coord_helper_matrix(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coord_schedule(args: argparse.Namespace) -> int:
+    from .coord import schedule_planner as sp
+
+    project = Path(args.project)
+    try:
+        if args.action == "plan":
+            # U304 item 7: the measured budget is a required input; no file and no provider -> fail closed.
+            budget = None
+            if args.budget_file:
+                budget = json.loads(Path(args.budget_file).read_text(encoding="utf-8"))
+            else:
+                try:
+                    from .coord import usage_budget  # U304-D provider, wired once it lands
+                except ImportError:
+                    usage_budget = None
+                if usage_budget is not None and hasattr(usage_budget, "budget_snapshot"):
+                    budget = usage_budget.budget_snapshot()
+            fn = sp.plan_sub if args.sub else sp.plan_master
+            payload = fn(project, card_file=args.card_file, keypoints=tuple(args.keypoint or ()),
+                         dry_run=bool(args.dry_run), budget=budget)
+        elif args.action == "show":
+            payload = sp.show_sub(project) if args.sub else sp.show_master(project)
+        else:
+            if not args.card:
+                raise ValueError("--card is required to advance")
+            if args.sub:
+                payload = sp.advance_sub(project, card=args.card, step=args.step, to=args.to or "DONE")
+            else:
+                payload = sp.advance_master(project, phase=args.card, to=args.to)
+    except (KeyError, ValueError, OSError, TimeoutError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="v7_harness", description="v7 Minimal Automation Harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1099,6 +1135,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_hm.add_argument("--keypoint", action="store_true", help="Whether the task is a keypoint")
     p_coord_hm.add_argument("--utilization-5h-pct", type=float, default=0.0, help="Observed 5h utilization percentage")
     p_coord_hm.set_defaults(func=cmd_coord_helper_matrix)
+
+    # U304-C: schedule-time model/effort/helper assignment and the live driver of the detailed schedule.
+    p_coord_sched = p_coord_subs.add_parser(
+        "schedule",
+        help="U304-C: assign main model, effort, helper per master/sub step from estimates; drive the sub schedule",
+    )
+    p_coord_sched.add_argument("action", choices=["plan", "advance", "show"])
+    p_coord_sched.add_argument("--project", default=".", help="Project root (default: .)")
+    sched_scope = p_coord_sched.add_mutually_exclusive_group(required=True)
+    sched_scope.add_argument("--master", action="store_true", help="Master schedule (.coord/master_schedule.json)")
+    sched_scope.add_argument("--sub", action="store_true", help="Detailed schedule (.coord/sub_process_schedule.json)")
+    p_coord_sched.add_argument("--card-file", default=None, help="Card manual whose `## Cards` table is scheduled")
+    p_coord_sched.add_argument("--card", default=None, help="Card (sub advance) or phase id (master advance)")
+    p_coord_sched.add_argument("--step", default=None, help="Sub step id or stage code (default: the ACTIVE step)")
+    p_coord_sched.add_argument("--to", default=None, help="Target state (default: DONE for sub, next state for master)")
+    p_coord_sched.add_argument("--keypoint", action="append", default=[],
+                               help="Card/phase id the conductor declares a keypoint (user emphasis); repeatable")
+    p_coord_sched.add_argument("--dry-run", action="store_true", help="Plan without writing")
+    p_coord_sched.add_argument("--budget-file", default=None,
+                               help="Measured budget snapshot JSON (U304-D shape); plan fails closed without one")
+    p_coord_sched.set_defaults(func=cmd_coord_schedule)
 
     p_coord_rea = p_coord_subs.add_parser(
         "rea-audit",
