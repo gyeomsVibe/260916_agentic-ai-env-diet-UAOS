@@ -59,10 +59,18 @@ def project_owns_gate(project: Path, tool: str) -> bool:
     if tool != "claude":
         return False
     try:
-        text = (Path(project) / ".claude" / "settings.json").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        data = json.loads((Path(project) / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
         return False
-    return "coord stop-gate" in text and "--from-hook" not in text
+    stops = data.get("hooks", {}).get("Stop") if isinstance(data, dict) and isinstance(data.get("hooks"), dict) else None
+    if not isinstance(stops, list):
+        return False
+    cmds = [
+        h.get("command", "")
+        for g in stops if isinstance(g, dict)
+        for h in (g.get("hooks") or [g]) if isinstance(h, dict) and isinstance(h.get("command"), str)
+    ]
+    return any("coord stop-gate" in c and "--from-hook" not in c for c in cmds)
 
 
 def progress_signature(project: Path) -> list:
