@@ -30,7 +30,7 @@ def _write_letter(root: Path, folder: str, letter_id: str, payload: dict) -> Pat
 
 
 class U308RequestReplyMatchTests(unittest.TestCase):
-    def test_verdict_letter_matches_by_pr_head_card_or_prefix_without_in_reply_to(self) -> None:
+    def test_verdict_letter_matches_by_head_card_or_reply_to_without_in_reply_to(self) -> None:
         tmp, root = _project()
         with tmp:
             now = time.time()
@@ -55,7 +55,7 @@ class U308RequestReplyMatchTests(unittest.TestCase):
                     "target": "antigravity",
                     "card": "U307",
                     "verdict": "PASS",
-                    "message": "U307 PR #282 (head 671669c3) independent review PASS (re relay_c161162e).",
+                    "message": f"U307 PR #282 (head {SHA}) independent review PASS.",
                 },
             )
             transitions = requests.scan(root, now=now)
@@ -64,6 +64,44 @@ class U308RequestReplyMatchTests(unittest.TestCase):
             self.assertEqual(row["state"], requests.ANSWER_OBSERVED)
             self.assertEqual(row["outcome"], "PASS")
             self.assertEqual(row["answer_ref"], "relay_ce0f6c327cd9213b6b0aeb906308a2b1")
+
+    def test_unrelated_verdict_letter_mentioning_relay_prefix_or_pr_never_closes_request(self) -> None:
+        """Claude P1 counterexample (relay_3d06e22e258c81ed27178e1408d78b3b): a verdict letter for U304-D / PR #281
+        that mentions 'Answering your relay_28443f39 question' in prose must NEVER close request relay_28443f39ffffffff
+        belonging to card U999."""
+        tmp, root = _project()
+        with tmp:
+            now = time.time()
+            r1 = requests.register(
+                root,
+                request_id="relay_28443f39ffffffff",
+                requester="claude",
+                target="antigravity",
+                card="U999",
+                subject="U999 unrelated",
+                head="0000000",
+                requester_session="sA",
+                now=now - 20,
+            )
+            requests.mark_delivered(root, r1["request_id"], "QUEUED")
+            _write_letter(
+                root,
+                "inbox",
+                "relay_07582b8a3a031691508b8589cb6d8ae3",
+                {
+                    "actor": "antigravity",
+                    "target": "claude",
+                    "card": "U304-D",
+                    "verdict": "PASS",
+                    "message": (
+                        "[U304-D follow-up PR #281 PASS] head=cfc64dac4595b85854b15ff89883feefa4db5876 "
+                        "Answering your relay_28443f39 question: I ran install_uaos_everywhere.py --apply."
+                    ),
+                },
+            )
+            transitions = requests.scan(root, now=now)
+            self.assertEqual(transitions, [])
+            self.assertEqual(requests.get(root, r1["request_id"])["state"], requests.OPEN)
 
     def test_non_verdict_or_wrong_actor_letter_without_in_reply_to_does_not_close_request(self) -> None:
         tmp, root = _project()
@@ -81,7 +119,6 @@ class U308RequestReplyMatchTests(unittest.TestCase):
                 now=now - 10,
             )
             requests.mark_delivered(root, r1["request_id"], "DISPATCHED")
-            # Wrong actor
             _write_letter(
                 root,
                 "inbox",
@@ -94,7 +131,6 @@ class U308RequestReplyMatchTests(unittest.TestCase):
                     "message": "PR #282 PASS",
                 },
             )
-            # Right actor, no verdict
             _write_letter(
                 root,
                 "inbox",
@@ -114,6 +150,7 @@ class U308RequestReplyMatchTests(unittest.TestCase):
         tmp, root = _project()
         with tmp:
             now = time.time()
+            sha281 = "200c887ef59c0000000000000000000000000000"
             r1 = requests.register(
                 root,
                 request_id="relay_65911cbe32cc716208bb01cf5b47702c",
@@ -121,12 +158,11 @@ class U308RequestReplyMatchTests(unittest.TestCase):
                 target="antigravity",
                 card="U304-D",
                 subject="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/281",
-                head="200c887ef59c0000000000000000000000000000",
+                head=sha281,
                 requester_session="sA",
                 now=now - 20,
             )
             requests.mark_delivered(root, r1["request_id"], "QUEUED")
-            # Verdict letter arrives in inbox before stop_gate runs
             _write_letter(
                 root,
                 "inbox",
@@ -136,7 +172,7 @@ class U308RequestReplyMatchTests(unittest.TestCase):
                     "target": "claude",
                     "card": "U304-D2",
                     "verdict": "PASS",
-                    "message": "PR #281 (relay_65911cbe) independent review PASS",
+                    "message": f"PR #281 (head {sha281}) independent review PASS",
                 },
             )
             hold = stop_gate._request_hold(root, "claude", "sA", now=now)
