@@ -785,6 +785,23 @@ def run_sentinel_cycle(
     except Exception as exc:  # noqa: BLE001
         flagman_3tool = {"error": f"{type(exc).__name__}: {exc}"[:200]}
 
+    # U304-A: this hook pulse exits in seconds, so it also re-spawns a dead resident daemon. Only a project that
+    # recorded a daemon once (`.coord/flagman_daemon.json`) gets one, so a scratch root never grows a process.
+    try:
+        from ..disjoint_mediator import (
+            FLAGMAN_DAEMON_INTERVAL_S,
+            ensure_independent_flagman_daemon,
+            flagman_daemon_meta_file,
+        )
+
+        flagman_daemon: Any = (
+            ensure_independent_flagman_daemon(project_root, interval_s=FLAGMAN_DAEMON_INTERVAL_S)["daemon_status"]
+            if flagman_daemon_meta_file(project_root).is_file()
+            else "NOT_INSTALLED"
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed spawn must not stop the operator
+        flagman_daemon = f"{type(exc).__name__}: {exc}"[:200]
+
     bell = ring_bell(project_root, box, runner=runner, sessions_dir=sessions_dir) if ring else {"rung": False, "reason": "RING_OFF"}
 
     wall_time_s = time.time() - t0
@@ -805,4 +822,5 @@ def run_sentinel_cycle(
         "agy_backlog": agy_backlog,
         "owner_wake": owner_res,
         "flagman_3tool": flagman_3tool,
+        "flagman_daemon": flagman_daemon,
     }
