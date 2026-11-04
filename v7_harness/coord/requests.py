@@ -553,6 +553,31 @@ def _letter_answer(project: Path, row: dict[str, Any], replies: dict[str, list[t
     for letter_id, actor, outcome in replies.get(str(row["request_id"]), []):
         if actor == row.get("target"):
             return {"ref": letter_id, "outcome": outcome}
+    box = _desk(project) / ".coord" / "mailbox"
+    since = float(row.get("created_at") or 0.0) - SKEW_S
+    req_id, head, card = str(row.get("request_id") or ""), str(row.get("head") or ""), str(row.get("card") or "")
+    prefix = req_id[:14] if req_id.startswith("relay_") and len(req_id) >= 14 else req_id
+    pr_pat = _pr_pattern(str(row.get("subject") or ""))
+    for folder in (box / "inbox", box / "ack"):
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("*.json")):
+            try:
+                if path.stat().st_mtime < since:
+                    continue
+                payload = (json.loads(path.read_text(encoding="utf-8")) or {}).get("payload") or {}
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            if not isinstance(payload, dict) or payload.get("actor") != row.get("target"):
+                continue
+            verdict = str(payload.get("verdict") or payload.get("outcome") or "").upper()
+            if verdict not in VERDICT_OUTCOMES:
+                continue
+            text = f"{payload.get('message') or ''} {payload.get('delta') or ''}"
+            if ((prefix and prefix in text) or (len(head) >= 7 and head[:7] in text)
+                    or (pr_pat is not None and pr_pat.search(text))
+                    or (card and str(payload.get("card") or "") == card)):
+                return {"ref": path.stem, "outcome": verdict}
     return None
 
 
