@@ -195,6 +195,8 @@ def select_optimal_helper_and_thinking(
     U304-B: one rule for all 3 tools. The helper is always the tool's single designated helper and the reasoning
     model is always its main model; only the effort levels move with the stage. `prefer_*_on_agy` are kept for
     signature stability (U304-C calls this function) and are ignored: the retired multi-helper routes are gone.
+    U304-D: `target_532_ratio` names its `ratio_source`; a caller holding `usage_budget.budget_snapshot()` takes the
+    measured split from `parallel_ratio(tool, snapshot)` (the signature above is pinned for U304-C).
     """
     del prefer_claude_thinking_on_agy, prefer_open_source_on_agy
     norm_tool = normalize_tool_name(tool)
@@ -307,7 +309,7 @@ def select_optimal_helper_and_thinking(
         "designated_reasoning_display": catalog["model_display_names"].get(reasoning_model, reasoning_model),
         "reasoning_thinking_level": reasoning_thinking,
         "thinking_level": reasoning_thinking,
-        "target_532_ratio": dict(catalog["target_parallel_ratio"]),
+        "target_532_ratio": parallel_ratio(norm_tool),
         "disjoint_parallel_ready": True,
         "native_config": native_config,
     }
@@ -651,4 +653,19 @@ def optimize_master_and_sub_schedules(
         },
         "claude_ollama_haiku_parallel_audit": claude_audit,
         "master_phase_optimizations": master_phase_optimizations,
+    }
+
+
+def parallel_ratio(tool: str, budget_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """U304-D: the measured split from `usage_budget.budget_snapshot()` when given, else the static prior."""
+    prior = dict(COMMON_HELPER_RULE["target_parallel_ratio"])
+    tools = (budget_snapshot or {}).get("tools") or {}
+    shares = ((tools.get(normalize_tool_name(tool)) or {}).get("split") or {}).get("shares")
+    if not isinstance(shares, dict) or not shares:
+        return {**prior, "ratio_source": "static_prior"}
+    return {
+        "ollama_pct": round(float(shares.get("local") or 0.0) * 100.0, 1),
+        "helper_pct": round(float(shares.get("helper") or 0.0) * 100.0, 1),
+        "reasoning_core_pct": round(float(shares.get("core") or 0.0) * 100.0, 1),
+        "ratio_source": f"budget_snapshot:{budget_snapshot.get('id')}",
     }
