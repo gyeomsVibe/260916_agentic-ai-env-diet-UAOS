@@ -1057,6 +1057,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_push.add_argument("--supersede", action="store_true",
                               help="U295: push over an open verdict request; it is recorded STALE and its requester woken")
     p_coord_push.set_defaults(func=cmd_coord_push_check)
+    # U304-D: budget ledger + allocator; schedule writers read the same snapshot through budget_snapshot().
+    p_coord_budget = p_coord_subs.add_parser("budget", help="Per-subscription budget: measured windows, split, flagship")
+    p_coord_budget.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_budget.add_argument("--action", default="show", choices=["show", "observe", "gate"])
+    p_coord_budget.add_argument("--json", action="store_true")
+    p_coord_budget.add_argument("--refresh", action="store_true", help="Rebuild even when a fresh snapshot exists")
+    p_coord_budget.add_argument("--tool", default=None, choices=["claude", "codex", "antigravity"])
+    p_coord_budget.add_argument("--window", default=None, choices=["5h", "7d"])
+    p_coord_budget.add_argument("--used-pct", type=float, default=None)
+    p_coord_budget.add_argument("--resets-at", default=None, help="ISO time or epoch seconds")
+    p_coord_budget.add_argument("--observed-at", default=None)
+    p_coord_budget.add_argument("--source", default="manual_usage_card", help="Where the reading came from")
+    p_coord_budget.add_argument("--importance", type=int, default=None, help="gate: 1-5")
+    p_coord_budget.add_argument("--difficulty", type=int, default=None, help="gate: 1-5")
+    p_coord_budget.add_argument("--cheaper-failed", default=None, help="gate: work_id of the failed cheaper attempt")
+    p_coord_budget.add_argument("--keypoint-class", default=None)
+    p_coord_budget.add_argument("--used-steps-5h", type=int, default=0)
+    p_coord_budget.set_defaults(func=cmd_coord_budget)
     # U295 B2: one writer per PR branch.
     p_coord_lease = p_coord_subs.add_parser("lease", help="Acquire, release or show the one-writer lease of a branch")
     p_coord_lease.add_argument("--project", default=".", help="Project root (default: .)")
@@ -2410,6 +2428,36 @@ def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
         print("\n".join(lines))
         return 0
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_coord_budget(args: argparse.Namespace) -> int:
+    """U304-D: per-subscription budget ledger, measured split and flagship gate (docs/108)."""
+    from .coord import usage_budget as ub
+    project = Path(args.project)
+    if args.action == "observe":
+        if not (args.tool and args.window and args.used_pct is not None and args.resets_at):
+            print("observe needs --tool --window --used-pct --resets-at", file=sys.stderr)
+            return 2
+        import time as _time
+        added = ub.record_observation(args.tool, args.window, args.used_pct, args.resets_at,
+                                      args.observed_at or _time.time(), args.source)
+        _print_json({"ok": True, "added": added, "tool": args.tool, "window": args.window})
+        return 0
+    snap = ub.budget_snapshot(project, refresh=args.refresh)
+    if args.action == "gate":
+        if not args.tool or args.importance is None or args.difficulty is None:
+            print("gate needs --tool --importance --difficulty", file=sys.stderr)
+            return 2
+        res = ub.flagship_gate(snap, args.tool, importance=args.importance, difficulty=args.difficulty,
+                               cheaper_route_failed=args.cheaper_failed, keypoint_class=args.keypoint_class,
+                               used_steps_5h=args.used_steps_5h)
+        _print_json(res)
+        return 0 if res["allow"] else 1
+    if args.json:
+        print(json.dumps(snap, ensure_ascii=False, indent=1, default=str))
+    else:
+        print(ub.render_text(snap))
     return 0
 
 
