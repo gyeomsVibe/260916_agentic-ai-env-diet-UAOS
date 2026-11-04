@@ -112,12 +112,14 @@ class EstimatorTests(unittest.TestCase):
         for tool, flag in (("codex", "gpt-6-astra"), ("antigravity", "gemini-4-argon")):
             self.assertEqual(sp.assign_step(tool, hi)["main_model"], flag)
 
-        # Same design burden, not important: High effort on the cheaper main, never the flagship.
+        # Same design burden, not important: never a flagship grant; with no cheaper main, Medium on the main.
         lo_imp = sp.estimate_step(text="Scheduler architecture estimator router design", stage="SP2_MIA_DESIGN_AUDIT",
                                   lane="ARCH_DESIGN", card_id="U1", history=hist)
         self.assertLess(lo_imp["importance"], 2)
         b = sp.assign_step("claude", lo_imp)
-        self.assertEqual((b["tier"], b["main_model"], b["main_effort"]), ("STANDARD_HIGH", "claude-sonnet-5-5", "High"))
+        self.assertEqual((b["tier"], b["main_model"], b["main_effort"]), ("STANDARD_HIGH", "claude-opus-5-5", "Medium"))
+        c = sp.assign_step("codex", lo_imp)  # Codex keeps a cheaper main, so High effort stays on it
+        self.assertEqual((c["main_model"], c["main_effort"]), ("gpt-6.1-sol", "High"))
 
     def test_mechanical_merge_gets_low_effort(self) -> None:
         est = sp.estimate_step(text="merge the PR", stage="SP5_MERGE_AND_RUNTIME", lane="MERGE_RELEASE",
@@ -130,7 +132,7 @@ class EstimatorTests(unittest.TestCase):
         est = sp.estimate_step(text="security gate design architecture", stage="SP2_MIA_DESIGN_AUDIT",
                                lane="ARCH_DESIGN", keypoint=True, history=sp.summarize_history([]))
         a = sp.assign_step("codex", est, exhaustion_risk="IMMINENT_EXHAUSTION")
-        self.assertEqual((a["tier"], a["main_model"]), ("STANDARD_HIGH", "gpt-6-sol"))
+        self.assertEqual((a["tier"], a["main_model"]), ("STANDARD_HIGH", "gpt-6.1-sol"))
         self.assertIn("demoted", a["rationale"])
 
     def test_one_helper_per_tool_and_never_high(self) -> None:
@@ -206,10 +208,10 @@ class BudgetTests(unittest.TestCase):
                          ("antigravity", "gemini-4-argon", "High", "claude"))
         k = sp.assign_step("codex", _heavy(True), allowance=allow)
         self.assertEqual((k["tool"], k["main_model"]), ("codex", "gpt-6-astra"))
-        # The judge is never the rerouted author: no Argon, High effort on the cheaper own main.
+        # The judge is never the rerouted author: no Argon, no flagship grant; Opus without High.
         j = sp.assign_step("claude", _heavy(False), allowance=allow, no_reroute=("antigravity",))
         self.assertEqual((j["tool"], j["tier"], j["main_model"], j["main_effort"]),
-                         ("claude", "STANDARD_HIGH", "claude-sonnet-5-5", "High"))
+                         ("claude", "STANDARD_HIGH", "claude-opus-5-5", "Medium"))
         empty = sp.paced_allowance(sp.validate_budget(_budget(now, rem5=0), now=now), now=now)
         e = sp.assign_step("claude", _heavy(True), allowance=empty)
         self.assertEqual((e["tool"], e["tier"]), ("claude", "STANDARD_HIGH"))
@@ -221,7 +223,7 @@ class BudgetTests(unittest.TestCase):
         allow = sp.paced_allowance(sp.validate_budget(b, now=now), now=now)
         argon = sum(sp.assign_step("antigravity", _heavy(False), allowance=allow)["tier"] == "FLAGSHIP"
                     for _ in range(20))
-        opus = sum(sp.assign_step("claude", _heavy(True), allowance=allow)["main_model"] == "claude-opus-5-5"
+        opus = sum(sp.assign_step("claude", _heavy(True), allowance=allow)["main_effort"] == "High"
                    for _ in range(20))
         self.assertEqual((argon, opus), (5, 1))
 

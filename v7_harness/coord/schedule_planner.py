@@ -33,14 +33,20 @@ from v7_harness.coord.hook_context import shared_desk
 ASSIGNMENT_SCHEMA = "uaos-schedule-assignment-v1"
 DRIVER_SCHEMA = "uaos-sub-schedule-driver-v1"
 
-# Flagship vs cheaper main per tool (윤겸스 2026-11-04 item 4: Claude Opus 5.5, Antigravity Gemini 4 Argon,
-# Codex GPT-6 Astra as the flagship examples). The standard main is the next model of the same family that the
-# router already uses as a main (not as a helper), so a demotion never lands on the helper itself.
+# Flagship vs standard main per tool (윤겸스 2026-11-04 item 4). Live values come from the U304-B lineup via
+# _tier_model; this fallback mirrors that lineup of 2026-11-04 (one main per tool, no cheaper sibling main).
 MAIN_MODEL_TIERS: dict[str, dict[str, str]] = {
-    "codex": {"flagship": "gpt-6-astra", "standard": "gpt-6-sol"},
-    "claude": {"flagship": "claude-opus-5-5", "standard": "claude-sonnet-5-5"},
-    "antigravity": {"flagship": "gemini-4-argon", "standard": "gemini-3.1-pro"},
+    "codex": {"flagship": "gpt-6-astra", "standard": "gpt-6.1-sol"},
+    "claude": {"flagship": "claude-opus-5-5", "standard": "claude-opus-5-5"},
+    "antigravity": {"flagship": "gemini-4-argon", "standard": "gemini-4-argon"},
 }
+
+
+def _tier_model(tool: str, lineup: dict[str, Any], tier_key: str) -> str:
+    """Flagship = lineup keypoint escalation (else its main); standard = lineup main (U304-B owns the lineup)."""
+    if tier_key == "flagship":
+        return str(lineup.get("keypoint_escalation_model") or lineup.get("main_model") or MAIN_MODEL_TIERS[tool]["flagship"])
+    return str(lineup.get("main_model") or MAIN_MODEL_TIERS[tool]["standard"])
 
 THRESHOLDS: dict[str, dict[str, Any]] = {
     "flagship": {
@@ -432,8 +438,12 @@ def assign_step(
         multi_file=bool(estimate["multi_file"]),
     )
     tier_key = "flagship" if cls["tier"] == "FLAGSHIP" else "standard"
-    main = MAIN_MODEL_TIERS[norm][tier_key]
+    main = _tier_model(norm, lineup, tier_key)
     model_note = f"{tier_key} main of {norm}"
+    effort = cls["effort"]
+    if cls["tier"] != "FLAGSHIP" and effort == "High" and main == _tier_model(norm, lineup, "flagship"):
+        effort = "Medium"  # no cheaper main: High stays a budget-paced flagship grant
+        model_note += "; High reserved for flagship grants (no cheaper main in lineup)"
     if main not in tuple(lineup.get("all_reasoning_models") or ()):
         main = str(router["designated_reasoning_model"])
         model_note = f"{tier_key} model absent from lineup; router main kept"
@@ -459,8 +469,8 @@ def assign_step(
         "score": cls["score"],
         "main_model": main,
         "main_model_display": display.get(main, main),
-        "main_effort": cls["effort"],
-        "main_effort_param": {str(lineup.get("thinking_param_name") or "effort"): cls["effort"].lower()},
+        "main_effort": effort,
+        "main_effort_param": {str(lineup.get("thinking_param_name") or "effort"): effort.lower()},
         "helper_model": helper,
         "helper_model_display": display.get(helper, helper),
         "helper_effort": helper_effort,
