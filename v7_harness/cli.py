@@ -694,7 +694,7 @@ def cmd_coord_schedule(args: argparse.Namespace) -> int:
                 except ImportError:
                     usage_budget = None
                 if usage_budget is not None and hasattr(usage_budget, "budget_snapshot"):
-                    budget = usage_budget.budget_snapshot()
+                    budget = usage_budget.schedule_budget_for(project)
             fn = sp.plan_sub if args.sub else sp.plan_master
             payload = fn(project, card_file=args.card_file, keypoints=tuple(args.keypoint or ()),
                          dry_run=bool(args.dry_run), budget=budget)

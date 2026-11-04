@@ -893,6 +893,34 @@ def validate_schedule_budget(schedule: dict[str, Any], *, now: float | None = No
     return ref
 
 
+def schedule_budget(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """U304-C's per-tool budget input (schedule_planner.BUDGET_KEYS) from a fresh snapshot.
+
+    `measured_at` is the oldest window reading, not the snapshot build time, so a stale /usage reading fails the
+    schedule's own freshness check; a window without a tokens-per-% calibration stays None and fails closed there.
+    """
+    require_fresh_snapshot(snapshot)
+    out: dict[str, dict[str, Any]] = {}
+    for tool, entry in (snapshot.get("tools") or {}).items():
+        wins = entry.get("windows") or {}
+        five, week = wins.get("5h") or {}, wins.get("7d") or {}
+        seen = [w["observed_at"] for w in (five, week) if w.get("observed_at")]
+        out[tool] = {"plan": entry.get("plan"), "measured_at": min(seen) if seen else None,
+                     "remaining_5h_tokens": five.get("remaining_tokens"),
+                     "remaining_week_tokens": week.get("remaining_tokens"),
+                     "reset_5h_at": five.get("resets_at"), "reset_week_at": week.get("resets_at"),
+                     "budget_snapshot_id": snapshot.get("id")}
+    return out
+
+
+def schedule_budget_for(project_root: Path) -> dict[str, dict[str, Any]]:
+    """`coord schedule plan`'s provider: the shared desk's snapshot as U304-C's budget (refusal -> ValueError, exit 2)."""
+    try:
+        return schedule_budget(budget_snapshot(Path(project_root)))
+    except BudgetSnapshotError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 # ---------------------------------------------------------------- report
 def render_text(snap: dict[str, Any]) -> str:
     def f(v: Any, unit: str = "") -> str:
