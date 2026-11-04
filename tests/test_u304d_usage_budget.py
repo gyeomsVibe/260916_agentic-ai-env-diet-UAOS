@@ -1,11 +1,14 @@
 """U304-D: budget ledger (real parallel appends), pacing, split allocator, flagship gate, fail-closed snapshot."""
 from __future__ import annotations
 
+import io
+import json
 import os
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -315,6 +318,58 @@ class RouterRatio(unittest.TestCase):
         self.assertAlmostEqual(got["ollama_pct"] + got["helper_pct"] + got["reasoning_core_pct"], 100.0, delta=0.3)
         self.assertLessEqual(got["ollama_pct"], ub.LOCAL_CEIL * 100)
         self.assertGreaterEqual(got["reasoning_core_pct"], ub.CORE_FLOOR * 100)
+
+
+def _sched_snapshot(now: float, *, read_age_s: float = 60.0, ag_tokens: int | None = 5_000_000) -> dict:
+    """A fresh snapshot whose window readings are `read_age_s` old (Antigravity tokens optional)."""
+    def win(tokens, reset_h):
+        return {"observed_at": _iso(now - read_age_s), "resets_at": _iso(now + reset_h * H),
+                "remaining_tokens": tokens}
+    tools = {t: {"plan": t, "windows": {"5h": win(1_000_000, 2), "7d": win(9_000_000, 50)}} for t in ub.TOOLS}
+    tools["antigravity"]["windows"]["7d"]["remaining_tokens"] = ag_tokens
+    return {"schema": ub.SCHEMA, "id": "snapS", "generated_at": _iso(now), "timestamp": now, "tools": tools}
+
+
+class ScheduleBudget(unittest.TestCase):
+    """U304-C's `coord schedule plan` reads its per-tool budget from this card's snapshot (merge of PR #278)."""
+
+    def test_snapshot_feeds_the_schedule_validator(self):
+        from v7_harness.coord import schedule_planner as sp
+        now = time.time()
+        out = ub.schedule_budget(_sched_snapshot(now))
+        got = sp.validate_budget(out, now=now)
+        self.assertEqual(got["claude"]["remaining_week_tokens"], 9_000_000)
+        self.assertEqual(got["antigravity"]["remaining_5h_tokens"], 1_000_000)
+        self.assertEqual(out["codex"]["budget_snapshot_id"], "snapS")
+
+    def test_stale_reading_or_uncalibrated_tokens_fail_closed(self):
+        from v7_harness.coord import schedule_planner as sp
+        now = time.time()
+        with self.assertRaises(sp.BudgetUnavailable):  # snapshot is fresh, its /usage readings are not
+            sp.validate_budget(ub.schedule_budget(_sched_snapshot(now, read_age_s=3600)), now=now)
+        with self.assertRaises(sp.BudgetUnavailable):  # no tokens-per-% calibration: no number is made up
+            sp.validate_budget(ub.schedule_budget(_sched_snapshot(now, ag_tokens=None)), now=now)
+        with self.assertRaises(ub.BudgetSnapshotError):
+            ub.schedule_budget({**_sched_snapshot(now), "timestamp": now - 2 * ub.FRESH_S})
+
+    def test_cli_schedule_plan_uses_the_snapshot_provider(self):
+        from unittest import mock
+        from tests.test_u304c_schedule_planner import _make_desk
+        from v7_harness.cli import main
+        with tempfile.TemporaryDirectory() as d:
+            desk = _make_desk(Path(d))
+            argv = ["coord", "schedule", "plan", "--sub", "--project", str(desk), "--card-file", str(desk / "card.md"),
+                    "--dry-run"]
+            for snap, want in ((_sched_snapshot(time.time()), 0), (_sched_snapshot(time.time(), read_age_s=3600), 2)):
+                with mock.patch.object(ub, "budget_snapshot", return_value=snap) as provider, \
+                        mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                    self.assertEqual(main(argv), want, out.getvalue())
+                self.assertEqual(Path(provider.call_args.args[0]), desk)
+            with mock.patch.object(ub, "budget_snapshot",
+                                   side_effect=ub.BudgetSnapshotError("BUDGET_SNAPSHOT_STALE", "x")), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                self.assertEqual(main(argv), 2)
+            self.assertIn("BUDGET_SNAPSHOT_STALE", json.loads(out.getvalue())["error"])
 
 
 if __name__ == "__main__":
