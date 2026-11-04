@@ -262,7 +262,9 @@ def _request_hold(project: Path, tool: str, session: str, now: float | None = No
     try:
         from v7_harness.coord import requests, stream, watch
 
-        rows = requests.open_for(project, tool, session=session)
+        requests.scan(Path(project), now=now)
+        rows = [r for r in requests.open_for(project, tool, session=session)
+                if r.get("state") in requests.WAITING_STATES]
         if not rows:
             return None
         ids = [str(row["request_id"]) for row in rows]
