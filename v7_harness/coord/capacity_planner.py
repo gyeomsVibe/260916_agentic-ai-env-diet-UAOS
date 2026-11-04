@@ -2275,8 +2275,12 @@ def flagman_liveness(project_root: Path, now: float, probe: Any = None) -> dict[
         return out("STOPPED", "SELF_REPORTED_" + (str(beat_doc.get("state") or "NONE").upper()[:20]), age)
     if age > FLAGMAN_STALE_S:
         return out("STOPPED", "PULSE_STALE", age)
+    # U304-A: short-lived hook processes also pulse, so the writer's PID proves nothing; the resident daemon's
+    # PID (`daemon_pid`, null when none was ever recorded) is what must be running. Older beats only carry `pid`.
+    if "daemon_pid" in beat_doc and beat_doc.get("daemon_pid") is None:
+        return out("STOPPED", "NO_DAEMON", age)
     try:
-        pid = int(beat_doc.get("pid"))
+        pid = int(beat_doc.get("daemon_pid", beat_doc.get("pid")))
     except (TypeError, ValueError):
         return out("UNKNOWN", "NO_PID", age)
     if pid <= 0:
@@ -2573,13 +2577,15 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         </div>
         <div id="schedule-list" class="space-y-2 text-sm"></div>
       </section>
-      <details class="rounded-lg border border-[var(--border)] p-2">
-        <summary class="acc-sum cursor-pointer text-sm font-semibold px-1 py-1">📟 운영 칩 · 대기 상태</summary>
+      <!-- U304-A: always open (윤겸스 2026-11-04). U286 v4 folded it into a closed details accordion to give the tool
+           console the top; the chips and wait banner then stayed hidden until clicked. -->
+      <section id="ops-chip-panel" class="rounded-lg border border-[var(--border)] p-2">
+        <div class="text-sm font-semibold px-1 py-1">📟 운영 칩 · 대기 상태</div>
         <div class="space-y-2 pt-2">
           <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
           <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
         </div>
-      </details>
+      </section>
       </div>
     </div>
   </div>

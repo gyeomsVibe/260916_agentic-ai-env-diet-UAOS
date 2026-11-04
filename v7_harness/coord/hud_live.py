@@ -38,6 +38,17 @@ def render_once(project: Path, out: Path) -> dict[str, Any]:
     return snap
 
 
+def ensure_flagman(project: Path) -> dict[str, Any]:
+    """U304-A: the refresher is the one resident process the user keeps open, so it re-spawns a dead Flagman
+    daemon every cycle (a live one costs one PID probe). Hook pulses alone cannot keep the HUD reading LIVE."""
+    from ..disjoint_mediator import FLAGMAN_DAEMON_INTERVAL_S, ensure_independent_flagman_daemon
+
+    try:
+        return ensure_independent_flagman_daemon(Path(project), interval_s=FLAGMAN_DAEMON_INTERVAL_S)
+    except Exception as exc:  # noqa: BLE001 - a failed spawn must not stop the HUD; the page shows STOPPED
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -67,7 +78,7 @@ def running_refresher(pid_file: Path) -> int | None:
 
 
 def serve(project: Path, *, once: bool = False, open_page: bool = True, sleep: Callable[[float], None] = time.sleep,
-          max_cycles: int | None = None) -> dict[str, Any]:
+          max_cycles: int | None = None, ensure: Callable[[Path], Any] = ensure_flagman) -> dict[str, Any]:
     project = Path(project).resolve()
     out, pid_file = out_paths(project)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +87,8 @@ def serve(project: Path, *, once: bool = False, open_page: bool = True, sleep: C
         if open_page and out.is_file():
             os.startfile(str(out))  # noqa: S606 - local page in the default browser
         return {"ok": True, "state": "ALREADY_RUNNING", "pid": other, "html": str(out)}
+    if not once:
+        ensure(project)
     snap = render_once(project, out)
     if open_page:
         os.startfile(str(out))  # noqa: S606
@@ -87,6 +100,7 @@ def serve(project: Path, *, once: bool = False, open_page: bool = True, sleep: C
         sleep(INTERVAL_S)
         cycles += 1
         try:
+            ensure(project)
             render_once(project, out)
         except Exception as exc:  # keep the HUD alive; the error is kept next to the page
             (out.parent / "cockpit_last_error.txt").write_text(repr(exc), encoding="utf-8")
