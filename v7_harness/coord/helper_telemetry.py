@@ -1,4 +1,4 @@
-"""U287: the one telemetry record for helper workers (Ollama, Haiku 5.5, GPT-6 Luna, Gemini 3.8 Flash Low).
+"""U287: the one telemetry record for helper workers (Ollama, Haiku 5.5, GPT-6 Luna, Gemini 3.5 Flash-Lite).
 
 Rows go into the desk usage ledger (`uaos-usage-v2`, U72-L) so the RSI ledger and `coord capacity` read the same
 numbers. This module never imports the HUD (U286); the HUD only displays `summarize()` output. Prompt text is never
@@ -18,9 +18,14 @@ from .usage_ledger import UsageRejected, ledger_file, record_usage
 
 TELEMETRY = "uaos-helper-telemetry-v1"
 # lane -> (exact pinned model, or None when any local Ollama model is allowed; budget engine the call is billed to)
+# U304-B: the "flash" lane pins Antigravity's single helper Gemini 3.5 Flash-Lite (was gemini-3.8-flash-low).
 LANES = {"ollama": (None, "ollama"), "haiku": ("claude-haiku-5-5", "haiku"), "luna": ("gpt-6-luna", "codex"),
-         "flash": ("gemini-3.8-flash-low", "antigravity")}
+         "flash": ("gemini-3.5-flash-lite", "antigravity")}
 CALLERS = ("codex", "claude", "antigravity")
+# U304-B: tool -> its one designated helper lane (1:1). Must agree with helper_thinking_router (tested).
+TOOL_HELPER_LANE = {"claude": "haiku", "codex": "luna", "antigravity": "flash"}
+# Cockpit/ledger display names that mean the same helper model (Antigravity reports display names only).
+_HELPER_ALIASES = {"gemini-3.5-flash-lite": ("Gemini 3.5 Flash Lite", "Gemini 3.5 Flash-Lite")}
 FORBIDDEN_KEYS = ("prompt", "messages", "content", "completion", "response_text")
 OUTCOMES = ("PASS", "FAIL", "BLOCKED", "REWORK", "TIMEOUT", "ERROR")
 _HASH = re.compile(r"[0-9a-f]{64}")
@@ -112,3 +117,34 @@ def summarize(rows: list[dict[str, Any]], *, now: float | None = None, window_s:
             bucket["failures"] += 1
     return {"schema": TELEMETRY + "-summary", "window_s": window_s,
             "total_calls": sum(b["calls"] for b in lanes.values()), "lanes": lanes}
+
+
+def designated_helper(tool: str) -> dict[str, Any]:
+    """The one helper of a paid tool: its telemetry lane, exact model and budget engine."""
+    lane = TOOL_HELPER_LANE.get(str(tool or "").strip().lower())
+    if lane is None:
+        raise ValueError(f"HELPER_UNKNOWN_TOOL: {tool}")
+    model, engine = LANES[lane]
+    return {"tool": tool, "lane": lane, "model": model, "budget_engine": engine}
+
+
+def designated_helper_names(tool: str) -> set[str]:
+    """Exact model id plus the display names a tool's own telemetry uses for its designated helper."""
+    model = designated_helper(tool)["model"]
+    return {model, *_HELPER_ALIASES.get(model, ())}
+
+
+def designated_helper_view(tool: str, measured_rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """HUD helper list for one tool: always exactly the designated helper, with its measured calls when present.
+
+    `measured_rows` are per-model rows (`{"model", "calls", ...}`, e.g. the 7-day ledger mix or cockpit names).
+    Other models in those rows (a second main model such as Sonnet) are never shown as helpers (U304-B).
+    """
+    helper = designated_helper(tool)
+    names = designated_helper_names(tool)
+    match = next((r for r in measured_rows or [] if isinstance(r, dict) and r.get("model") in names), None)
+    view = {"model": helper["model"], "lane": helper["lane"], "designated": True,
+            "calls": match.get("calls") if match else None, "basis": "measured" if match else "designated_only"}
+    if match and match.get("output_tokens") is not None:
+        view["output_tokens"] = match["output_tokens"]
+    return [view]

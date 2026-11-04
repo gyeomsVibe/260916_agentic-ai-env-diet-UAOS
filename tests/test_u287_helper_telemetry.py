@@ -13,7 +13,7 @@ from v7_harness import rsi
 
 H = hashlib.sha256(b"fixed input").hexdigest()
 PINS = {"ollama": "qwen2.5-coder:7b", "haiku": "claude-haiku-5-5", "luna": "gpt-6-luna",
-        "flash": "gemini-3.8-flash-low"}
+        "flash": "gemini-3.5-flash-lite"}
 ENGINES = {"ollama": "ollama", "haiku": "haiku", "luna": "codex", "flash": "antigravity"}
 
 
@@ -107,7 +107,7 @@ class HelperTelemetryAcceptance(unittest.TestCase):
     def test_capacity_snapshot_carries_the_helper_summary(self):
         now = 1800000000.0
         HT.record_helper(self.root, **self.kw(ts=now - 10))
-        HT.record_helper(self.root, **self.kw(ts=now - 20, lane="flash", model="gemini-3.8-flash-low"))
+        HT.record_helper(self.root, **self.kw(ts=now - 20, lane="flash", model="gemini-3.5-flash-lite"))
         snap = CP.collect_capacity_snapshot(self.root, home=self.home, now=now, persist=False)
         self.assertEqual(snap["helper_telemetry"]["total_calls"], 2)
         self.assertEqual(snap["helper_telemetry"]["lanes"]["flash"]["calls"], 1)
