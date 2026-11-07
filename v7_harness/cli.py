@@ -638,6 +638,18 @@ def cmd_coord_statusline_claude(args: argparse.Namespace) -> int:
     return statusline_main()
 
 
+def cmd_coord_quota_feed_claude(args: argparse.Namespace) -> int:
+    """S1: record the Claude desktop app's usage reading (5h/weekly %, resets) at zero paid tokens."""
+    from pathlib import Path as _P
+
+    from .coord.claude_statusline import record_desktop
+
+    out = _P.home() / ".uaos" / "usage" / "claude_rate_limits.jsonl"
+    ok = record_desktop(args.five_hour_pct, args.five_hour_resets, args.week_pct, args.week_resets, out=out)
+    print(json.dumps({"ok": ok, "file": str(out)}))
+    return 0 if ok else 1
+
+
 def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
     from .disjoint_mediator import run_independent_flagman_pulse
 
@@ -1115,6 +1127,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_coord_sl = p_coord_subs.add_parser("statusline-claude", help="U303-B: Claude Code statusLine recorder of measured rate limits")
     p_coord_sl.set_defaults(func=cmd_coord_statusline_claude)
+    p_coord_qf = p_coord_subs.add_parser("quota-feed-claude", help="S1: record the Claude desktop usage reading")
+    p_coord_qf.add_argument("--five-hour-pct", type=float, required=True)
+    p_coord_qf.add_argument("--five-hour-resets", required=True, help="ISO time or epoch seconds")
+    p_coord_qf.add_argument("--week-pct", type=float, required=True)
+    p_coord_qf.add_argument("--week-resets", required=True, help="ISO time or epoch seconds")
+    p_coord_qf.set_defaults(func=cmd_coord_quota_feed_claude)
 
     p_coord_hm = p_coord_subs.add_parser(
         "helper-matrix",

@@ -236,6 +236,13 @@ def pace(window: dict[str, Any] | None, history: list[dict[str, Any]], now: floa
     """
     if not window:
         return None
+    if window.get("used_pct") is None:
+        # S1: the reset passed after the last reading; the remaining % is unknown and admits no paid work
+        return {"used_pct": None, "remaining_pct": None, "resets_at": window.get("resets_at"),
+                "hours_to_reset": None, "window_min": int(window.get("window_min") or 300),
+                "observed_at": window.get("observed_at"), "age_s": window.get("age_s"), "stale": True,
+                "state": "RESET_UNOBSERVED", "sustainable_pct_per_h": None, "burn_pct_per_h": None,
+                "burn_basis": "reset_unobserved", "headroom": None, "exhaust_in_h": None}
     used = float(window.get("used_pct") or 0.0)
     remaining = max(0.0, 100.0 - used)
     reset_ts = _epoch(window.get("resets_at"))
@@ -279,7 +286,8 @@ def pace(window: dict[str, Any] | None, history: list[dict[str, Any]], now: floa
 def binding_headroom(paces: list[dict[str, Any] | None]) -> float | None:
     """The tighter window decides: any exhausted window blocks, otherwise the smallest measured headroom."""
     vals = [p for p in paces if p]
-    if any(p["state"] == "LIMITED" for p in vals):
+    # S1: an unobserved reset is unknown, and unknown fails closed like an exhausted window
+    if any(p["state"] in ("LIMITED", "RESET_UNOBSERVED") for p in vals):
         return 0.0
     hs = [p["headroom"] for p in vals if p.get("headroom") is not None]
     return min(hs) if hs else None

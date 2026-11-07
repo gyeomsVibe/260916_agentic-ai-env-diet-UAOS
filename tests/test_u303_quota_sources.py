@@ -43,13 +43,16 @@ class CodexQuota(unittest.TestCase):
             self.assertEqual(out["last_effort"], "high")
             self.assertEqual(out["plan_type"], "plus")
 
-    def test_elapsed_reset_reads_as_refilled(self):
+    def test_elapsed_reset_reads_as_unobserved_not_refilled(self):
+        # S1: a passed reset with no newer reading is unknown (None), never assumed refilled to 100 %
         with tempfile.TemporaryDirectory() as d:
             home = Path(d)
-            _write(home / ".codex/sessions/x/rollout-b.jsonl", _codex_row("2026-11-01T13:00:00Z", 21.0, NOW - 10, 100.0, NOW + 50))
+            # reading 2 h before NOW (10:00Z): the old 11-01 stamp put the 5h reset 45 h out, now INVALID
+            _write(home / ".codex/sessions/x/rollout-b.jsonl", _codex_row("2026-11-03T08:00:00Z", 21.0, NOW - 10, 100.0, NOW + 50))
             out = q.codex_quota(home, NOW)
             self.assertTrue(out["five_hour"]["reset_elapsed"])
-            self.assertEqual(out["five_hour"]["remaining_pct"], 100.0)
+            self.assertIsNone(out["five_hour"]["remaining_pct"])
+            self.assertEqual(out["five_hour"]["state"], "RESET_UNOBSERVED")
             self.assertEqual(out["five_hour"]["observed_used_pct"], 21.0)
             self.assertEqual(out["seven_day"]["remaining_pct"], 0.0)
 

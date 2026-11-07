@@ -23,7 +23,8 @@ def _fixture_home(home: Path) -> None:
           "secondary": {"used_percent": 100.0, "window_minutes": 10080, "resets_at": NOW + 86400}}
     _w(home / ".codex/sessions/2026/11/03/rollout-x.jsonl", "\n".join([
         json.dumps({"type": "turn_context", "payload": {"model": "gpt-6.1-sol", "effort": "medium"}}),
-        json.dumps({"timestamp": "2026-11-03T10:30:00Z", "payload": {"type": "token_count", "rate_limits": rl}}),
+        # S1: was 10:30Z, 30 min after NOW (10:00Z); a future-stamped reading is now INVALID, so stamp it 2 min before
+        json.dumps({"timestamp": "2026-11-03T09:58:00Z", "payload": {"type": "token_count", "rate_limits": rl}}),
     ]))
     _w(home / ".codex/config.toml", 'model = "gpt-6.1-sol"\nmodel_reasoning_effort = "medium"\n')
     models = {

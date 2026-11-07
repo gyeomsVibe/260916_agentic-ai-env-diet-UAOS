@@ -87,6 +87,7 @@ def record(payload: dict, out: Path = OUT, now: float | None = None) -> bool:
     row = row_from_payload(payload, time.time() if now is None else now)
     if row is None:
         return False
+    row["source"] = STATUSLINE_SOURCE  # S1: only a named producer counts as provider evidence (relay_acd9ea77)
     out.parent.mkdir(parents=True, exist_ok=True)
     lock = _lock(out)
     if lock is None:
@@ -97,9 +98,34 @@ def record(payload: dict, out: Path = OUT, now: float | None = None) -> bool:
         lock.unlink(missing_ok=True)
 
 
-def _append_locked(out: Path, row: dict) -> bool:
+DESKTOP_SOURCE = "claude_desktop_get_usage"  # S1: the desktop app has no statusLine; its get_usage reading feeds here
+STATUSLINE_SOURCE = "claude_statusline_rate_limits"  # rows copied from Claude Code's own statusLine stdin payload
+
+
+def record_desktop(five_pct: float, five_resets, week_pct: float, week_resets, out: Path | None = None,
+                   now: float | None = None) -> bool:
+    """S1: append one row from the desktop app's usage reading (same format as the statusLine rows + source)."""
+    from .quota_sources import _epoch
+
+    out = OUT if out is None else out
+    row = {"ts": round(time.time() if now is None else now, 3),
+           "five_hour_used_pct": _num(five_pct), "five_hour_resets_at": _epoch(five_resets),
+           "seven_day_used_pct": _num(week_pct), "seven_day_resets_at": _epoch(week_resets),
+           "model": None, "effort": None, "source": DESKTOP_SOURCE}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lock = _lock(out)
+    if lock is None:
+        return False
+    try:
+        _append_locked(out, row, dedupe=False)
+        return True
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _append_locked(out: Path, row: dict, dedupe: bool = True) -> bool:
     lines = out.read_text(encoding="utf-8").splitlines() if out.is_file() else []
-    if lines:
+    if lines and dedupe:  # a desktop reading is a new observation time even at the same %, so it is kept
         try:
             if _same(json.loads(lines[-1]), row):
                 return False

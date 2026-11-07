@@ -21,7 +21,9 @@ consecutive sample pairs when a history exists. The basis, sample count and samp
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
+import math
 import os
 import re
 import statistics
@@ -58,24 +60,121 @@ def _iso(ts: float | None) -> str | None:
     return None if ts is None else datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def window_fact(used_pct: float | None, resets_at: Any, window_min: int, observed: float | None, now: float) -> dict[str, Any] | None:
-    """One quota window. A reset time already in the past means the provider refilled it: used 0 %."""
+# S1 (2026-11-07): how old a reading may be and still admit paid work. Reasons are measured rates, not guesses.
+MAX_OBSERVATION_AGE = {
+    # Error bounds below are hypotheses from single-user rates; concurrent sessions can move faster (Codex REVISE).
+    FIVE_HOUR_MIN: {"seconds": 15 * 60, "reason": "5h window moved ~11 %/h at heavy use (Claude 19 % in ~1.7 h, "
+                    "2026-11-07); 15 min bounds the error to ~3 points"},
+    SEVEN_DAY_MIN: {"seconds": 6 * 3600, "reason": "weekly window moved <=1.2 %/h (Codex 79 % in 63 h, 2026-11-07); "
+                    "6 h bounds the error to ~7 points, inside the 10-point AMBER band"},
+}
+WINDOW_STATES = ("FRESH", "STALE", "RESET_UNOBSERVED", "MISSING")
+
+
+def _max_age_s(window_min: int) -> int:
+    entry = MAX_OBSERVATION_AGE.get(int(window_min))
+    if entry is None:  # unknown window length: the shorter (stricter) limit applies
+        entry = MAX_OBSERVATION_AGE[FIVE_HOUR_MIN]
+    return int(entry["seconds"])
+
+
+CLOCK_SKEW_S = 120  # a reading stamped more than 2 min in the future is a clock or replay error, not a reading
+
+
+def _invalid_reason(raw: float, reset_ts: float | None, window_min: int, observed: float | None, now: float) -> str | None:
+    """Why a record cannot be trusted at all (None when it can)."""
+    if not math.isfinite(raw) or raw < 0.0 or raw > 100.0:
+        return "used_pct not a finite 0..100 value"
+    if observed is not None and observed > now + CLOCK_SKEW_S:
+        return "observation stamped in the future"
+    if reset_ts is not None and observed is not None:
+        if reset_ts <= observed:
+            # the provider always reports the NEXT reset; a reset at or before the reading is a re-recorded old window
+            return "reset not after the observation (stale window re-recorded)"
+        if reset_ts - observed > window_min * 60 + CLOCK_SKEW_S:
+            return "reset further away than the window length"
+    return None
+
+
+def window_fact(used_pct: float | None, resets_at: Any, window_min: int, observed: float | None, now: float,
+                source: str | None = None) -> dict[str, Any] | None:
+    """One quota window with its freshness state.
+
+    A reset time in the past with no reading taken after it is RESET_UNOBSERVED: the value is unknown (None),
+    never assumed refilled. Only FRESH admits paid work; STALE and RESET_UNOBSERVED fail closed.
+    """
     if used_pct is None:
         return None
     reset_ts = _epoch(resets_at)
+    try:
+        raw = float(used_pct)
+    except (TypeError, ValueError):
+        raw = math.nan
+    invalid = _invalid_reason(raw, reset_ts, int(window_min), observed, now)
     elapsed = bool(reset_ts is not None and reset_ts <= now)
-    used = 0.0 if elapsed else max(0.0, min(100.0, float(used_pct)))
+    unobserved = not invalid and elapsed
+    age = None if observed is None else max(0, int(now - observed))
+    if invalid:
+        state = "INVALID"
+    elif unobserved:
+        state = "RESET_UNOBSERVED"
+    elif age is None or age > _max_age_s(window_min):
+        state = "STALE"
+    else:
+        state = "FRESH"
+    used = None if (invalid or unobserved) else raw
     return {
-        "used_pct": round(used, 1),
-        "remaining_pct": round(100.0 - used, 1),
-        "observed_used_pct": round(float(used_pct), 1),
+        "state": state,
+        "invalid_reason": invalid,
+        # Codex REVISE 2026-11-07: FRESH is necessary, not sufficient; an exhausted window denies too
+        "admit_paid": state == "FRESH" and used is not None and used < 100.0,
+        "used_pct": None if used is None else round(used, 1),
+        "remaining_pct": None if used is None else round(100.0 - used, 1),
+        "observed_used_pct": None if not math.isfinite(raw) else round(raw, 1),
         "window_min": int(window_min),
         "resets_at": _iso(reset_ts),
         "reset_in_s": 0 if (reset_ts is None or elapsed) else int(reset_ts - now),
         "reset_elapsed": elapsed,
         "observed_at": _iso(observed),
-        "age_s": None if observed is None else max(0, int(now - observed)),
+        "age_s": age,
+        "max_age_s": _max_age_s(window_min),
+        "source": source,
     }
+
+
+def window_state(window: dict[str, Any] | None) -> str:
+    return "MISSING" if not window else str(window.get("state") or "STALE")
+
+
+VERIFIED_EVIDENCE = "provider_payload"  # written by the provider's own tool (rollout, statusLine stdin, cockpit cache)
+CLAUDE_VERIFIED_PRODUCERS = frozenset({"claude_statusline_rate_limits"})  # explicit allowlist (relay_acd9ea77)
+
+
+def pool_id(provider: str, plan: Any, model_pool: Any, home: Path | None) -> str:
+    """provider:plan:model_pool:home_tag — one reading admits only its own pool (Codex relay_5f05bc5d).
+
+    home_tag is a short hash of the tool home folder path. It is NOT an account identity: it never reads an
+    account id or credential (Safety), and two logins sharing one home folder get the same tag. A login change
+    inside one home is therefore not isolated here; only the max-age gate bounds it (Codex relay_acd9ea77).
+    """
+    tag = hashlib.sha256(str(Path(home).resolve()).encode("utf-8")).hexdigest()[:8] if home is not None else "unknown"
+    return f"{provider}:{plan or 'unknown'}:{model_pool or 'unknown'}:{tag}"
+
+
+def admit_paid(account: dict[str, Any] | None, pool: str | None = None) -> bool:
+    """Paid work is admitted only when both windows are present, FRESH, not exhausted and provider-verified.
+
+    With `pool`, the reading must belong to that exact pool (provider, plan, model pool and account tag).
+    A row whose evidence is an operator-typed CLI label (or that carries no evidence) is advisory only and
+    never admits paid work; there is deliberately no override here (Codex REVISE relay_19bd9932/relay_5f05bc5d).
+    """
+    if not isinstance(account, dict):
+        return False
+    if pool is not None and account.get("account_pool") != pool:
+        return False
+    if account.get("evidence") != VERIFIED_EVIDENCE:
+        return False
+    return all(bool((account.get(k) or {}).get("admit_paid")) for k in ("five_hour", "seven_day"))
 
 
 # ---------------------------------------------------------------- Codex
@@ -113,7 +212,7 @@ def codex_quota(home: Path, now: float) -> dict[str, Any] | None:
                 if rl.get("limit_id") not in (None, "codex"):
                     continue
                 ts = _epoch(row.get("timestamp"))
-                if ts is not None and (best is None or ts >= best[0]):
+                if ts is not None and ts <= now + CLOCK_SKEW_S and (best is None or ts >= best[0]):
                     best = (ts, rl)
     if best is None:
         return None
@@ -122,8 +221,12 @@ def codex_quota(home: Path, now: float) -> dict[str, Any] | None:
     return {
         "source": "codex_rollout_rate_limits",
         "plan_type": rl.get("plan_type"),
-        "five_hour": window_fact(pri.get("used_percent"), pri.get("resets_at"), int(pri.get("window_minutes") or FIVE_HOUR_MIN), ts, now),
-        "seven_day": window_fact(sec.get("used_percent"), sec.get("resets_at"), int(sec.get("window_minutes") or SEVEN_DAY_MIN), ts, now)
+        "account_pool": pool_id("codex", rl.get("plan_type"), rl.get("limit_id") or "codex", home),
+        "evidence": "provider_payload",
+        "five_hour": window_fact(pri.get("used_percent"), pri.get("resets_at"), int(pri.get("window_minutes") or FIVE_HOUR_MIN), ts, now,
+                                 "codex_rollout_rate_limits"),
+        "seven_day": window_fact(sec.get("used_percent"), sec.get("resets_at"), int(sec.get("window_minutes") or SEVEN_DAY_MIN), ts, now,
+                                 "codex_rollout_rate_limits")
         if sec else None,
         "last_model": model,
         "last_effort": effort,
@@ -198,9 +301,11 @@ def antigravity_quota(home: Path, now: float) -> dict[str, Any] | None:
         # cockpit history shows the countdown starts at ~5 h (countdownSeconds 17869 at first point): the
         # window length is read from the reset distance, never assumed, when the reset is under 6 h away.
         win = FIVE_HOUR_MIN if (reset_ts is not None and reset_ts - (updated or now) <= 6 * 3600) else SEVEN_DAY_MIN
-        fact = window_fact(round((1.0 - p["remaining_fraction"]) * 100.0, 4), p["reset_time"], win, updated, now)
+        fact = window_fact(round((1.0 - p["remaining_fraction"]) * 100.0, 4), p["reset_time"], win, updated, now,
+                           "cockpit_quota_cache")
         pool_list.append({"models": sorted(p["models"]), **(fact or {})})
-    pool_list.sort(key=lambda f: f.get("remaining_pct", 100.0))
+    # unknown (reset unobserved) pools sort first: the scarcest known-or-unknown pool is shown before a full one
+    pool_list.sort(key=lambda f: -1.0 if f.get("remaining_pct") is None else f["remaining_pct"])
     sel_name = (selected_entry or {}).get("displayName")
     sel_pool = next((p for p in pool_list if sel_name and sel_name in p["models"]), None)
     return {
@@ -249,15 +354,33 @@ def claude_quota(home: Path, now: float) -> dict[str, Any] | None:
             row = json.loads(line)
         except ValueError:
             continue
-        if isinstance(row, dict) and (row.get("five_hour_used_pct") is not None or row.get("seven_day_used_pct") is not None):
+        if not isinstance(row, dict) or (row.get("five_hour_used_pct") is None and row.get("seven_day_used_pct") is None):
+            continue
+        ts = _epoch(row.get("ts"))
+        # S1 replay guard: the newest observation wins, not the last line; a future stamp is not a reading
+        if ts is None or ts > now + CLOCK_SKEW_S:
+            continue
+        if last is None or ts >= _epoch(last.get("ts")):
             last = row
     if last is None:
         return None
     ts = _epoch(last.get("ts"))
+    # explicit producer allowlist (Codex relay_acd9ea77): only the statusLine recorder copies a provider payload;
+    # the desktop feed is an operator-typed label, and an unknown or missing (legacy) source stays advisory
+    src = str(last.get("source") or "unknown_legacy_row")
+    if src in CLAUDE_VERIFIED_PRODUCERS:
+        evidence = VERIFIED_EVIDENCE
+    elif src == "claude_desktop_get_usage":
+        evidence = "operator_reported (CLI label, not verified)"
+    else:
+        evidence = "unverified_producer (advisory only)"
     return {
-        "source": "claude_statusline_rate_limits",
-        "five_hour": window_fact(last.get("five_hour_used_pct"), last.get("five_hour_resets_at"), FIVE_HOUR_MIN, ts, now),
-        "seven_day": window_fact(last.get("seven_day_used_pct"), last.get("seven_day_resets_at"), SEVEN_DAY_MIN, ts, now),
+        "source": src,
+        # provider+plan only: the account id is a credential-adjacent value and is never read (Safety)
+        "account_pool": pool_id("claude", "subscription", "all-models", home),
+        "evidence": evidence,
+        "five_hour": window_fact(last.get("five_hour_used_pct"), last.get("five_hour_resets_at"), FIVE_HOUR_MIN, ts, now, src),
+        "seven_day": window_fact(last.get("seven_day_used_pct"), last.get("seven_day_resets_at"), SEVEN_DAY_MIN, ts, now, src),
         "last_model": last.get("model"),
         "last_effort": last.get("effort"),
     }
@@ -335,7 +458,9 @@ def calibrate(window: dict[str, Any] | None, events: Iterable[dict[str, Any]], n
         "samples": n,
         "tokens_per_pct": int(round(tpp)),
         "capacity_tokens": int(round(tpp * 100.0)),
-        "remaining_tokens": int(round(tpp * float(window["remaining_pct"]))),
+        # S1: a reset-unobserved window has no known remaining %, so no remaining tokens either
+        "remaining_tokens": None if window.get("remaining_pct") is None
+        else int(round(tpp * float(window["remaining_pct"]))),
         "formula": "Δtokens(ledger) / Δused%(provider)" if basis == "pairs_median"
         else "tokens since window start / observed used %",
     }
@@ -463,7 +588,8 @@ def _usable_tokens(window: dict[str, Any] | None, cal: dict[str, Any] | None, re
     return None, ("uncalibrated: provider % only" if window else "no_window")
 
 
-def apply_measured_quota(engines: dict[str, dict[str, Any]], measured: dict[str, Any], policy: dict[str, Any]) -> None:
+def apply_measured_quota(engines: dict[str, dict[str, Any]], measured: dict[str, Any], policy: dict[str, Any],
+                         dispatch_pools: dict[str, str] | None = None) -> None:
     """Write measured windows, calibrated tokens and model facts into the snapshot engines (in place).
 
     Haiku runs on Claude's subscription, so it reads Claude's measured windows. Ollama stays local and unlimited.
@@ -491,7 +617,16 @@ def apply_measured_quota(engines: dict[str, dict[str, Any]], measured: dict[str,
                 sub[f"quota_{key}_ui_pct"] = w["used_pct"]
                 sub[f"resets_at_{key}"] = w["resets_at"]
                 sub[f"reset_in_seconds_{key}"] = w["reset_in_s"]
-        left = min([float(w["remaining_pct"]) for w in (w5, w7) if w] or [100.0])
+        known = [float(w["remaining_pct"]) for w in (w5, w7) if w and w.get("remaining_pct") is not None]
+        unknown = any(w and w.get("remaining_pct") is None for w in (w5, w7))
+        left = min(known or [100.0])
+        if eng == "antigravity":  # one cockpit pool window (provider cache); no weekly window exists to bind
+            sub["quota_admit_paid"] = bool(w5 and w5.get("admit_paid"))
+        else:  # both windows + verified evidence + the pool the dispatch really uses (relay_acd9ea77)
+            expected = (dispatch_pools or {}).get(eng)
+            sub["quota_admit_paid"] = bool(expected) and admit_paid(m, pool=expected)
+            if not expected:  # ambiguous dispatch pool fails closed
+                sub["quota_admit_reason"] = "POOL_UNBOUND"
         if left <= 0:  # a window at 0 % blocks the tool whatever the other window says
             rem5 = 0 if rem5 is not None else rem5
             rem7 = 0 if rem7 is not None else rem7
@@ -515,7 +650,8 @@ def apply_measured_quota(engines: dict[str, dict[str, Any]], measured: dict[str,
             info["usable_remaining_7d_tokens"] = None
         if w5 or w7:
             info["status_tier"] = ("LIMITED_UNTIL_RESET" if left <= 0 else "CRITICAL_OFFLOAD" if left <= 10
-                                   else "THROTTLE_TO_LOCAL" if left <= 30 else "HEALTHY")
+                                   else "THROTTLE_TO_LOCAL" if left <= 30
+                                   else "RESET_UNOBSERVED" if unknown else "HEALTHY")
             if left <= 0:
                 info["usable_cards_capacity"] = 0
         # An expired heartbeat says nothing; the measured quota does. A tool at 0 % left is LIMITED until its
