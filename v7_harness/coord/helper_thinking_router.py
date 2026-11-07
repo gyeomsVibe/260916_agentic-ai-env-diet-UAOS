@@ -58,9 +58,9 @@ _TOOL_SEATS: dict[str, tuple[str, str, str, str, str, str, str]] = {
     # Codex main = the configured `model` in ~/.codex/config.toml (1,481 calls in 7 days). Helper GPT-6 Luna costs
     # 0.032 credits/call vs 0.253 for GPT-6.1 Terra on the same measured token mix (docs/107 table 2).
     "codex": ("gpt-6.1-sol", "GPT-6.1 Sol", "gpt-6-luna", "GPT-6 Luna", "luna", "uaos-luna-worker", "reasoning_effort"),
-    # Antigravity helper Gemini 3.5 Flash-Lite: SWE-Bench Pro 54.2 % / Terminal-bench 54.0 % at $0.30/$2.50,
-    # vs 3.8 Flash at $0.75/$3.75 (docs/107 table 3).
-    "antigravity": ("gemini-4-argon", "Gemini 4 Argon", "gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "flash",
+    # Antigravity helper Gemini 3.8 Flash (thinking_level low): S4 frozen 10-task trial 10/10 first try. The U304-B
+    # pick 3.5 Flash-Lite was cheaper on paper (docs/107 table 3) but the agy CLI does not offer it (S4 report).
+    "antigravity": ("gemini-4-argon", "Gemini 4 Argon", "gemini-3.8-flash", "Gemini 3.8 Flash", "flash",
                     "uaos-flash-worker", "thinking_level"),
     "claude": ("claude-opus-5-5", "Claude Opus 5.5", "claude-haiku-5-5", "Claude Haiku 5.5", "haiku",
                "uaos-haiku-worker", "effort"),

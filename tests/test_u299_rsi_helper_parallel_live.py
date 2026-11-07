@@ -86,7 +86,7 @@ class TestU299RsiHelperParallelLive(unittest.TestCase):
         sel = spec["helper_thinking_selection"]
         self.assertEqual(sel["tool"], "antigravity")
         self.assertEqual(sel["calculator_model"], "qwen2.5-coder:7b")
-        self.assertEqual(sel["designated_helper_model"], "gemini-3.5-flash-lite")
+        self.assertEqual(sel["designated_helper_model"], "gemini-3.8-flash")
         self.assertIn(sel["helper_thinking_level"], ("Low", "Medium", "High"))
         self.assertEqual(sel["designated_reasoning_model"], "gemini-4-argon")
         self.assertEqual(sel["reasoning_thinking_level"], "High")

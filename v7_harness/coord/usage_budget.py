@@ -106,7 +106,7 @@ PLANS: dict[str, dict[str, Any]] = {
     # The Ultra badge reads "Pro 대비 5x 사용량" (user screenshot 2026-11-04); 5x is a label, never a token figure.
     # high_route "main": Argon High is the paced main route for high-quality work, not a scarce flagship.
     "antigravity": {"plan": "Google AI Ultra", "usd_month": None, "tier": "ultra", "pro_multiple": 5.0,
-                    "core": "gemini-4-argon", "core_effort": "medium", "helper": "gemini-3.5-flash-lite",
+                    "core": "gemini-4-argon", "core_effort": "medium", "helper": "gemini-3.8-flash",
                     "flagship": "gemini-4-argon", "flagship_effort": "high", "accounts": 5, "high_route": "main"},
 }
 LOCAL_PREFIXES = ("qwen", "llama", "gemma", "mistral", "phi", "deepseek", "nomic")
