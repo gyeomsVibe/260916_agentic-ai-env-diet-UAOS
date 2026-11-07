@@ -13,7 +13,7 @@ from v7_harness import rsi
 
 H = hashlib.sha256(b"fixed input").hexdigest()
 PINS = {"ollama": "qwen2.5-coder:7b", "haiku": "claude-haiku-5-5", "luna": "gpt-6-luna",
-        "flash": "gemini-3.8-flash"}
+        "flash": "gemini-3.5-flash-lite"}
 ENGINES = {"ollama": "ollama", "haiku": "haiku", "luna": "codex", "flash": "antigravity"}
 
 
@@ -51,7 +51,7 @@ class HelperTelemetryAcceptance(unittest.TestCase):
         self.assertEqual(ledger_file(self.root).parent.name, "usage")
 
     def test_pinned_model_mismatch_unknown_lane_and_caller_are_rejected(self):
-        bad = [dict(lane="luna", model="gpt-6"), dict(lane="flash", model="gemini-3.5-flash-lite"),
+        bad = [dict(lane="luna", model="gpt-6"), dict(lane="flash", model="gemini-3.8-flash"),
                dict(lane="haiku", model="claude-sonnet-5-5"), dict(lane="ollama", model=""),
                dict(lane="gpt", model="gpt-6-luna"), dict(caller="user"), dict(caller="")]
         for over in bad:
@@ -107,7 +107,7 @@ class HelperTelemetryAcceptance(unittest.TestCase):
     def test_capacity_snapshot_carries_the_helper_summary(self):
         now = 1800000000.0
         HT.record_helper(self.root, **self.kw(ts=now - 10))
-        HT.record_helper(self.root, **self.kw(ts=now - 20, lane="flash", model="gemini-3.8-flash"))
+        HT.record_helper(self.root, **self.kw(ts=now - 20, lane="flash", model="gemini-3.5-flash-lite"))
         snap = CP.collect_capacity_snapshot(self.root, home=self.home, now=now, persist=False)
         self.assertEqual(snap["helper_telemetry"]["total_calls"], 2)
         self.assertEqual(snap["helper_telemetry"]["lanes"]["flash"]["calls"], 1)

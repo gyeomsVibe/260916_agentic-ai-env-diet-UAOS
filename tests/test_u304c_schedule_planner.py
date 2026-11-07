@@ -197,8 +197,9 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(a["antigravity"]["flagship_tokens_left"], 25_000)
         self.assertEqual(a["codex"]["flagship_tokens_left"], 5_000)
         refilled = _budget(now, rem5=50_000, week=1_000_000, week_h=50, five_h_min=-1)
-        a2 = sp.paced_allowance(sp.validate_budget(refilled, now=now), now=now)
-        self.assertEqual(a2["claude"]["paced_tokens"], 100_000)  # 5h reset passed: weekly pace only
+        # S1: a 5h reset that passed after the reading is unobserved, so the schedule fails closed (no refill)
+        with self.assertRaises(sp.BudgetUnavailable):
+            sp.validate_budget(refilled, now=now)
 
     def test_heavy_step_prefers_argon_and_20_dollar_flagship_is_keypoint_only(self) -> None:
         now = 1_000_000.0

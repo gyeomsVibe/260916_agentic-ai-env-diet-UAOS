@@ -1,4 +1,4 @@
-"""U287: the one telemetry record for helper workers (Ollama, Haiku 5.5, GPT-6 Luna, Gemini 3.8 Flash).
+"""U287: the one telemetry record for helper workers (Ollama, Haiku 5.5, GPT-6 Luna, Gemini 3.5 Flash-Lite).
 
 Rows go into the desk usage ledger (`uaos-usage-v2`, U72-L) so the RSI ledger and `coord capacity` read the same
 numbers. This module never imports the HUD (U286); the HUD only displays `summarize()` output. Prompt text is never
@@ -18,18 +18,14 @@ from .usage_ledger import UsageRejected, ledger_file, record_usage
 
 TELEMETRY = "uaos-helper-telemetry-v1"
 # lane -> (exact pinned model, or None when any local Ollama model is allowed; budget engine the call is billed to)
-# S4 (2026-11-07): the "flash" lane pins Antigravity's single helper Gemini 3.8 Flash at thinking_level low.
-# U304-B's Gemini 3.5 Flash-Lite is rejected by the agy CLI ("not recognized as a known model", `agy models` lists
-# only 3.8 Flash Low/Medium/High), so no headless helper call could use it; 3.8 Flash low passed the 10 frozen S4
-# tasks 10/10 first try (.work/sustain_20261107/S4_helper_report.md).
+# U304-B: the "flash" lane pins Antigravity's single helper Gemini 3.5 Flash-Lite (was gemini-3.8-flash-low).
 LANES = {"ollama": (None, "ollama"), "haiku": ("claude-haiku-5-5", "haiku"), "luna": ("gpt-6-luna", "codex"),
-         "flash": ("gemini-3.8-flash", "antigravity")}
+         "flash": ("gemini-3.5-flash-lite", "antigravity")}
 CALLERS = ("codex", "claude", "antigravity")
 # U304-B: tool -> its one designated helper lane (1:1). Must agree with helper_thinking_router (tested).
 TOOL_HELPER_LANE = {"claude": "haiku", "codex": "luna", "antigravity": "flash"}
 # Cockpit/ledger display names that mean the same helper model (Antigravity reports display names only).
-# Only the Low display names: "Gemini 3.8 Flash (High)" is Antigravity's main-effort route, never a helper call.
-_HELPER_ALIASES = {"gemini-3.8-flash": ("Gemini 3.8 Flash (Low)", "Gemini 3.8 Flash Low", "gemini-3.8-flash-low")}
+_HELPER_ALIASES = {"gemini-3.5-flash-lite": ("Gemini 3.5 Flash Lite", "Gemini 3.5 Flash-Lite")}
 FORBIDDEN_KEYS = ("prompt", "messages", "content", "completion", "response_text")
 OUTCOMES = ("PASS", "FAIL", "BLOCKED", "REWORK", "TIMEOUT", "ERROR")
 _HASH = re.compile(r"[0-9a-f]{64}")

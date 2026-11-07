@@ -50,9 +50,9 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
         # 2. Antigravity official lineup & helper designation
         agy = lineup["antigravity"]
         self.assertEqual(agy["calculator_model"], "qwen2.5-coder:7b")
-        # S4: one helper per tool, Gemini 3.8 Flash (3.5 Flash-Lite is not offered by the agy CLI)
-        self.assertEqual(agy["primary_helper_model"], "gemini-3.8-flash")
-        self.assertEqual(agy["designated_helper_models"], ("gemini-3.8-flash",))
+        # U304-B: one helper per tool, Gemini 3.5 Flash-Lite
+        self.assertEqual(agy["primary_helper_model"], "gemini-3.5-flash-lite")
+        self.assertEqual(agy["designated_helper_models"], ("gemini-3.5-flash-lite",))
         self.assertEqual(agy["all_reasoning_models"], ("gemini-4-argon",))
         self.assertEqual(agy["thinking_levels"], ("Low", "Medium", "High"))
         self.assertEqual(agy["thinking_param_name"], "thinking_level")
@@ -123,7 +123,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
             lane_id="IMPL_CODE",
             prefer_open_source_on_agy=True,
         )
-        self.assertEqual(agy_oss["designated_helper_model"], "gemini-3.8-flash")
+        self.assertEqual(agy_oss["designated_helper_model"], "gemini-3.5-flash-lite")
         self.assertEqual(agy_oss["helper_thinking_level"], "Low")
 
     def test_3tool_disjoint_parallel_plan_partitions_paths_cleanly(self) -> None:
@@ -135,7 +135,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
         ]
         for tool, expected_helper in (
             ("codex", "gpt-6-luna"),
-            ("antigravity", "gemini-3.8-flash"),
+            ("antigravity", "gemini-3.5-flash-lite"),
             ("claude", "claude-haiku-5-5"),
         ):
             plan = compute_3tool_helper_parallel_plan(
@@ -281,7 +281,7 @@ class TestU297HelperThinkingOrchestration(unittest.TestCase):
             )
             self.assertEqual(
                 sub_opt["three_tool_ollama_boost"]["antigravity"]["designated_helper_model"],
-                "gemini-3.8-flash",
+                "gemini-3.5-flash-lite",
             )
             self.assertEqual(
                 sub_opt["three_tool_ollama_boost"]["claude"]["designated_helper_model"],

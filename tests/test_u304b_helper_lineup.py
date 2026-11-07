@@ -22,7 +22,7 @@ from v7_harness.coord.helper_thinking_router import (
 )
 
 TOOLS = ("codex", "antigravity", "claude")
-EXPECTED = {"codex": ("gpt-6.1-sol", "gpt-6-luna"), "antigravity": ("gemini-4-argon", "gemini-3.8-flash"),
+EXPECTED = {"codex": ("gpt-6.1-sol", "gpt-6-luna"), "antigravity": ("gemini-4-argon", "gemini-3.5-flash-lite"),
             "claude": ("claude-opus-5-5", "claude-haiku-5-5")}
 
 
@@ -112,22 +112,19 @@ class TelemetryAgreesWithRouter(unittest.TestCase):
         view = HT.designated_helper_view("claude", rows)
         self.assertEqual(view, [{"model": "claude-haiku-5-5", "lane": "haiku", "designated": True, "calls": 159,
                                  "basis": "measured", "output_tokens": 134154}])
-        agy = HT.designated_helper_view("antigravity", [{"model": "Gemini 3.8 Flash (Low)", "calls": 3},
-                                                        {"model": "Gemini 3.8 Flash (High)", "calls": 9}])
-        self.assertEqual([(v["model"], v["calls"]) for v in agy], [("gemini-3.8-flash", 3)])
+        agy = HT.designated_helper_view("antigravity", [{"model": "Gemini 3.5 Flash Lite", "calls": 3}])
+        self.assertEqual((agy[0]["model"], agy[0]["calls"]), ("gemini-3.5-flash-lite", 3))
         empty = HT.designated_helper_view("codex")
         self.assertEqual((len(empty), empty[0]["calls"], empty[0]["basis"]), (1, None, "designated_only"))
         with self.assertRaises(ValueError):
             HT.designated_helper("ollama")
 
-    def test_s4_flash_lane_pins_38_flash_and_rejects_flash_lite(self) -> None:
-        # S4: the agy CLI rejects gemini-3.5-flash-lite, so a ledger row naming it can only be a stale U304-B pin.
-        kw = dict(work_id="S4-T", lane="flash", caller="antigravity", project="p", input_hash="a" * 64,
+    def test_old_flash_low_pin_is_rejected(self) -> None:
+        kw = dict(work_id="U304B-T", lane="flash", caller="antigravity", project="p", input_hash="a" * 64,
                   input_tokens=1, output_tokens=1, wall_time_s=1.0, outcome="PASS", receipt="r")
-        self.assertEqual(HT.build_helper_record(model="gemini-3.8-flash", **kw)["model"], "gemini-3.8-flash")
-        for stale in ("gemini-3.5-flash-lite", "gemini-3.8-flash-low"):
-            with self.assertRaises(HT.UsageRejected):
-                HT.build_helper_record(model=stale, **kw)
+        self.assertEqual(HT.build_helper_record(model="gemini-3.5-flash-lite", **kw)["model"], "gemini-3.5-flash-lite")
+        with self.assertRaises(HT.UsageRejected):
+            HT.build_helper_record(model="gemini-3.8-flash-low", **kw)
 
 
 class HudDataSource(unittest.TestCase):
@@ -150,7 +147,7 @@ class HudDataSource(unittest.TestCase):
                                 ("t", prov, f"{model}-{i}", "s", stamp, model, "c", 1, 0, 0, 10, 0))
             con.commit()
             con.close()
-            pools = [{"models": ["Gemini 3.8 Flash (Low)", "Gemini 3.8 Flash (High)"], "remaining_pct": 23.0},
+            pools = [{"models": ["Gemini 3.5 Flash Lite", "Gemini 3.8 Flash (High)"], "remaining_pct": 23.0},
                      {"models": ["Claude Opus 5.5 (High)", "GPT-OSS 120B (Medium)"], "remaining_pct": 72.0}]
             fake_ag = {"pools": pools, "selected_pool": None, "selected_model": "Gemini 4 Argon"}
             with mock.patch.object(Q, "antigravity_quota", return_value=fake_ag):
@@ -158,9 +155,9 @@ class HudDataSource(unittest.TestCase):
         self.assertEqual([h["model"] for h in out["claude"]["helpers"]], ["claude-haiku-5-5"])
         self.assertEqual(out["claude"]["helpers"][0]["calls"], 2)
         self.assertEqual([h["model"] for h in out["codex"]["helpers"]], ["gpt-6-luna"])
-        self.assertEqual([h["model"] for h in out["antigravity"]["helpers"]], ["gemini-3.8-flash"])
+        self.assertEqual([h["model"] for h in out["antigravity"]["helpers"]], ["gemini-3.5-flash-lite"])
         self.assertIs(out["antigravity"]["helper_pool"], pools[0])
-        # A snapshot without the helper's Low display name falls back to the Gemini family pool, never the Claude/GPT pool.
+        # A snapshot without the Flash-Lite name falls back to the Gemini family pool, never the Claude/GPT pool.
         pools[0]["models"] = ["Gemini 3.8 Flash (High)"]
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(Q, "antigravity_quota", return_value=fake_ag):
             self.assertIs(Q.measured_accounts(Path(tmp), now)["antigravity"]["helper_pool"], pools[0])
