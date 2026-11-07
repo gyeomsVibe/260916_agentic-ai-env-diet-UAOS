@@ -86,9 +86,10 @@ class Pacing(unittest.TestCase):
         self.assertEqual(ub.pace(_window(100, 20, 10080), [], NOW)["state"], "LIMITED")
         refilled = window_fact(40, NOW - 60, 300, NOW - 3 * H, NOW)
         p = ub.pace(refilled, [], NOW)
-        self.assertEqual((p["used_pct"], p["burn_basis"], p["headroom"]), (0.0, "no_reading", None))
+        # S1: reset passed with no newer reading -> unknown, and unknown fails closed (headroom 0), not refilled
+        self.assertEqual((p["used_pct"], p["state"], p["headroom"]), (None, "RESET_UNOBSERVED", None))
         self.assertEqual(ub.binding_headroom([ub.pace(_window(100, 2, 300), [], NOW), p]), 0.0)
-        self.assertIsNone(ub.binding_headroom([p]))
+        self.assertEqual(ub.binding_headroom([p]), 0.0)
 
 
 class Split(unittest.TestCase):

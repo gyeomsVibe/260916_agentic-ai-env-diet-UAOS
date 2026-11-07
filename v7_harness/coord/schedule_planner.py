@@ -362,6 +362,8 @@ def validate_budget(budget: Any, *, now: float | None = None) -> dict[str, dict[
             raise BudgetUnavailable(f"budget for {tool} is {int(now - measured)}s old (limit {limit}s)")
         if rw <= now:
             raise BudgetUnavailable(f"budget for {tool}: weekly reset passed since it was measured")
+        if r5 <= now:  # S1: a passed reset needs a new reading; it is never assumed refilled
+            raise BudgetUnavailable(f"budget for {tool}: 5h reset passed since it was measured (reset unobserved)")
         out[tool] = {**entry, "_measured": measured, "_reset_5h": r5, "_reset_week": rw}
     return out
 
@@ -374,9 +376,9 @@ def paced_allowance(budget: dict[str, dict[str, Any]], *, now: float | None = No
     for tool, entry in budget.items():
         windows_left = max(1.0, (entry["_reset_week"] - now) / window_s)
         weekly_paced = max(0, int(entry["remaining_week_tokens"])) / windows_left
-        # A passed 5h reset means the window refilled after the measurement; only the weekly pace binds then.
-        five_h = None if entry["_reset_5h"] <= now else max(0, int(entry["remaining_5h_tokens"]))
-        paced = int(weekly_paced if five_h is None else min(five_h, weekly_paced))
+        # S1: validate_budget already refused a passed 5h reset, so both windows bind here.
+        five_h = max(0, int(entry["remaining_5h_tokens"]))
+        paced = int(min(five_h, weekly_paced))
         share = float(THRESHOLDS["flagship_pace_share"][tool])
         out[tool] = {"paced_tokens": paced, "share": share, "flagship_tokens_left": int(paced * share), "plan": entry["plan"], "measured_at": entry["measured_at"]}
     return out
