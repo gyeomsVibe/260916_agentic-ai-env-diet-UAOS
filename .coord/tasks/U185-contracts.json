@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "status": "SPECIFICATION_NOT_RUNTIME_ENFORCEMENT",
+  "plan_required": ["card", "generation", "revision", "plan_sha256", "manual_sha256", "acceptance_sha256", "input_manifest_sha256", "writer_session", "writer_worktree", "judge_session", "watch_roots", "caps"],
+  "receipt_required": ["invocation_id", "card", "generation", "stage", "sequence", "previous_receipt_sha256", "plan_sha256", "input_manifest_sha256", "receiver_session", "receiver_worktree", "bundle_sha256", "outcome", "exit_code", "effect_state", "usage_schema", "normalized_tokens", "cap_tokens"],
+  "stages": ["REGISTERED", "INPUTS_PINNED", "LOCAL_PREP", "LOCAL_CHECKED", "EXECUTED", "AGY_CHECKED", "INDEPENDENT_ACCEPTED", "RELEASE_GATED", "INSTALLED_CHECKED", "LIVE_VERIFIED", "DONE"],
+  "refused": ["PLAN_INCOMPLETE", "WRONG_GENERATION", "WRONG_SESSION", "WRONG_WORKTREE", "WRONG_ROLE", "BUNDLE_MISMATCH", "STAGE_ORDER", "COST_UNKNOWN", "COST_EXCEEDED", "EVIDENCE_UNUSABLE", "CAPABILITY_UNKNOWN", "SAFETY_GATE", "SCOPE_DECISION", "HUMAN_AUTH"],
+  "endpoints": ["cli.cmd_pilot_run", "pilot.run_pilot", "control.run_control", "review.run_review", "cli.cmd_pilot_judge", "calculator_gate.card_errors", "cli.cmd_card_audit", "cli.cmd_rsi_ship", "cli.cmd_coord_merge", "runtime_install.install"],
+  "default_tools": {"LOCAL_PREP": "ollama", "AGY_CHECKED": "antigravity", "conductor": "codex", "deputy": "claude", "judge_must_differ_from_author": true},
+  "fallback": {
+    "typed_reasons": ["DETERMINISTIC_EXTRACTION", "LOCAL_UNAVAILABLE", "LOCAL_INVALID_OUTPUT", "AGY_QUOTA", "AGY_UNAVAILABLE"],
+    "never_waive_on": ["IDLE", "UNKNOWN", "FREE_TEXT_TASK_CLASS", "ELAPSED_WAIT"],
+    "requires": ["actual_failure_or_extraction_receipt", "bounded_alternate", "assigned_owner", "resume_trigger", "independent_gate"],
+    "failed_call_satisfies_local_checked": false,
+    "queued_message_satisfies_receiver_ack": false
+  },
+  "transition": {"mode": "CAS", "keys": ["card", "generation", "revision", "stage", "writer_session"], "duplicate_invocation": "IDEMPOTENT", "unknown_effect": "RECONCILE_BEFORE_RETRY", "timer_can_remove_boundary": false},
+  "usage": {
+    "disjoint_components": ["uncached_input", "cache_write", "cache_read", "output"],
+    "ambiguous_provider_semantics": "COST_UNKNOWN",
+    "raw_cost_gate_is_authority": false,
+    "posthoc_gate_is_hard_spend_limit": false,
+    "fixtures": [
+      {"provider_schema": "AGY_SEPARATE_CACHE", "raw": {"input_tokens": 58858, "output_tokens": 5674, "cache_read_tokens": 233079, "total_tokens": 64532}, "normalized_tokens": 297611, "cap_tokens": 80000, "outcome": "COST_EXCEEDED"},
+      {"provider_schema": "INPUT_INCLUDES_CACHE", "raw": {"input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 60}, "normalized_tokens": 110, "cap_tokens": 200, "outcome": "WITHIN"}
+    ]
+  },
+  "scope": {"same_account_files_authenticate_actor": false, "native_hook_errors_guarantee_denial": false, "installed_native_coverage": "UNKNOWN", "u183_source_owner_unchanged": true, "human_permission_bypass": false},
+  "input_evidence": {
+    "installed_card_pipeline_sha256": "f687d91b0350450d1c421832bf01a647527cb07a489eb83b33c4ea41b6ad6cb7",
+    "fixed_refusal_test_sha256": "3be0e286c8f9eaf3e8bf5b871a0ac73853118830c1c2f5d9a6460d0da9642b4e",
+    "ollama_draft": "fixed-field JSON draft source-checked; not approval",
+    "agy_audit": "U185-AG1 ABANDONED; not admissible Go"
+  }
+}

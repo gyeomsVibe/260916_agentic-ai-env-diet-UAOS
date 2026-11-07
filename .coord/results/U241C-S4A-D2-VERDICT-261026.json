@@ -1,0 +1,24 @@
+{
+  "work_id": "U241C-S4A-D2",
+  "bundle_id": "5da2c03ab35c378ea71dc83ef537a4c99955328c7be5cb2d67938e5949efcbdb",
+  "verdict": "REVISE_NO_PROMOTION",
+  "judge": "codex",
+  "supersedes_old_artifact": "5a911319 stale pre-U243 bundle",
+  "base_sha256": "F89FDF93E06313F8527D5DBCAA9E9AB61E839B6D665727190BEC0D8D31A34697",
+  "candidate_sha256": "523F208443390313BAF17BB2DE8E018C9644BE231EDB6138229ABB00AC0279B0",
+  "cleared": [
+    "current input-base hash matches",
+    "independent U243 title2 tests PASS"
+  ],
+  "peer_full_log": "2636 tests OK, skipped7,569.843s; log verified, not root full rerun",
+  "root_schema_gate": "060360845D5E0DE23C02D75B4442C2C862CF7FDCC1C6B4F5B911F40D4A411592",
+  "schema_errors": 2,
+  "root_shared_gate": "D6C37B15312070AF0536D44A5B286EF1416B4D4A1764180AE754CFC6718DB697",
+  "shared_tests": 2,
+  "shared_failures": 1,
+  "remaining": "Malformed own registry crashes before validation; linked worktree authorizes against absent local registry while writing canonical desk",
+  "correction_iteration": 1,
+  "no_extra_revision_for_supersession": true,
+  "source_promotion": false,
+  "runtime_approval": false
+}

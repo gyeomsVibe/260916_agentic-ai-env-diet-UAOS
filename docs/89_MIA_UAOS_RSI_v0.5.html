@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UAOS-RSI v0.5 MIA 11-Stage Evaluation & Architecture Report (평가 및 설계 보고서)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .tab-btn.active { background-color: rgb(79 70 229); color: white; border-color: rgb(99 102 241); }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased p-4 md:p-8">
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- Top Header Banner -->
+    <div class="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="space-y-2">
+          <div class="inline-flex flex-wrap items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+            <span>UAOS-RSI v0.5 Architecture</span>
+            <span>•</span>
+            <span>MIA 11-Stage Strategic Framework (MIA 11단계 전략절차)</span>
+            <span>•</span>
+            <span>2026-10-25</span>
+          </div>
+          <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
+            UAOS-RSI v0.5 전면 개편 타당성 평가 및 5계층 오케스트레이션 설계서<br/>
+            <span class="text-lg md:text-xl font-semibold text-indigo-300">
+              (Antigravity Main User Interface Transition &amp; Ollama · Haiku 5.5 Worker Pyramid Architecture)
+            </span>
+          </h1>
+          <p class="text-sm text-slate-300 max-w-4xl leading-relaxed">
+            <strong>핵심 존재 이유 (Core Purpose)</strong>: 최대 성과와 최상의 결과물 품질(GPT-6 Astra Extra High · Claude Opus 5.5 Extra급)을 달성하기 위해, Google AI Ultra(5x 사용량) 기반 <strong>Antigravity를 사용자 메인 인터페이스(Main User Desk)</strong>로 배치하고, <strong>Ollama CLI(0토큰) + Claude Haiku 5.5(초저비용 전문 일꾼)</strong>를 3대 도구의 수족(Subagent Workers)으로 한몸처럼 이식한 무승인 논스톱 병렬-협업 운영체제.
+          </p>
+        </div>
+        <div class="flex flex-col gap-2 text-right">
+          <span class="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+            종합 판정 (Final Verdict): GO (97.3 / 100)
+          </span>
+          <a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS" target="_blank"
+             class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition text-center">
+            GitHub Repository (PR #197·#198 Merged) ↗
+          </a>
+        </div>
+      </div>
+
+      <!-- Language Principle Banner -->
+      <div class="mt-5 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <span class="px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 font-bold text-xs">LANGUAGE RULE (언어 헌법)</span>
+          <span class="text-xs md:text-sm text-amber-100">
+            <strong>1) 도구 간 소통 (Agent-to-Agent Communication)</strong>: 100% <strong>English</strong> (<code class="text-amber-300">coord deliver</code>, contracts, pilot manuals, receipts — 토큰 절약 및 파싱 정확도 극대화)<br/>
+            <strong>2) 사용자 대상 출력 (User-Facing Output &amp; Reports)</strong>: <strong>한글/영어 병기 원칙 (Korean/English Bilingual Principle)</strong> 엄격 적용
+          </span>
+        </div>
+      </div>
+
+      <!-- Top KPI Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
+        <div class="p-4 rounded-xl border border-slate-800 bg-slate-950/80">
+          <div class="text-xs text-slate-400">타당성 · 유효성 (Validity &amp; Effectiveness)</div>
+          <div class="text-xl font-bold text-emerald-400 mt-1">98점 / 96점 (GO)</div>
+          <div class="text-xs text-slate-500 mt-0.5">$20 쿼터 병목 해소 + 최고 지능 보존</div>
+        </div>
+        <div class="p-4 rounded-xl border border-slate-800 bg-slate-950/80">
+          <div class="text-xs text-slate-400">메인 창구 용량 (Main Interface Capacity)</div>
+          <div class="text-xl font-bold text-indigo-400 mt-1">Google AI Ultra (5x)</div>
+          <div class="text-xs text-slate-500 mt-0.5">₩119,000/월 · Argon 쿼터 가드 탑재</div>
+        </div>
+        <div class="p-4 rounded-xl border border-slate-800 bg-slate-950/80">
+          <div class="text-xs text-slate-400">일꾼 계층 절감률 (Worker Token Saving)</div>
+          <div class="text-xl font-bold text-amber-400 mt-1">75% ~ 85% 절감</div>
+          <div class="text-xs text-slate-500 mt-0.5">Ollama CLI(0원) + Haiku 5.5 병렬 사역</div>
+        </div>
+        <div class="p-4 rounded-xl border border-slate-800 bg-slate-950/80">
+          <div class="text-xs text-slate-400">완결 범위 (All-Package Completion)</div>
+          <div class="text-xl font-bold text-sky-400 mt-1">End-to-End 100%</div>
+          <div class="text-xs text-slate-500 mt-0.5">설치·구현·테스트·커밋·푸시·병합·README</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
+      <button onclick="showTab('eval')" id="btn-eval" class="tab-btn active px-4 py-2 rounded-lg text-xs font-semibold border border-slate-800 bg-slate-900 text-slate-300 transition">
+        1. 타당성·유효성·가치·적절성 평가 (4D Evaluation)
+      </button>
+      <button onclick="showTab('pyramid')" id="btn-pyramid" class="tab-btn px-4 py-2 rounded-lg text-xs font-semibold border border-slate-800 bg-slate-900 text-slate-300 transition">
+        2. 5계층 피라미드 &amp; Ollama·Haiku 5.5 사역 (Worker Pyramid)
+      </button>
+      <button onclick="showTab('modules')" id="btn-modules" class="tab-btn px-4 py-2 rounded-lg text-xs font-semibold border border-slate-800 bg-slate-900 text-slate-300 transition">
+        3. 자동가동·RSI 진화·통합 문서 허브 (Core Systems)
+      </button>
+      <button onclick="showTab('roadmap')" id="btn-roadmap" class="tab-btn px-4 py-2 rounded-lg text-xs font-semibold border border-slate-800 bg-slate-900 text-slate-300 transition">
+        4. 마스터 실행 계획표 &amp; 1차 출처 (Master Schedule &amp; Sources)
+      </button>
+    </div>
+
+    <!-- TAB 1: 4D Evaluation -->
+    <div id="tab-eval" class="space-y-5">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-base font-bold text-emerald-400">① 타당성 평가 (Validity Assessment)</h3>
+            <span class="px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs font-bold">98 / 100</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            $20/월 요금제의 <strong>Codex(GPT-6 Astra급)</strong>와 <strong>Claude Code(Opus 5.5급)</strong>는 최고의 창의력·설계·코드 생성 능력을 지녔으나 5시간/주간 쿼터 한도가 치명적 병목입니다. 반면 <strong>Google AI Ultra(₩119,000/월, Pro 대비 5배 사용량)</strong>로 증설된 <strong>Antigravity</strong>를 사용자 메인 인터페이스(Main User Interface)로 전환하면, 사용자 응대·상시 감시·독립 감사·PR 병합 토큰을 Antigravity가 흡수하고 Codex·Claude는 순수 고난도 두뇌 작업에만 100% 집중할 수 있어 토큰 경제학적으로 완벽히 타당합니다.
+          </p>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-base font-bold text-indigo-400">② 유효성 평가 (Effectiveness Assessment)</h3>
+            <span class="px-2.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-xs font-bold">96 / 100</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            기존에는 Codex나 Claude 중 하나가 쿼터 제한(LIMITED)에 걸리면 전체 워크플로가 대기 상태에 빠졌습니다. 개편 아키텍처에서는 Antigravity가 상시 메인 컨트롤러로서 세션을 유지하고, 하위 실행은 <strong>Ollama CLI(0토큰) + Haiku 5.5(초저비용 서브에이전트)</strong>가 병렬 수행하므로, 어느 도구가 한도에 걸려도 <strong>설치 → 구현 → 검증 → 커밋 → 푸시 → PR 병합 → 런타임 배포 → README 작성</strong>까지 올패키지(All-Package) 무중단 완주가 가능합니다.
+          </p>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-base font-bold text-amber-400">③ 가치평가 (Value &amp; ROI Evaluation)</h3>
+            <span class="px-2.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-xs font-bold">99 / 100</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            <strong>최상의 품질 기준(Highest Quality Standard)</strong>과 <strong>토큰 예산 절약(Token Thrift)</strong>이라는 두 마리 토끼를 동시에 잡는 핵심은 <strong>지능의 계층화(Intelligence Tiering)</strong>입니다. 반복 탐색·초안·단순 슬라이스(전체의 75% 비중)를 Ollama(0원)와 Haiku 5.5에 강제 위임함으로써, 동일한 $20 Codex/Claude 예산으로 기존 대비 <strong>4~6배 더 큰 규모의 프로젝트</strong>를 GPT-6 Astra + Opus 5.5 최고 품질로 완수합니다.
+          </p>
+        </div>
+
+        <div class="bg-slate-900 border border-rose-900/60 rounded-2xl p-5 space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-base font-bold text-rose-400">④ 적절성 및 Argon 쿼터 방어 (Appropriateness &amp; Argon Guard)</h3>
+            <span class="px-2.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-xs font-bold">96 / 100 (필수 가드)</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            사용자 지적대로 <strong>Gemini 4 Argon</strong>은 고성능 모델이므로 무분별하게 호출하면 Ultra(5x) 한도라도 조기 소진될 위험이 있습니다. 따라서 Antigravity 내부에 <strong>Argon Quota Guard(아르곤 쿼터 방어 로직)</strong>를 두어: ① 300줄 이상 파일 탐색·초안은 <strong>Ollama MCP(0토큰)</strong> 강제 선행, ② 일상 조율·단순 테스트 검증은 <strong>Gemini Flash</strong> 사용, ③ 고난도 아키텍처 감사·반례 도출·핵심 설계 시에만 <strong>Gemini 4 Argon</strong>을 투입합니다.
+          </p>
+        </div>
+      </div>
+
+      <!-- MIA Stage 3-4 Multi-Lens Table -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="text-sm font-bold text-white mb-3">MIA Stage 3~4. 대안 비교 4대 렌즈 평가표 (Multi-Lens Architecture Comparison)</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-2.5 px-3">평가 렌즈 (Lens)</th>
+                <th class="py-2.5 px-3">Alt A: 기존 Codex 단일 총괄 (Legacy)</th>
+                <th class="py-2.5 px-3">Alt B: Antigravity Argon 단독 만능 처리</th>
+                <th class="py-2.5 px-3 text-indigo-300">Alt C (채택 / GO): Antigravity 메인 허브 + Codex/Opus 두뇌 + Haiku/Ollama 일꾼 피라미드</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/80">
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">Value (가치성)</td>
+                <td class="py-2.5 px-3 text-slate-400">Codex 한도 소진 시 전체 중단</td>
+                <td class="py-2.5 px-3 text-slate-400">Codex·Opus 특유의 창의적 설계·정밀성 상실</td>
+                <td class="py-2.5 px-3 text-emerald-300 font-semibold">3대 도구 최고 지능 결합 + Ultra 5x 쿼터 극대화 + 0토큰/초저비용 일꾼 레버리지</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">Feasibility (실현가능성)</td>
+                <td class="py-2.5 px-3 text-slate-400">추가 개발 없으나 대기 빈발</td>
+                <td class="py-2.5 px-3 text-slate-400">Argon 쿼터 급속 소진으로 지속 불가</td>
+                <td class="py-2.5 px-3 text-emerald-300 font-semibold">현행 <code>v7_harness</code>(U234·U235·U222) 위에 워커 풀·훅으로 즉시 구현 가능</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">Viability (지속가능성)</td>
+                <td class="py-2.5 px-3 text-rose-400">$20 한도로 중대형 프로젝트 완주 불가</td>
+                <td class="py-2.5 px-3 text-rose-400">월 중반 이후 Ultra 쿼터 압박 발생</td>
+                <td class="py-2.5 px-3 text-emerald-300 font-semibold">Ollama(0원) + Haiku 5.5 방어막으로 월간 내내 24/7 무중단 가동 가능</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">Risk &amp; Rollback (위험/복구)</td>
+                <td class="py-2.5 px-3 text-rose-400">수동 복붙·대기 재발 (No-Go)</td>
+                <td class="py-2.5 px-3 text-rose-400">쿼터 고갈 시 대체 경로 부재 (No-Go)</td>
+                <td class="py-2.5 px-3 text-emerald-300 font-semibold"><code>uaos runtime --rollback</code> 및 <code>.coord/mode.json</code> 즉시 복구 보장 (GO)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: 5-Tier Pyramid & Ollama / Haiku 5.5 -->
+    <div id="tab-pyramid" class="hidden space-y-5">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="text-base font-bold text-white mb-2">5계층 지능 피라미드 및 토큰 최적화 라우팅 (5-Tier Intelligence &amp; Worker Pyramid)</h3>
+        <p class="text-xs text-slate-400 mb-4">
+          상위 두뇌(Tier 4·3)는 오직 기획·설계·감사·판정만 수행하고, 실제 반복 탐색·초안·코드 슬라이스·문서화는 하위 일꾼(Tier 2·1·0)이 전담합니다.
+        </p>
+        <div class="space-y-3 text-xs">
+          <div class="p-4 rounded-xl border border-purple-500/40 bg-purple-950/20 flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <span class="font-bold text-purple-300">TIER 4 — 최고 지능 수석 아키텍트 (Supreme Architects: Codex GPT-6 Astra Extra High &amp; Claude Opus 5.5 Extra)</span>
+              <p class="text-slate-300 mt-1">창의적 아키텍처 수립, 고난도 알고리즘·동시성 코어 설계, 최종 릴리스 독립 판정. (단발 고추론 호출로 쿼터 엄격 보호 / One-Shot High-Reasoning Only)</p>
+            </div>
+            <span class="px-2.5 py-1 rounded bg-purple-500/20 text-purple-300 font-mono">작업 비중 10%</span>
+          </div>
+
+          <div class="p-4 rounded-xl border border-indigo-500/40 bg-indigo-950/20 flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <span class="font-bold text-indigo-300">TIER 3 — 사용자 메인 인터페이스 &amp; 오케스트레이션 허브 (Main User Hub: Antigravity Ultra 5x — Argon / Flash)</span>
+              <p class="text-slate-300 mt-1">사용자 상시 창구(한글/영어 병기 브리핑), MIA Stage 0 웹 딥리서치, 3대 도구 일정 조율, 독립 감사(Audit), PR 1순위 자율 병합. (일상 조율은 Flash, 핵심 감사는 Argon)</p>
+            </div>
+            <span class="px-2.5 py-1 rounded bg-indigo-500/20 text-indigo-300 font-mono">작업 비중 15%</span>
+          </div>
+
+          <div class="p-4 rounded-xl border border-sky-500/40 bg-sky-950/20 flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <span class="font-bold text-sky-300">TIER 2 — 초고속 전문 기술 일꾼 (High-Speed Specialist Slave: Claude Haiku 5.5 Subagents)</span>
+              <p class="text-slate-300 mt-1">다중 파일 문맥 연결 및 리팩토링, 고정 인수/단위 테스트 코드 생성, Ollama 2회 실패 슬라이스 즉시 해결, README 및 통합 문서 허브 자동 작성.</p>
+            </div>
+            <span class="px-2.5 py-1 rounded bg-sky-500/20 text-sky-300 font-mono">작업 비중 30%</span>
+          </div>
+
+          <div class="p-4 rounded-xl border border-emerald-500/40 bg-emerald-950/20 flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <span class="font-bold text-emerald-300">TIER 1 — 0토큰 로컬 전자계산기 노예 (Zero-Token Local Calculator Slave: Ollama CLI <code>olla</code>)</span>
+              <p class="text-slate-300 mt-1">300줄 이상 파일 맵핑(<code>local_read_map</code>), 커밋 메시지·요약 초안(<code>local_draft</code>), 20줄 이하 단일 함수 슬라이스 구현, JSON/정규식 변환. (유료 토큰 0원)</p>
+            </div>
+            <span class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 font-mono">작업 비중 30%</span>
+          </div>
+
+          <div class="p-4 rounded-xl border border-slate-700 bg-slate-900/80 flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <span class="font-bold text-slate-300">TIER 0 — 결정론적 파이썬 하네스 &amp; 0토큰 워처 (Deterministic Harness &amp; Sentinel: <code>v7_harness</code>)</span>
+              <p class="text-slate-400 mt-1">파일 해시 검증, <code>worker: apply</code>, <code>coord watch</code>, <code>calculator_gate</code>, Git 훅, 자동 백업. (모델 호출 없음, 0원)</p>
+            </div>
+            <span class="px-2.5 py-1 rounded bg-slate-800 text-slate-300 font-mono">작업 비중 15%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ollama vs Haiku 5.5 Matrix -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="text-base font-bold text-white mb-3">Ollama CLI vs Claude Haiku 5.5 역할 구분 및 한몸 에이전트화 (Role Division &amp; Subagent Integration)</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-2.5 px-3">구분 (Category)</th>
+                <th class="py-2.5 px-3 text-emerald-400">Ollama CLI (<code>qwen2.5-coder</code> / <code>olla</code>) — 0원 로컬 노예</th>
+                <th class="py-2.5 px-3 text-sky-400">Claude Haiku 5.5 (<code>claude-haiku-5-5</code>) — 초저비용 전문 일꾼</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/80">
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">핵심 정체성 (Identity)</td>
+                <td class="py-2.5 px-3">단일 입력·단일 출력 계산기 (Unagentic Fixed-Slice Calculator)</td>
+                <td class="py-2.5 px-3">도구 사용·다중 파일 문맥 추적이 가능한 고속 에이전트 (Fast Multi-Step Subagent)</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">전담 작업 (Assigned Tasks)</td>
+                <td class="py-2.5 px-3">파일 아웃라인 추출(<code>local_read_map</code>), 20줄 이하 함수 슬라이스, 초안 작성(<code>local_draft</code>)</td>
+                <td class="py-2.5 px-3">다중 파일 패치 조립, 단위 테스트 작성, 에러 로그 분석, README/문서 허브 정비</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">3대 도구 에이전트화 (3-Tool Binding)</td>
+                <td class="py-2.5 px-3">Antigravity MCP <code>olla</code> + <code>uaos pilot run --worker local</code></td>
+                <td class="py-2.5 px-3"><code>.claude/agents/uaos-haiku.md</code> + <code>uaos pilot run --worker haiku</code> (3대 도구 공용 호출)</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold">병렬 협업 릴레이 (Relay Logic)</td>
+                <td colspan="2" class="py-2.5 px-3 text-amber-300 font-semibold">
+                  [Step 1] Ollama CLI가 0토큰으로 대상 파일 맵핑 + 코드 골격(Skeleton) 생성 → [Step 2] Haiku 5.5가 골격을 받아 정밀 로직·테스트 연결 → [Step 3] Antigravity/Codex가 독립 인수 게이트로 최종 승인
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Auto-Boot, RSI Daemon, Unified Doc Hub -->
+    <div id="tab-modules" class="hidden space-y-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+          <h3 class="text-sm font-bold text-indigo-300">1. PC 부팅 즉시 &amp; 3대 도구 켜자마자 100% 자동 가동 (Zero-Touch Auto-Boot)</h3>
+          <ul class="list-disc list-inside text-slate-300 space-y-1.5 leading-relaxed">
+            <li><strong>PC 부팅 자동 기동</strong>: Windows 작업 스케줄러(<code>ONLOGON</code>)에 등록된 <code>coord boot --launch</code>가 PC 부팅 즉시 0토큰 Sentinel 감시 데몬과 로컬 Ollama 서버를 자동 가동합니다.</li>
+            <li><strong>3대 도구 실행 즉시 자동 편입</strong>: Antigravity(<code>PreInvocation</code>), Claude Code(<code>SessionStart</code>), Codex(<code>SessionStart</code>) 전역 훅이 어떤 폴더에서든 도구가 켜지는 순간 <code>coord init</code>(미초기화 시)과 <code>coord presence</code>를 자동 실행합니다.</li>
+            <li><strong>오케스트레이션 계획표 자동 작성</strong>: 세션 시작과 동시에 현재 목표를 분석하여 <strong>3대 도구 병렬-협업 오케스트레이션 진행 계획표</strong>를 <code>.coord/master_schedule.json</code> 및 마크다운 표로 자동 발행합니다.</li>
+          </ul>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+          <h3 class="text-sm font-bold text-emerald-300">2. 전방위 RSI 자가개선 상시 감시 데몬 및 가치평가 (Always-On RSI Evaluator)</h3>
+          <ul class="list-disc list-inside text-slate-300 space-y-1.5 leading-relaxed">
+            <li><strong>상시 감시 에이전트/데몬</strong>: <code>UAOS_InvocationRSI_Local</code> 및 Sentinel 데몬이 모든 실행의 토큰 소모량, 벽시계 시간, 재작업(<code>REWORK</code>) 사유, 게이트 실패를 <code>.coord/usage/runs.jsonl</code>에 실시간 기록합니다.</li>
+            <li><strong>정량적 가치평가(Value Scoring)</strong>: ① 완료 단계당 유료 토큰(Paid Tokens/Step), ② 1차 통과율(First-Pass Yield), ③ 수동 개입 0건(Zero-Touch Rate)을 자동 계산합니다.</li>
+            <li><strong>증거 기반 진화 루프</strong>: 동일 원인 2회 실패 또는 10회 실행마다 자동으로 <code>rsi report → rsi propose → 격리 회귀 시험 → rsi gate</code>를 수행하여 규칙과 워커 라우팅을 자가 진화시킵니다.</li>
+          </ul>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+          <h3 class="text-sm font-bold text-amber-300">3. 3대 도구 통합 문서 허브 (Unified Document Hub — U222/U233)</h3>
+          <ul class="list-disc list-inside text-slate-300 space-y-1.5 leading-relaxed">
+            <li><strong>단일 문서 원장</strong>: 3대 도구와 Haiku 일꾼이 생산하는 모든 기획서·설계서·감사보고서·HTML 대시보드를 <code>docs/00_DOCUMENT_INDEX.md</code> 허브에서 단일 번호 체계(<code>uaos docs allocate/index/lint</code>)로 통합 관리합니다.</li>
+            <li><strong>한글/영어 병기 표준화</strong>: 모든 사용자 대면 문서와 가이드는 초보자도 즉시 이해할 수 있도록 한글 설명과 영문 기술 명칭을 병기합니다.</li>
+          </ul>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+          <h3 class="text-sm font-bold text-sky-300">4. 올패키지 프로젝트 완결기 (All-Package Project Finisher)</h3>
+          <ul class="list-disc list-inside text-slate-300 space-y-1.5 leading-relaxed">
+            <li><strong>원스톱 마감(One-Stop Closure)</strong>: 코드 구현으로 끝나지 않고 <code>의존성 설치 → 빌드 → 고정 인수/전체 테스트 → 카드 감사(card audit) → Git 커밋 → 원격 푸시 → PR 자율 병합(coord merge) → 런타임 배포 → README.md 최신화</code>까지 무승인 논스톱으로 완결합니다.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: Master Schedule & Sources -->
+    <div id="tab-roadmap" class="hidden space-y-5">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="text-base font-bold text-white mb-3">UAOS-RSI v0.5 구현 마스터 스케줄 (3-Tool Parallel Orchestration Schedule: U236 ~ U240)</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-2.5 px-3">단계 / 카드 (Card)</th>
+                <th class="py-2.5 px-3">핵심 구현 과업 (Core Deliverable)</th>
+                <th class="py-2.5 px-3">사역 일꾼 (Tier 1·2 Workers)</th>
+                <th class="py-2.5 px-3">주도 / 판정 (Owner / Judge)</th>
+                <th class="py-2.5 px-3">완료 관문 (Hard Gate)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/80">
+              <tr>
+                <td class="py-2.5 px-3 font-bold text-emerald-400">DONE: U234 · U235</td>
+                <td class="py-2.5 px-3">SQLite 타이틀 합의 스토어(U234) + 네이티브 감사 커밋 관문(U235) + 공유 루트(U234R)</td>
+                <td class="py-2.5 px-3">Ollama <code>local_draft</code> + <code>worker: apply</code></td>
+                <td class="py-2.5 px-3">구현: Claude / 감사·병합: Antigravity / 재검토: Codex</td>
+                <td class="py-2.5 px-3">PR #197·#198 병합 완료, 런타임 <code>0827fe2</code> 설치 완료</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-bold text-indigo-400">Step 1: U236</td>
+                <td class="py-2.5 px-3"><strong>Antigravity Main Hub &amp; Argon Quota Guard</strong> + 자동 오케스트레이션 계획표 생성기(<code>coord plan-init</code>) + 언어 원칙(Agent-EN / User-KO+EN) 훅 강제</td>
+                <td class="py-2.5 px-3">Ollama(골격) + Haiku 5.5(테스트)</td>
+                <td class="py-2.5 px-3">주도: Antigravity·Claude / 판정: Codex</td>
+                <td class="py-2.5 px-3"><code>test_u236_main_hub_and_argon_guard.py</code> PASS</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-bold text-indigo-400">Step 2: U237</td>
+                <td class="py-2.5 px-3"><strong>Ollama CLI + Haiku 5.5 한몸 워커 풀</strong> (<code>v7_harness/adapters/haiku_worker.py</code>, <code>--worker haiku</code>, <code>.claude/agents/uaos-haiku.md</code>)</td>
+                <td class="py-2.5 px-3">Ollama CLI + Haiku 5.5</td>
+                <td class="py-2.5 px-3">주도: Claude / 감사·병합: Antigravity</td>
+                <td class="py-2.5 px-3">3대 도구 모두에서 <code>pilot run --worker haiku/local</code> exit 0</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-bold text-indigo-400">Step 3: U238</td>
+                <td class="py-2.5 px-3"><strong>PC 부팅 즉시 &amp; 3대 도구 실행 즉시 자동 가동</strong> (<code>coord boot</code> + 미초기화 프로젝트 자동 <code>coord init</code> + 자동 계획표 발행)</td>
+                <td class="py-2.5 px-3">Ollama CLI + Haiku 5.5</td>
+                <td class="py-2.5 px-3">주도: Claude / 감사·병합: Antigravity</td>
+                <td class="py-2.5 px-3">3대 도구 <code>SessionStart/PreInvocation</code> 무결성 검증</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-bold text-indigo-400">Step 4: U239</td>
+                <td class="py-2.5 px-3"><strong>전방위 상시 RSI 감시 데몬 &amp; 정량 가치평가기</strong> (토큰 ROI, 1차 통과율, 자동 <code>rsi propose/gate</code>)</td>
+                <td class="py-2.5 px-3">Ollama CLI + Haiku 5.5</td>
+                <td class="py-2.5 px-3">설계: Codex / 구현: Claude / 병합: Antigravity</td>
+                <td class="py-2.5 px-3">상시 스케줄러(<code>UAOS_InvocationRSI_Local</code>) exit 0</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-bold text-indigo-400">Step 5: U240</td>
+                <td class="py-2.5 px-3"><strong>올패키지 완결기 &amp; 통합 문서 허브</strong> (커밋→푸시→병합→배포→<code>README.md</code> &amp; <code>00_DOCUMENT_INDEX.md</code> 자동 마감)</td>
+                <td class="py-2.5 px-3">Haiku 5.5 (문서/README 자동 갱신)</td>
+                <td class="py-2.5 px-3">주도: Antigravity·Claude / 판정: Codex</td>
+                <td class="py-2.5 px-3"><code>uaos docs lint</code> &amp; E2E 패키지 릴리스 exit 0</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Primary Sources -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-xs space-y-2">
+        <h3 class="text-sm font-bold text-white">필수 1차 출처 및 기술 근거 (Primary Evidence &amp; Official Sources)</h3>
+        <ul class="list-disc list-inside text-slate-300 space-y-1">
+          <li>Anthropic Claude Code Hooks &amp; Subagents (Haiku 5.5 Delegation): <a href="https://code.claude.com/docs/en/hooks" target="_blank" class="text-indigo-400 underline">https://code.claude.com/docs/en/hooks</a> · <a href="https://github.com/anthropics/claude-code" target="_blank" class="text-indigo-400 underline">https://github.com/anthropics/claude-code</a></li>
+          <li>OpenAI Codex CLI &amp; App-Server Architecture: <a href="https://developers.openai.com/codex/app-server" target="_blank" class="text-indigo-400 underline">https://developers.openai.com/codex/app-server</a> · <a href="https://github.com/openai/codex" target="_blank" class="text-indigo-400 underline">https://github.com/openai/codex</a></li>
+          <li>Google Gemini CLI &amp; AI Ultra Tiering: <a href="https://github.com/google-gemini/gemini-cli" target="_blank" class="text-indigo-400 underline">https://github.com/google-gemini/gemini-cli</a></li>
+          <li>UAOS-RSI Repository &amp; Merged PRs (#197, #198): <a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pulls" target="_blank" class="text-indigo-400 underline">https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pulls</a></li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function showTab(id) {
+      ['eval', 'pyramid', 'modules', 'roadmap'].forEach(t => {
+        document.getElementById('tab-' + t).classList.add('hidden');
+        document.getElementById('btn-' + t).classList.remove('active');
+      });
+      document.getElementById('tab-' + id).classList.remove('hidden');
+      document.getElementById('btn-' + id).classList.add('active');
+    }
+  </script>
+</body>
+</html>

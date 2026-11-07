@@ -1,0 +1,17 @@
+{
+  "work_id": "U241-EXACT-HEAD-REVIEW",
+  "sent": "relay_9eba99a390c3f651901dd043fb45cea0",
+  "transport": "PUBLISHED_AGY_ANSWERED",
+  "reply": "relay_b137ff993e3e7382e9b021ae91f6c7b0",
+  "body_disposition": "HOLD_ACK confirms REWORK, runtime remains8c, revised contract and frozen4-case gate required",
+  "envelope_anomaly": "reply payload.verdict=PASS contradicts HOLD_ACK/REWORK body. Treat as acknowledgement only; never code approval, audit evidence or release grant",
+  "remote_usage_reported": {
+    "input_tokens": 35442,
+    "output_tokens": 937,
+    "thinking_tokens": 250,
+    "cache_read_tokens": 0,
+    "total_tokens": 36379
+  },
+  "usage_note": "Auto-responder usage retained as reported; no inferred billing or savings",
+  "next": "Source owner prepares linted correction contract; no implementation/runtime permission inferred from reply"
+}

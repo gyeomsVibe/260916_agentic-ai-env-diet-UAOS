@@ -1,0 +1,15 @@
+{
+  "card": "U183",
+  "title": "[U183] CODE-PROOF sole writer (user desk 261011-1)",
+  "tools": {
+    "claude": {
+      "id": "63aad9cf-920e-4a53-b4d3-a21b153f686a",
+      "opened_at": 1791683547.116837
+    },
+    "antigravity": {
+      "id": "e89a367c-bda2-4c34-a2b3-59f972fa02f0",
+      "opened_at": 1791684985.2194476,
+      "last_input_tokens": 69437
+    }
+  }
+}

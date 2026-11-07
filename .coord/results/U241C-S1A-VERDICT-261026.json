@@ -1,0 +1,23 @@
+{
+  "work_id": "U241C-S1A",
+  "bundle_id": "852b4b149662daf256b4fdbf3891d49071c9b507c89cbc9ff2c71ce9413be662",
+  "verdict": "APPROVE_SCOPED_SOURCE_PROMOTION",
+  "judge": "codex",
+  "allowed_path": "v7_harness/control_ux.py",
+  "base_sha256": "9EDB5E740EBA147FDAF99B22705E8268C9E2BE47C891E3F8FD948DC5ADF95FB0",
+  "target_sha256": "6A534E341D6249641BAAED125D43B4F2EBFFC96F8D33C18E83C567798F68A3F9",
+  "worker": "apply-deterministic",
+  "worker_input_tokens": 0,
+  "worker_output_tokens": 0,
+  "remote_review_artifacts": 0,
+  "lint_exit": 0,
+  "changed_lines": 13,
+  "bundle_items": 1,
+  "fixed_test_hashes_unchanged": true,
+  "independent_evidence": "Exact target bytes match previously root-judged S1 candidate:6 fixed acceptance tests plus3 snapshot cases passed. No unnecessary model/test repetition.",
+  "source_promotion_observed": false,
+  "next": "Existing Claude owner runs same-task official --approve for exact bundle, proves target hash, then prepares S2 from new hash with no remote review calls",
+  "full_aggregate_gate": "Still pending: worker HTML rendering, shared write guard, native hook guard, registry corruption gate, full suite",
+  "runtime_approval": false,
+  "old_s1_process": "Rejected review18700 remains charged and unapproved; this fresh deterministic operation does not erase prior costs"
+}

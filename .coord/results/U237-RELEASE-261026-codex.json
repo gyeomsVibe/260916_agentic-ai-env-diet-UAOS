@@ -1,0 +1,44 @@
+{
+  "relay": "relay_01a414a2059f5e022888856863678f54",
+  "verdict": "PASS_SCOPED_RUNTIME_RELEASE",
+  "pr": "https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/203",
+  "head": "aeec1ffb72bf8b10345ab137ec08a8a483439ba4",
+  "merge": "fbb02ec0e4788cabc0d5f7eb9cfd0ab8a6794dd1",
+  "merge_action": "Attempt returned already merged; live merge commit verified, no duplicate merge",
+  "card_audit": "ok:true missing:[]",
+  "independent_audit": "relay_4a7caeec7657f272134bdb3d13cf7e07",
+  "stale_result_audit_reference": "Original U237.md points at B2 audit relay19fa; not used as U237 gate",
+  "acceptance": {
+    "exact_pr_head_tests": 14,
+    "merged_release_tests": 39,
+    "merged_release_exit": 0,
+    "modules": [
+      "tests.test_u225_worker_routing",
+      "tests.test_u237_haiku_worker_pool",
+      "tests.test_u233_unified_doc_hub",
+      "tests.test_u229_independent_invocation",
+      "tests.test_u229_claude_journal_worker",
+      "tests.test_u229_olla_embed_journal",
+      "tests.test_u236a_model_pin"
+    ],
+    "initial_scratch_test": "39 tests exit1: omitted .claude manifest in initial source extraction; extracted pinned manifest then39PASS",
+    "initial_preview": "exit1: omitted uaos_everywhere/VERSION; extracted exact packaging then preview/apply exit0"
+  },
+  "runtime": "0.3.0-ea71a5568454",
+  "previous_runtime": "0.3.0-94c6632730f6",
+  "verification": {
+    "archive_commit": "fbb02ec0e4788cabc0d5f7eb9cfd0ab8a6794dd1",
+    "checked": 135,
+    "mismatches": [],
+    "raw_git_blob_mismatch_explanation": "archive export CRLF vs LF Git blob; source archive raw bytes match installed"
+  },
+  "installed_selector_import": "PASS",
+  "backup": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/backup_20261026_u237",
+  "known_limits": [
+    "No real paid Haiku execution in this release check",
+    "Cost/quota saving UNMEASURED",
+    "Scheduled task completion not inferred from command help",
+    "U233 has no dedicated hub subcommand; command absence alone is not a deployment test"
+  ],
+  "new_paid_worker_calls": 0
+}

@@ -1,0 +1,20 @@
+{
+  "transition": "transition_unknown_8134de61c645c45cded25fb6_codex",
+  "cause": "Previous Codex ACTIVE manual presence lease expired; raw ACTIVE record alone was not fresh authority",
+  "action": "coord presence --tool codex --state ACTIVE --lease",
+  "action_exit": 0,
+  "current_state": "ACTIVE",
+  "observed_at": "2026-10-26T01:05:05+09:00",
+  "expires_at": 1792947905.9581606,
+  "independent_route": {
+    "authority": "codex",
+    "exit": 0,
+    "codex": "ACTIVE",
+    "claude": "ACTIVE",
+    "antigravity": "ACTIVE"
+  },
+  "desk": "01a17325-b78d-73d0-b6e7-388b6df1ec0c unchanged and confirmed",
+  "availability_note": "Presence ACTIVE is not quota or provider-execution proof",
+  "ownership": "No implementation owner changed; prior U239B/U237D source review and release holds remain",
+  "runtime": "0.3.0-f4723bc9dd46"
+}

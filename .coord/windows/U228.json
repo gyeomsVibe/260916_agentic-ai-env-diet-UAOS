@@ -1,0 +1,15 @@
+{
+  "card": "U228",
+  "title": "[U228]",
+  "tools": {
+    "antigravity": {
+      "id": "abf42a31-2f50-4e08-b948-71f91079c226",
+      "opened_at": 1792875195.2385602,
+      "last_input_tokens": 28748
+    },
+    "claude": {
+      "id": "e2b03d57-8fab-434e-8820-ac25b90fdb80",
+      "opened_at": 1792875282.981262
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "wake": "wake_f2032a6976da74aa547a260d",
+  "unique_steps": 134,
+  "new_hold": "U237D-RETURN-REVIEW already independently reproduced and recorded",
+  "new_candidate_review": ".coord/results/U239B-CODEX-REWORK-261026.json",
+  "existing_holds": "U239/U240 persist; current runtime f472 verified",
+  "historical_backlog": "Preserved, no broad ACK/completion or automatic replay"
+}

@@ -1,0 +1,13 @@
+{
+  "evidence": [
+    ".work/U229/common-worker-independent-usage.json",
+    ".work/U229/B1-install-admission.json",
+    ".work/U229/B2-install-admission.json"
+  ],
+  "new_provider_calls": 0,
+  "eval_restart_authorized": false,
+  "frozen_b1_reopened": false,
+  "relay": "relay_4fe8dae32c3aee858202cb2820ff55ca",
+  "executor": "PARKED",
+  "classification": "ACK_ONLY_STOP_CONFIRMED_AND_RECEIPTS_ALREADY_CONSUMED"
+}

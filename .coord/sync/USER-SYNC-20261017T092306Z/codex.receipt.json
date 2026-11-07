@@ -1,0 +1,10 @@
+{
+  "actor": "codex",
+  "native_session": "01a1423b-e934-7ae1-afa6-3af2cab386bd",
+  "sync_id": "USER-SYNC-20261017T092306Z",
+  "state_sha256": "fe20e1f2cd2b1fd24a63c11e66590378529a19800336bd382d8ada17a3a6d4c6",
+  "observed_at": "2026-10-17T09:23:06.819580+00:00",
+  "implementation_go": false,
+  "next_allowed_action": "ONE_ROUND_STATE_RECONCILIATION_AND_TRANSPORT_DIAGNOSTIC",
+  "status": "READ_AND_RECONCILED"
+}

@@ -1,0 +1,12 @@
+{
+  "verified_runs": 7,
+  "all_seven_over_original_cap": true,
+  "v2_already_executed": true,
+  "decision": "NO_NEW_RUN_NO_CAP_RELAXATION",
+  "total_tokens": 4539342,
+  "relay": "relay_91dd170501c871f0f4e61ca5afa6019e",
+  "evidence": ".work/U229/common-worker-independent-usage.json",
+  "disposition": "SUPERSEDED_V1_BENCHMARK_PROPOSAL",
+  "account_quota_saving": "UNMEASURED",
+  "executor": "PARKED"
+}

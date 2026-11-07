@@ -1,0 +1,36 @@
+{
+  "relay": "relay_37b65b1b0dd7943705b8b9a9b9c5b2d1",
+  "verdict": "RECONCILE_OWNERSHIP_BEFORE_PARALLEL_DISPATCH",
+  "canonical_master": "No U239C/U237E/U241 phase entries observed; proposed lanes are not yet verified canonical assignments",
+  "lanes": [
+    {
+      "card": "U237E",
+      "owner": "claude",
+      "source": "D:/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.claude/worktrees/user-conversation-setup-42d227/.work/wt_u237e",
+      "state": "Codex-approved/APPLIED b3b2afd9; committed c9e3cc37d2a8bbd818e4386ca830de729c7de844; PR209 OPEN CI running",
+      "duplicate": "agy/u237e-topic-sanitize in .work/wt_u237e_topic_fix is clean but has duplicate manual; no second pilot/patch; preserve it without deleting"
+    },
+    {
+      "card": "U239C",
+      "owner": "antigravity",
+      "source": ".work/wt_u239_rsi_eval",
+      "state": "New contract addresses (project,work_id) and full-history first-attempt lookup; ca1382f observed, no candidate verdict issued in this preflight",
+      "gate": "Original external u239b-first-pass-negative.py SHA55B136C9 plus unchanged old assertions; newly appended tests do not replace independent gate"
+    },
+    {
+      "card": "U241",
+      "owner": "antigravity",
+      "source": ".work/wt_u241_control_ux",
+      "state": "Contract preflight only; no release verdict",
+      "required_before_dispatch": [
+        "Resolve canonical shared_desk instead of trusting linked-worktree .coord",
+        "Derive fresh effective presence including expires_at, observed_at; raw state must not display expired ACTIVE",
+        "Render actual owner_tool instead of nonexistent owner field",
+        "Pending wakes are queued notices, not proof that workers/background jobs run",
+        "Preserve UNKNOWN worker availability; split skeleton and one-function worker slices instead of whole-file two-function replacement"
+      ]
+    }
+  ],
+  "runtime": "Keep0.3.0-f4723bc9dd46; existing U239B and title/cumulative release gates remain",
+  "boundaries": "No source edits, branch deletions, resets, worker launch, additional runtime install or shared dirty master overwrite"
+}

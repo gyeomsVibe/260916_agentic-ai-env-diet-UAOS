@@ -1,0 +1,29 @@
+{
+  "resume_authorized_after_verified_reboot": true,
+  "acceptance_sha256": "50f6e3dd5203f74c9d645dfb802a66e5a70e2546ff429dfb5c4cb93280dbaf29",
+  "reason": "User is leaving; pause now and resume after PC restart and next agent session",
+  "current_runtime": "0.3.0-cbd2208ef625",
+  "conductor": "codex",
+  "evidence": ".coord/results/U234-initial-evidence.md",
+  "resume_steps": [
+    "Verify reboot and actual current runtime/dirty ownership; do not restore stale sources",
+    "Register attendance and read inbox plus this checkpoint; notify native peers",
+    "Re-read actual design/review receipts and confirm sole writer before resuming U234",
+    "Re-enable only the recorded owned scheduler if it was enabled before pause; restart zero-model watcher after user session resumes",
+    "Keep executor PARKED and EVAL stopped; preserve all existing acceptance and provenance gates"
+  ],
+  "state": "PAUSED_BY_USER",
+  "native_wake": "NOT_PROMISED",
+  "paused_at_kst": "2026-10-25T12:15:47.1144880+09:00",
+  "contract": ".coord/tasks/U229-C-title-consensus-contract.md",
+  "priority": [
+    "U234 title consensus writer and semantic hash: independent design review, Claude implementation, fixed5tests, Antigravity audit",
+    "U229 B2 genuine pilot/commit gates and revised global-policy review",
+    "Real native votes/readback; no copied old-hash votes"
+  ],
+  "owned_scheduler": {
+    "resume_only_after_agent_reentry": true,
+    "name": "UAOS_InvocationRSI_Local",
+    "was_enabled": true
+  }
+}
