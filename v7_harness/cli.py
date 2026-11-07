@@ -1373,6 +1373,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_rsi_watch.add_argument("--project", default=".")
     p_rsi_watch.add_argument("--config", default=None, help="Watcher config JSON path")
     p_rsi_watch.set_defaults(func=cmd_rsi_watch)
+    p_rsi_endurance = p_rsi_subs.add_parser(
+        "endurance", help="Weekly 3-tool endurance report to .coord/reports/endurance_<date>.md (S6, 0 paid tokens)")
+    p_rsi_endurance.add_argument("--project", default=".")
+    p_rsi_endurance.add_argument("--force", action="store_true", help="Write even when a report from the last 7 days exists")
+    p_rsi_endurance.set_defaults(func=cmd_rsi_endurance)
 
     p_rsi_prepare = p_rsi_subs.add_parser("prepare", help="Prepare a release packet (dry-run by default, --apply to write)")
     p_rsi_prepare.add_argument("--project", default=".")
@@ -2883,8 +2888,26 @@ def cmd_rsi_watch(args: argparse.Namespace) -> int:
                 )
             except (StreamRejected, OSError, RuntimeError):
                 res["u299_rsi_session"]["log_error"] = "STREAM_REJECTED"
+    if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA"):
+        # S6: the weekly endurance report rides the scheduled watch (0 paid tokens); it never changes the exit code.
+        try:
+            from .coord.endurance_report import maybe_write_weekly
+
+            res["endurance_report"] = maybe_write_weekly(project, Path.home(), time.time())
+        except Exception as exc:  # noqa: BLE001
+            res["endurance_report"] = {"status": "FAILED", "error": type(exc).__name__}
     _print_json(res)
     return 0 if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") else 1
+
+
+def cmd_rsi_endurance(args: argparse.Namespace) -> int:
+    import time
+
+    from .coord.endurance_report import maybe_write_weekly
+
+    res = maybe_write_weekly(Path(args.project), Path.home(), time.time(), force=args.force)
+    _print_json(res)
+    return 0
 
 
 def cmd_rsi_retention(args: argparse.Namespace) -> int:
