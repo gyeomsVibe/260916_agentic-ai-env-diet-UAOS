@@ -41,6 +41,10 @@ class TestU287ProcessLaneParallelWindows(unittest.TestCase):
         self._codex_env_patcher.start()
         (self.project / ".coord" / "mailbox").mkdir(parents=True, exist_ok=True)
         (self.project / ".coord" / "PLAN.md").write_text("# Test Plan\n", encoding="utf-8")
+        # S5 D-R2: lane dispatch now needs a boot participation snapshot; these lane tests assume every tool executes.
+        (self.project / ".coord" / "participation.json").write_text(json.dumps({
+            "mode": "TRIO", "roles": {t: "EXECUTOR" for t in ("codex", "claude", "antigravity")},
+            "decided_at": time.time(), "expires_at": time.time() + 3600}), encoding="utf-8")
 
     def tearDown(self) -> None:
         self._codex_env_patcher.stop()

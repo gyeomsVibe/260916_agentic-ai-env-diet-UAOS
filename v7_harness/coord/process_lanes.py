@@ -796,6 +796,43 @@ def dispatch_single_lane_batch(
     runner: Any = None,
     custom_sender: Callable[[str, str, str, str, list[ProcessItem]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """S5 rev 3: the whole gate-then-send runs inside the participation dispatch guard, so a revocation cannot land
+    between the gate check and the send (the snapshot writer waits for in-flight dispatches)."""
+    from .participation import dispatch_guard
+    with dispatch_guard(Path(shared_desk(project)).resolve()):
+        return _dispatch_single_lane_batch_guarded(project, lane_id, items, actor=actor,
+                                                   preferred_tool=preferred_tool, runner=runner,
+                                                   custom_sender=custom_sender)
+
+
+def _admitted_lane_tool(desk: Path, lid: str, actor: str, excluded: set[str], *, requested_target: str = "",
+                        purpose: str = "execute") -> tuple[str, str, dict[str, str]]:
+    """S5 rev 5: walk the lane order past every excluded or snapshot-barred tool. Returns (tool, route reason,
+    barred {tool: gate reason}); tool is "" when no remaining tool passes the participation gate."""
+    from .participation import gate_dispatch
+    skip, barred = set(excluded), {}
+    while True:
+        tool, reason = select_active_tool_for_lane(desk, lid, requested_target=requested_target, actor=actor,
+                                                   exclude_tools=skip)
+        if not tool or tool in skip:
+            return "", "", barred
+        gate = gate_dispatch(desk, tool, purpose=purpose)
+        if gate["allowed"]:
+            return tool, reason, barred
+        barred[tool] = gate["reason"]
+        skip.add(tool)
+
+
+def _dispatch_single_lane_batch_guarded(
+    project: Path,
+    lane_id: str,
+    items: list[ProcessItem],
+    *,
+    actor: str = "antigravity",
+    preferred_tool: str = "",
+    runner: Any = None,
+    custom_sender: Callable[[str, str, str, str, list[ProcessItem]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Provision the dedicated conversation window for `lane_id` and dispatch its batch without blocking other lanes.
 
     - Uses `ensure_fresh_lane_window` so 12-turn / 180KB rotation is enforced automatically on every dispatch.
@@ -816,6 +853,24 @@ def dispatch_single_lane_batch(
         desk, lid, requested_target=req_target, actor=actor
     )
     first_card = next((it.card for it in items if it.card), "")
+
+    # S5: the boot participation snapshot decides who may execute; nothing is provisioned, sent or acked otherwise.
+    from .participation import gate_dispatch
+    # S5 rev 6 (Codex judge U322-apply4): a VERIFY_AUDIT batch is judge work, so its items' authors never receive it
+    # (self_approval stays False) and the gate checks judge purpose.
+    purpose = "judge" if lid == "VERIFY_AUDIT" else "execute"
+    authors = {it.actor for it in items if it.actor in TOOLS} if purpose == "judge" else set()
+    gate = (gate_dispatch(desk, selected_tool, purpose=purpose) if selected_tool not in authors
+            else {"allowed": False, "reason": "AUTHOR_NEVER_JUDGE"})
+    if not gate["allowed"]:
+        # S5 rev 4 (Codex judge U322-apply2): a barred pick moves to the next tool the lane order offers that the
+        # snapshot admits, so a SOLO executor still receives the batch; refused only when no tool passes.
+        alt, alt_reason, barred = _admitted_lane_tool(desk, lid, actor, {selected_tool} | authors, purpose=purpose)
+        barred = {selected_tool: gate["reason"], **{a: "AUTHOR_NEVER_JUDGE" for a in authors}, **barred}
+        if not alt:
+            return {"ok": False, "lane_id": lid, "state": "PARTICIPATION_BLOCKED", "tool": selected_tool,
+                    "reason": gate["reason"], "barred": barred, "count": len(items), "route_reason": route_reason}
+        selected_tool, route_reason = alt, f"PARTICIPATION_REROUTE:{alt_reason}"
 
     win_info = ensure_fresh_lane_window(desk, lid, selected_tool, card=first_card)
     window_id = str(win_info["id"])
@@ -858,9 +913,11 @@ def dispatch_single_lane_batch(
         failed_primary_tool = selected_tool
         # Rotate ONLY the failed primary tool's lane window so its next turn gets a clean session
         open_or_reuse_lane_window(desk, lid, failed_primary_tool, card=first_card, rotate=True)
-        alt_tool, alt_reason = select_active_tool_for_lane(
-            desk, lid, requested_target="", actor=actor, exclude_tools={failed_primary_tool}
-        )
+        # S5 rev 5: the failover peer passes the same participation gate, walking past every barred alternate.
+        alt_tool, alt_reason, alt_barred = _admitted_lane_tool(desk, lid, actor, {failed_primary_tool} | authors,
+                                                               purpose=purpose)
+        if not alt_tool and alt_barred:
+            send_result = {**send_result, "failover_blocked": {t: f"PARTICIPATION:{r}" for t, r in alt_barred.items()}}
         if alt_tool and alt_tool != failed_primary_tool:
             failover_used = True
             selected_tool = alt_tool
@@ -1041,9 +1098,22 @@ def handoff_lane_result(
     """
     lid = validate_lane_id(lane_id)
     desk = Path(shared_desk(project)).resolve()
-    target_tool, route_reason = select_active_tool_for_lane(
-        desk, lid, requested_target=to_tool, actor=from_tool, exclude_tools={from_tool}
-    )
+    # S5 rev 5 (Codex judge U322-apply3): a handoff makes the receiver spend, so it passes the same participation
+    # gate inside the same dispatch guard; a verdict request is judge work (EXECUTOR only without a reservation).
+    from .participation import dispatch_guard
+    with dispatch_guard(desk):
+        target_tool, route_reason, barred = _admitted_lane_tool(
+            desk, lid, from_tool, {from_tool}, requested_target=to_tool,
+            purpose="judge" if verdict_requested else "execute")
+        if not target_tool:
+            return {"ok": False, "lane_id": lid, "from_tool": from_tool, "to_tool": "",
+                    "state": "PARTICIPATION_BLOCKED", "barred": barred, "reason": "PARTICIPATION_BLOCKED"}
+        return _handoff_send(desk, lid, from_tool, target_tool, route_reason, card=card, summary=summary,
+                             verdict_requested=verdict_requested, verdict=verdict, runner=runner)
+
+
+def _handoff_send(desk: Path, lid: str, from_tool: str, target_tool: str, route_reason: str, *, card: str,
+                  summary: str, verdict_requested: bool, verdict: str | None, runner: Any) -> dict[str, Any]:
     win_info = ensure_fresh_lane_window(desk, lid, target_tool, card=card)
     window_id = str(win_info["id"])
 
