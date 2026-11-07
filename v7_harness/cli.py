@@ -1206,6 +1206,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_route.set_defaults(func=cmd_coord_route)
+    p_coord_part = p_coord_subs.add_parser("participation",
+                                           help="S5: decide TRIO/DUO/SOLO/HALT before dispatch; writes the snapshot")
+    p_coord_part.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_part.add_argument("--home", default=None, help="Home holding quota sources (default: the user's)")
+    p_coord_part.add_argument("--pool", action="append", default=[],
+                              help="tool=<S1 pool id> the dispatch really uses; an unbound pool never admits")
+    p_coord_part.set_defaults(func=cmd_coord_participation)
     p_coord_collect = p_coord_subs.add_parser(
         "usage-collect", help="Find usage rows left only in linked worktrees; --apply appends them to the desk ledger")
     p_coord_collect.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1293,6 +1300,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_lanes.add_argument("--title", default="", help="U292: RSI upgrade session title")
     p_coord_lanes.add_argument("--rules-version", default="7.6.2", help="U292: Global rules version pinned in RSI session")
     p_coord_lanes.add_argument("--lane", default="", help="Optional specific lane id (IMPL_CODE, VERIFY_AUDIT, ARCH_DESIGN, MERGE_RELEASE, RECOVERY_OPS)")
+    p_coord_lanes.add_argument("--pool", action="append", default=[],
+                               help="S5: tool=<S1 pool id> for dispatch; given -> refresh the participation snapshot "
+                                    "with these pools first, omitted -> use the standing snapshot")
     p_coord_lanes.add_argument("--actor", default="antigravity", choices=["codex", "claude", "antigravity"])
     p_coord_lanes.add_argument("--target", default="", help="Optional target tool for handoff")
     p_coord_lanes.add_argument("--card", default="", help="Optional card id for handoff")
@@ -2537,9 +2547,30 @@ def cmd_coord_route(args: argparse.Namespace) -> int:
     states = {tool: (presence.get(tool) or {}).get("state", "UNKNOWN")
               for tool in ("codex", "claude", "antigravity")}
     authority = route_authority(states["codex"], states["claude"], states["antigravity"])
+    # S5: participation is reported beside authority; the exit code stays authority's (contract behaviour item 6).
+    import time
+    from .coord.participation import admissions, decide
+    from .coord.quota_sources import measured_accounts
+    try:
+        accounts = measured_accounts(Path.home(), time.time())
+    except Exception:
+        accounts = None
+    part = decide(states, admissions(accounts))
     print(json.dumps({"ok": not authority.startswith("BLOCKED_"), "authority": authority,
-                      "states": states, "quota_conversion": "FORBIDDEN"}, ensure_ascii=False))
+                      "states": states, "quota_conversion": "FORBIDDEN",
+                      "participation": {"mode": part["mode"], "roles": part["roles"]}}, ensure_ascii=False))
     return 0 if not authority.startswith("BLOCKED_") else 1
+
+
+def cmd_coord_participation(args: argparse.Namespace) -> int:
+    """S5: decide TRIO/DUO/SOLO/HALT from presence + quota admission and write the desk's boot snapshot."""
+    from .coord.hook_context import shared_desk
+    from .coord.participation import snapshot
+    desk = Path(shared_desk(Path(args.project))).resolve()
+    pools = dict(p.split("=", 1) for p in (args.pool or []) if "=" in p)
+    result = snapshot(desk, home=Path(args.home) if args.home else None, pools=pools)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
 
 
 def cmd_coord_thrift(args: argparse.Namespace) -> int:
@@ -3166,6 +3197,13 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
         return 0 if res.get("ok") else 1
     if action == "dispatch":
         lanes = [args.lane] if args.lane else None
+        # S5 rev 4 (Codex judge U322-apply2): a pool-less refresh would read every tool JUDGE_ONLY and HALT, so the
+        # snapshot is refreshed only with the dispatch pools; without them the standing (expiry-checked) one decides.
+        dispatch_pools = dict(p.split("=", 1) for p in (getattr(args, "pool", None) or []) if "=" in p)
+        if dispatch_pools:
+            from .coord.hook_context import shared_desk
+            from .coord.participation import snapshot as participation_snapshot
+            participation_snapshot(Path(shared_desk(project)).resolve(), pools=dispatch_pools)
         res = multiplex_and_dispatch_parallel(
             project,
             actor=args.actor,
