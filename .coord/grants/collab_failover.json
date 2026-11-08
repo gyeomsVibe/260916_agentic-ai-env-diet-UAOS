@@ -1,0 +1,12 @@
+{
+  "id": "collab_failover",
+  "granted_by": "윤겸스",
+  "granted_at": "2026-11-09",
+  "order": "When any tool stops on a usage limit, its authority passes to the remaining tools, which split its roles and proceed without user approval by peer agreement until it returns. Three tools -> two-tool collaboration -> solo, switched automatically.",
+  "human_only_still_binds": true,
+  "no_self_judge": true,
+  "codex_exclusive_keypoints_park": true,
+  "returning_tool_rereviews": true,
+  "design_card": "U327",
+  "design_doc": "docs/136_U327_collab_mode_failover_brief.md"
+}
