@@ -143,33 +143,36 @@ def prepare(project, card, tool, parent, *, source_head, reviewed_ref, max_token
             permissions="INHERITED", ports):
     """Inputs, admission, parent binding and path rules before any effect; then lease, slot and clean workspace."""
     caps = check_inputs(card, tool, permissions, max_tokens, max_wall_s)
-    admit(ports.quota.read(tool), ports.clock.wall())
+    admit(ports.quota.read(tool), ports.clock.wall(), tool)
     bound = _bind_parent(project, parent, ports)
     path, branch = _workspace_target(project, card, tool)
     if ports.git.rev_parse(project, reviewed_ref) != source_head:
         raise FabricRefusal("SOURCE_DIRTY_OR_STALE", f"{reviewed_ref} is not {source_head}")
     now = _wall(ports)
     lease = ports.lock.acquire_open(card, tool, {"pid": os.getpid(), "host": socket.gethostname()}, now)
+    slot = None
     try:
-        ports.lock.acquire_slot(tool, lease["lease_id"])
-    except FabricRefusal:
-        ports.lock.drop_fresh_lease(card, tool)
+        slot = ports.lock.acquire_slot(tool, lease["lease_id"])
+        before = ports.git.parent_snapshot(project, EXCLUDE)
+        ports.git.add_worktree(project, path, branch, source_head)
+        state, manifest = ports.git.worktree_state(path), ports.git.head_manifest(project, source_head)
+        after = ports.git.parent_snapshot(project, EXCLUDE)
+        if state["head"] != source_head or not state["clean"] or state["manifest"] != manifest:
+            raise FabricRefusal("WORKSPACE_UNCLEAN", str(path))
+        if before != after:
+            raise FabricRefusal("PARENT_SNAPSHOT_CHANGED", str(path))
+        card_uuid = str(uuid.uuid4())
+        workspace = {"path": str(path), "branch": branch, "source_head": source_head,
+                     "source_manifest_sha256": manifest, "cleanup": "MANUAL_DRY_RUN_ONLY",
+                     "reviewed_ref": reviewed_ref, "parent_snapshot": after}
+        record = build_record(card=card, card_uuid=card_uuid, tool=tool, parent=bound, workspace=workspace,
+                              open_key=_sha(f"{card_uuid}|{tool}|start|0".encode()),
+                              journal=f"journal/{card}__{tool}", lease=lease, caps=caps,
+                              permissions=permissions, now=now)
+        ports.store.write_record(record)
+    except FabricRefusal:  # known pre-native failure: free capacity; a partial worktree stays for manual cleanup
+        ports.lock.drop_fresh_lease(card, tool, slot)
         raise
-    before = ports.git.parent_snapshot(project, EXCLUDE)
-    ports.git.add_worktree(project, path, branch, source_head)
-    state, manifest = ports.git.worktree_state(path), ports.git.head_manifest(project, source_head)
-    after = ports.git.parent_snapshot(project, EXCLUDE)
-    if state["head"] != source_head or not state["clean"] or state["manifest"] != manifest:
-        raise FabricRefusal("WORKSPACE_UNCLEAN", str(path))
-    if before != after:
-        raise FabricRefusal("PARENT_SNAPSHOT_CHANGED", str(path))
-    card_uuid = str(uuid.uuid4())
-    workspace = {"path": str(path), "branch": branch, "source_head": source_head, "source_manifest_sha256": manifest,
-                 "cleanup": "MANUAL_DRY_RUN_ONLY", "reviewed_ref": reviewed_ref, "parent_snapshot": after}
-    record = build_record(card=card, card_uuid=card_uuid, tool=tool, parent=bound, workspace=workspace,
-                          open_key=_sha(f"{card_uuid}|{tool}|start|0".encode()), journal=f"journal/{card}__{tool}",
-                          lease=lease, caps=caps, permissions=permissions, now=now)
-    ports.store.write_record(record)
     return record
 
 
@@ -180,7 +183,7 @@ class NativeRejected(Exception):
         self.code = code
 
 
-def admit(reading, now):
+def admit(reading, now, tool=None):
     """PORTS v1 QuotaPort order, first failure wins; freshness is the owning policy's, never a constant."""
     if type(now) not in (int, float) or not math.isfinite(now):
         raise FabricRefusal("CLOCK_INVALID", "clock.wall() must be a finite number")
@@ -190,6 +193,8 @@ def admit(reading, now):
         value = reading[key]
         if (type(value) not in (int, float)) if kind is float else (type(value) is not kind):
             raise FabricRefusal("ADMISSION_MALFORMED", f"{key} has the wrong type")
+    if (tool is not None and reading["tool"] != tool) or not reading["pool"] or not reading["window"]:
+        raise FabricRefusal("ADMISSION_MALFORMED", "reading is not for the requested account/pool/window")
     observed, fresh = reading["observed_wall"], reading["freshness_s"]
     if not math.isfinite(observed) or not math.isfinite(fresh) or fresh <= 0:
         raise FabricRefusal("ADMISSION_MALFORMED", "observed_wall/freshness_s must be finite, freshness_s > 0")
@@ -322,12 +327,14 @@ class Store:
         return data
 
     def write_record(self, record):
-        """tmp + fsync + os.replace under the record lock; rev must follow the stored rev (rev 0 = prepare)."""
+        """tmp + fsync + os.replace under the record lock; rev 0 only creates, rev n needs stored rev n-1."""
         path = self._path(record["card"], record["tool"])
         path.parent.mkdir(parents=True, exist_ok=True)
         data = json.dumps(_redact_all(record), allow_nan=False, sort_keys=True).encode("utf-8")
         with _mutex(path.with_name(path.name + ".lock")):
             stored = self.read_record(record["card"], record["tool"])
+            if record["rev"] == 0 and stored is not None:
+                raise FabricRefusal("STALE_RECORD", f"a record already exists at rev {stored['rev']}")
             if record["rev"] > 0 and (stored is None or stored["rev"] != record["rev"] - 1):
                 raise FabricRefusal("STALE_RECORD", f"stored rev is not {record['rev'] - 1}")
             tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}-{uuid.uuid4().hex}")
@@ -374,8 +381,11 @@ class Lock:
             os.fsync(f.fileno())
         return lease
 
-    def drop_fresh_lease(self, card, tool):
-        """Only prepare calls this, for the lease it took moments ago, before any workspace or native effect."""
+    def drop_fresh_lease(self, card, tool, slot=None):
+        """Only prepare calls this, for the lease (and slot) it took itself, after a known pre-native failure."""
+        if slot is not None:
+            with _mutex(self.root / "caps.lock"):
+                os.unlink(self.root / "slots" / slot)
         os.unlink(self.root / f"open_{card}__{tool}.lease")
 
     def acquire_slot(self, tool, lease_id):
