@@ -18,11 +18,26 @@ ADAPTER_VERSION = "u326-m1"  # names the M1 offline adapter; live adapters bump 
 NATIVE_KIND = {"codex": "codex_thread", "claude": "claude_desktop_session", "antigravity": "agy_conversation"}
 
 
+CODES = frozenset((  # PORTS v1 (77d016dd) section 3 CODES; the enum is frozen, so no TOOL_INVALID/INPUT_INVALID
+    "PARENT_UNBOUND", "CAPS_INVALID", "ADMISSION_MALFORMED", "ADMISSION_FUTURE_READING", "ADMISSION_STALE_QUOTA",
+    "ADMISSION_RESET_UNOBSERVED", "ADMISSION_REFUSED", "PERMISSION_WEAKER_THAN_INHERITED",
+    "LEASE_HELD", "DUPLICATE_OPEN", "CAP_GLOBAL", "CAP_TOOL", "CAP_LOCK_TIMEOUT",
+    "SOURCE_DIRTY_OR_STALE", "WORKTREE_FAILED", "WORKSPACE_UNCLEAN", "PARENT_SNAPSHOT_CHANGED",
+    "PATH_ESCAPE", "PATH_TOO_LONG", "BRANCH_INVALID", "ILLEGAL_STATE", "STALE_RECORD", "CORRUPT_RECORD",
+    "CLOCK_INVALID", "RESUME_BUSY", "RESUME_MISSING", "EFFECT_UNKNOWN_PENDING", "AUTHOR_IS_JUDGE",
+    "RELEASE_LIVE_WRITER"))
+
+
+_READING = {"tool": str, "pool": str, "window": str, "observed_wall": float, "freshness_s": float,
+            "reset_status": str, "admit_paid": bool, "evidence": str}  # PORTS v1 QuotaReading keys and types
+
+
 class FabricRefusal(Exception):
-    def __init__(self, code: str, detail: str = ""):
+    def __init__(self, code: str, detail: str = "", evidence: dict | None = None):
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
         self.detail = detail
+        self.evidence = dict(evidence) if evidence else ({"detail": detail} if detail else {})
 
 class NativeBusy(Exception):
     """The native session is mid-turn."""
@@ -82,6 +97,38 @@ def build_ports(spec, *, external):
 
 def prepare(project, card, tool, parent, *, source_head, reviewed_ref, max_tokens, max_wall_s,
             permissions="INHERITED", ports):
-    """Refuse bad inputs before any port is touched; admission, lease and workspace are not built yet."""
+    """Inputs, then quota admission, both before any native call; lease and workspace are not built yet."""
     check_inputs(card, tool, permissions, max_tokens, max_wall_s)
-    raise NotImplementedError("U326-M1: admission, lease and workspace slices have not landed")
+    admit(ports.quota.read(tool), ports.clock.wall())
+    raise NotImplementedError("U326-M1: lease and workspace slices have not landed")
+
+
+class NativeRejected(Exception):
+    """The native side refused the call; it is known to have had no effect."""
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def admit(reading, now):
+    """PORTS v1 QuotaPort order, first failure wins; freshness is the owning policy's, never a constant."""
+    if type(now) not in (int, float) or not math.isfinite(now):
+        raise FabricRefusal("CLOCK_INVALID", "clock.wall() must be a finite number")
+    if not isinstance(reading, dict) or any(key not in reading for key in _READING):
+        raise FabricRefusal("ADMISSION_MALFORMED", "quota reading is not an object with every key")
+    for key, kind in _READING.items():
+        value = reading[key]
+        if (type(value) not in (int, float)) if kind is float else (type(value) is not kind):
+            raise FabricRefusal("ADMISSION_MALFORMED", f"{key} has the wrong type")
+    observed, fresh = reading["observed_wall"], reading["freshness_s"]
+    if not math.isfinite(observed) or not math.isfinite(fresh) or fresh <= 0:
+        raise FabricRefusal("ADMISSION_MALFORMED", "observed_wall/freshness_s must be finite, freshness_s > 0")
+    if observed > now:
+        raise FabricRefusal("ADMISSION_FUTURE_READING", f"observed_wall {observed} > now {now}")
+    if now - observed > fresh:
+        raise FabricRefusal("ADMISSION_STALE_QUOTA", f"age {now - observed} > freshness_s {fresh}")
+    if reading["reset_status"] != "OBSERVED":
+        raise FabricRefusal("ADMISSION_RESET_UNOBSERVED", reading["reset_status"])
+    if reading["admit_paid"] is not True:
+        raise FabricRefusal("ADMISSION_REFUSED", reading["evidence"])
+    return dict(reading)
