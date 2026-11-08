@@ -150,27 +150,28 @@ def prepare(project, card, tool, parent, *, source_head, reviewed_ref, max_token
         raise FabricRefusal("SOURCE_DIRTY_OR_STALE", f"{reviewed_ref} is not {source_head}")
     now = _wall(ports)
     lease = ports.lock.acquire_open(card, tool, {"pid": os.getpid(), "host": socket.gethostname()}, now)
-    slot = None
+    card_uuid, slot = str(uuid.uuid4()), None
+    workspace = {"path": str(path), "branch": branch, "source_head": source_head, "source_manifest_sha256": None,
+                 "cleanup": "MANUAL_DRY_RUN_ONLY", "reviewed_ref": reviewed_ref, "parent_snapshot": {}}
+    fields = dict(card=card, card_uuid=card_uuid, tool=tool, parent=bound, workspace=workspace,
+                  open_key=_sha(f"{card_uuid}|{tool}|start|0".encode()), journal=f"journal/{card}__{tool}",
+                  lease=lease, caps=caps, permissions=permissions, now=now)
     try:
         slot = ports.lock.acquire_slot(tool, lease["lease_id"])
         before = ports.git.parent_snapshot(project, EXCLUDE)
+        workspace["parent_snapshot"] = before
         ports.git.add_worktree(project, path, branch, source_head)
         state, manifest = ports.git.worktree_state(path), ports.git.head_manifest(project, source_head)
+        workspace["source_manifest_sha256"] = manifest
         after = ports.git.parent_snapshot(project, EXCLUDE)
         if state["head"] != source_head or not state["clean"] or state["manifest"] != manifest:
             raise FabricRefusal("WORKSPACE_UNCLEAN", str(path))
         if before != after:
             raise FabricRefusal("PARENT_SNAPSHOT_CHANGED", str(path))
-        card_uuid = str(uuid.uuid4())
-        workspace = {"path": str(path), "branch": branch, "source_head": source_head,
-                     "source_manifest_sha256": manifest, "cleanup": "MANUAL_DRY_RUN_ONLY",
-                     "reviewed_ref": reviewed_ref, "parent_snapshot": after}
-        record = build_record(card=card, card_uuid=card_uuid, tool=tool, parent=bound, workspace=workspace,
-                              open_key=_sha(f"{card_uuid}|{tool}|start|0".encode()),
-                              journal=f"journal/{card}__{tool}", lease=lease, caps=caps,
-                              permissions=permissions, now=now)
+        record = build_record(**fields)
         ports.store.write_record(record)
-    except FabricRefusal:  # known pre-native failure: free capacity; a partial worktree stays for manual cleanup
+    except FabricRefusal:  # known pre-native failure: durable FAILED record, then free capacity; worktree stays
+        _record_failure(ports, fields)
         ports.lock.drop_fresh_lease(card, tool, slot)
         raise
     return record
@@ -252,8 +253,10 @@ class Git:
     """GitPort (real): shells out to git with --no-optional-locks so the parent index is never refreshed."""
 
     def _run(self, cwd, *args):
+        """cwd must itself be a repository or worktree root: discovery never climbs into an enclosing repository."""
+        env = dict(os.environ, GIT_CEILING_DIRECTORIES=os.path.dirname(os.path.realpath(cwd)))
         return subprocess.run(["git", "--no-optional-locks", "-C", str(cwd), *args],
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
 
     def rev_parse(self, project, ref):
         out = self._run(project, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
@@ -263,7 +266,10 @@ class Git:
         return sha
 
     def _z(self, cwd, *args):
-        return [x for x in self._run(cwd, *args).stdout.split(b"\0") if x]
+        out = self._run(cwd, *args)
+        if out.returncode:
+            raise FabricRefusal("SOURCE_DIRTY_OR_STALE", redact(out.stderr.decode("utf-8", "replace"))[:ERROR_MAX])
+        return [x for x in out.stdout.split(b"\0") if x]
 
     def head_manifest(self, project, sha):
         entries = self._z(project, "ls-tree", "-r", "-z", "--full-tree", sha)
@@ -322,15 +328,21 @@ class Store:
             return None
         except ValueError:
             raise FabricRefusal("CORRUPT_RECORD", f"{card}__{tool} is not JSON")
-        if not isinstance(data, dict) or data.get("schema") != SCHEMA or type(data.get("rev")) is not int:
-            raise FabricRefusal("CORRUPT_RECORD", f"{card}__{tool} is not schema v1.1")
+        kinds = {"schema": str, "card": str, "card_uuid": str, "tool": str, "state": str, "permissions": str,
+                 "rev": int, "parent": dict, "workspace": dict, "idempotency": dict, "native": dict,
+                 "visibility": dict, "caps": dict, "lease": dict, "turns": list}
+        if not isinstance(data, dict) or any(type(data.get(k)) is not t for k, t in kinds.items()) \
+                or data["schema"] != SCHEMA or data["card"] != card or data["tool"] != tool or data["rev"] < 0:
+            raise FabricRefusal("CORRUPT_RECORD", f"{card}__{tool} is not a schema v1.1 record for this card and tool")
         return data
 
     def write_record(self, record):
         """tmp + fsync + os.replace under the record lock; rev 0 only creates, rev n needs stored rev n-1."""
+        if _redact_all(record) != record:
+            raise FabricRefusal("CORRUPT_RECORD", "secret-shaped text in a record field is refused, never rewritten")
         path = self._path(record["card"], record["tool"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = json.dumps(_redact_all(record), allow_nan=False, sort_keys=True).encode("utf-8")
+        data = json.dumps(record, allow_nan=False, sort_keys=True).encode("utf-8")
         with _mutex(path.with_name(path.name + ".lock")):
             stored = self.read_record(record["card"], record["tool"])
             if record["rev"] == 0 and stored is not None:
@@ -344,16 +356,20 @@ class Store:
                 os.fsync(f.fileno())
             os.replace(tmp, path)
 
-    def append_intent(self, card, tool, kind, payload):
-        """One O_EXCL file per entry, fsynced; concurrent appends to one file lose lines on Windows."""
+    def append_intent(self, card, tool, kind, payload, once=False):
+        """One O_EXCL file per entry, fsynced, under the journal mutex; once=True reuses an entry of this kind and key."""
         folder = self.root / "journal" / f"{card}__{tool}"
         folder.mkdir(parents=True, exist_ok=True)
-        name = f"{time.monotonic_ns():020d}_{os.getpid()}_{kind}.json"
-        fd = os.open(folder / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0))
-        with os.fdopen(fd, "wb") as f:
-            f.write(json.dumps(_redact_all({"kind": kind, **payload}), allow_nan=False).encode("utf-8"))
-            f.flush()
-            os.fsync(f.fileno())
+        with _mutex(folder.with_name(folder.name + ".lock")):
+            if once and any(i.get("kind") == kind and i.get("key") == payload.get("key")
+                            for i in self.list_intents(card, tool)):
+                return None
+            name = f"{time.monotonic_ns():020d}_{os.getpid()}_{kind}.json"
+            fd = os.open(folder / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0))
+            with os.fdopen(fd, "wb") as f:
+                f.write(json.dumps(_redact_all({"kind": kind, **payload}), allow_nan=False).encode("utf-8"))
+                f.flush()
+                os.fsync(f.fileno())
         return name
 
     def list_intents(self, card, tool):
@@ -414,14 +430,18 @@ def _bind_parent(project, parent, ports):
     if bound is None or any(bound.get(k) != parent.get(k) for k in PARENT_KEYS) \
             or os.path.normcase(os.path.abspath(project)) != os.path.normcase(os.path.abspath(bound["project_root"])):
         raise FabricRefusal("PARENT_UNBOUND", "parent does not match its registered binding")
+    if any(_redact_all(bound[k]) != bound[k] for k in PARENT_KEYS):
+        raise FabricRefusal("PARENT_UNBOUND", "a parent identifier holds secret-shaped text; refused, not rewritten")
     return {**{k: bound[k] for k in PARENT_KEYS}, "handoff": None}
 
 
 def _workspace_target(project, card, tool):
-    """PORTS v1 s4 path rules, all before any git or native call."""
+    """PORTS v1 s4 path rules, all before any git or native call; links and junctions are resolved first."""
     root = Path(os.path.abspath(Path(project) / ".work" / "wt"))
     path = Path(os.path.abspath(root / f"{card}-{tool}"))
-    if root not in path.parents:
+    real_project, real_root = Path(os.path.realpath(project)), Path(os.path.realpath(root))
+    if root not in path.parents or real_project not in real_root.parents \
+            or real_root not in Path(os.path.realpath(path)).parents:
         raise FabricRefusal("PATH_ESCAPE", str(path))
     if len(str(path)) > MAX_PATH_CHARS:
         raise FabricRefusal("PATH_TOO_LONG", f"{len(str(path))} > {MAX_PATH_CHARS}")
@@ -443,16 +463,16 @@ def _load(record, ports, allowed):
 
 
 def _save(rec, ports, **changes):
-    rec = _redact_all({**rec, **changes, "rev": rec["rev"] + 1, "updated_at": _wall(ports)})
+    rec = {**rec, **changes, "rev": rec["rev"] + 1, "updated_at": _wall(ports)}
     ports.store.write_record(rec)
     return rec
 
 
 def start(record, manual_text, *, ports):
-    """PORTS v1 s5: S1 intent, S2 STARTING, S3 native.start with caps, S4 RUNNING with native ids."""
+    """PORTS v1 s5: S1 intent (once per open key, survives a crash), S2 STARTING, S3 native.start, S4 RUNNING."""
     rec = _load(record, ports, ("PREPARED",))
     key = rec["idempotency"]["open_key"]
-    ports.store.append_intent(rec["card"], rec["tool"], "start", {"key": key})
+    ports.store.append_intent(rec["card"], rec["tool"], "start", {"key": key}, once=True)
     rec = _save(rec, ports, state="STARTING")
     began = _wall(ports)
     try:
@@ -492,3 +512,13 @@ def await_turn(record, turn_key, *, ports, time_cap_s):
                 tokens=tokens if type(tokens) is int and tokens >= 0 else None,
                 error=None if error is None else redact(str(error))[:ERROR_MAX])
     return _save(rec, ports, state="WAITING" if status == "COMPLETED" else "FAILED", turns=turns)
+
+
+def _record_failure(ports, fields):
+    """Known pre-native failure: durable FAILED rev-0 record; an existing record is never overwritten."""
+    try:
+        record = build_record(**fields)
+        record["state"] = "FAILED"
+        ports.store.write_record(record)
+    except FabricRefusal:
+        pass
