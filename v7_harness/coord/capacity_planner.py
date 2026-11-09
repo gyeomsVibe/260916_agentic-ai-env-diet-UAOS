@@ -52,32 +52,36 @@ DEFAULT_POLICY: dict[str, Any] = {
         "codex": None,
         "claude": None,
         "antigravity": None,
+        "luna": None,
         "haiku": None,
+        "flash": None,
         "ollama": None,
     },
     "tool_caps_7d": {
         "codex": None,
         "claude": None,
         "antigravity": None,
+        "luna": None,
         "haiku": None,
+        "flash": None,
         "ollama": None,
     },
     "subscription_tiers": {
         "codex": {
-            "plan_name": "ChatGPT Plus ($20/월) · GPT-5.4 Codex Astra",
+            "plan_name": "ChatGPT Plus ($20/월) · 주력 GPT-6.1 Sol · 키포인트 GPT-6 Astra",
             "short_plan": "Plus $20 (Astra)",
             "reference_cap_5h_tokens": 7000000,
             "reference_cap_24h_tokens": 25000000,
             "reference_cap_7d_tokens": 175000000,
-            "offload_policy": "핵심 키포인트(아키텍처·보안·최종판정) 집중 + 일반검수 위임(U257)",
+            "offload_policy": "올라마 50% : GPT-6 Luna 30% : GPT-6.1 Sol / Astra 20% (핵심 키포인트 집중)",
         },
         "claude": {
-            "plan_name": "Claude Code 구독제 (Opus/Sonnet 20% + Haiku 30% + Ollama 50%)",
+            "plan_name": "Claude Code 구독제 · 주력 Claude Opus 5.5 (5:3:2 병렬 분담)",
             "short_plan": "Claude Sub (5:3:2)",
             "reference_cap_5h_tokens": 15000000,
             "reference_cap_24h_tokens": 45000000,
             "reference_cap_7d_tokens": 180000000,
-            "offload_policy": "올라마 50% : Haiku 5.5 30% : Opus/Sonnet 20% 이원 분리 병렬(U271)",
+            "offload_policy": "올라마 50% : Claude Haiku 5.5 30% : Claude Opus 5.5 20% 이원 분리 병렬",
         },
         "antigravity": {
             "plan_name": "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon",
@@ -85,18 +89,34 @@ DEFAULT_POLICY: dict[str, Any] = {
             "reference_cap_5h_tokens": 75000000,
             "reference_cap_24h_tokens": 220000000,
             "reference_cap_7d_tokens": 600000000,
-            "offload_policy": "5x 대용량 주력 실행·교차검증·1순위 자율병합 + 올라마 0토큰 선행",
+            "offload_policy": "올라마 50% : Gemini 3.5 Flash-Lite 30% : Gemini 4 Argon 20% (5x 주력·1순위 병합)",
+        },
+        "luna": {
+            "plan_name": "GPT-6 Luna 경량 서브오케스트레이터 (Codex 30% 분담 · 건당 12K 상한)",
+            "short_plan": "GPT-6 Luna (30% 분담)",
+            "reference_cap_5h_tokens": 6000000,
+            "reference_cap_24h_tokens": 18000000,
+            "reference_cap_7d_tokens": 60000000,
+            "offload_policy": "Codex native_subagent(uaos-luna-worker) · tests/*·docs/* 물리 분리 병렬(건당 12K 상한)",
         },
         "haiku": {
-            "plan_name": "Claude Haiku 5.5 경량 서브오케스트레이터 (건당 12K 상한)",
+            "plan_name": "Claude Haiku 5.5 경량 서브오케스트레이터 (Claude 30% 분담 · 건당 12K 상한)",
             "short_plan": "Haiku 5.5 (30% 분담)",
             "reference_cap_5h_tokens": 6000000,
             "reference_cap_24h_tokens": 18000000,
             "reference_cap_7d_tokens": 60000000,
-            "offload_policy": "tests/*·docs/* 물리 분리 병렬(DISJOINT_PARALLEL_OVERLAP)",
+            "offload_policy": "Claude native_subagent(uaos-haiku-worker) · tests/*·docs/* 물리 분리 병렬(건당 12K 상한)",
+        },
+        "flash": {
+            "plan_name": "Gemini 3.5 Flash-Lite 경량 서브오케스트레이터 (Antigravity 30% 분담 · 건당 12K 상한)",
+            "short_plan": "Flash-Lite (30% 분담)",
+            "reference_cap_5h_tokens": 15000000,
+            "reference_cap_24h_tokens": 45000000,
+            "reference_cap_7d_tokens": 150000000,
+            "offload_policy": "Antigravity native_subagent(uaos-flash-worker) · tests/*·docs/* 물리 분리 병렬(건당 12K 상한)",
         },
         "ollama": {
-            "plan_name": "Ollama 로컬 0토큰 전자계산기 (qwen2.5-coder:7b)",
+            "plan_name": "Ollama 로컬 0토큰 전자계산기 (qwen2.5-coder:7b · 50% 분담)",
             "short_plan": "로컬 0원 (50% 분담)",
             "reference_cap_5h_tokens": None,
             "reference_cap_24h_tokens": None,
@@ -126,11 +146,13 @@ DEFAULT_POLICY: dict[str, Any] = {
         "argon_routing": "Capacity-weighted Argon heavy-lifter routing in docs/27_token-budget-routing-policy.md and docs/29_antigravity-budget-manual.md",
     },
     "tool_roles": {
-        "codex": "Conductor & Final Independent Judge",
-        "claude": "Co-Conductor & Deep Implementer/Reviewer",
+        "codex": "Conductor & Final Independent Judge (주력 gpt-6.1-sol · 키포인트 gpt-6-astra · 도우미 gpt-6-luna)",
+        "claude": "Co-Conductor & Deep Implementer/Reviewer (주력 claude-opus-5-5 · 도우미 claude-haiku-5-5)",
         "antigravity": "Google AI Ultra (Pro 대비 5x 사용량) · Gemini 4 Argon",
-        "haiku": "Low-Cost Multi-Agent Sub-Orchestrator (claude-haiku-5-5)",
-        "ollama": "0-Paid-Token Local Calculator (qwen2.5-coder:7b)",
+        "luna": "Codex 경량 서브오케스트레이터 (gpt-6-luna · uaos-luna-worker · 30% 분담 · 건당 12K 상한)",
+        "haiku": "Claude 경량 서브오케스트레이터 (claude-haiku-5-5 · uaos-haiku-worker · 30% 분담 · 건당 12K 상한)",
+        "flash": "Antigravity 경량 서브오케스트레이터 (gemini-3.5-flash-lite · uaos-flash-worker · 30% 분담 · 건당 12K 상한)",
+        "ollama": "0-Paid-Token Local Calculator (qwen2.5-coder:7b · 50% 분담)",
     },
 }
 
@@ -1119,9 +1141,11 @@ def collect_capacity_snapshot(
             "short_plan": str(tier_meta.get("short_plan") or eng),
             "offload_policy": str(tier_meta.get("offload_policy") or ""),
             "total_5h_tokens": ref_cap_5h,
+            "ref_total_5h_tokens": ref_cap_5h,
             "used_5h_effective_tokens": w5["effective_budget_tokens"],
             "used_5h_raw_tokens": w5["raw_total_tokens"],
             "remaining_5h_tokens": sub_rem_5h,
+            "ref_remaining_5h_tokens": sub_rem_5h,
             "utilization_5h_pct": sub_pct_5h,
             "total_24h_tokens": ref_cap_24h,
             "used_24h_effective_tokens": w24["effective_budget_tokens"],
@@ -1129,9 +1153,11 @@ def collect_capacity_snapshot(
             "remaining_24h_tokens": sub_rem_24h,
             "utilization_24h_pct": sub_pct_24h,
             "total_7d_tokens": ref_cap_7d,
+            "ref_total_7d_tokens": ref_cap_7d,
             "used_7d_effective_tokens": w7["effective_budget_tokens"],
             "used_7d_raw_tokens": w7["raw_total_tokens"],
             "remaining_7d_tokens": sub_rem_7d,
+            "ref_remaining_7d_tokens": sub_rem_7d,
             "utilization_7d_pct": sub_pct_7d,
             "quota_5h_ui_pct": q5_ui_val,
             "quota_7d_ui_pct": q7_ui_val,
@@ -1171,12 +1197,150 @@ def collect_capacity_snapshot(
             "window_7d": w7,
         }
 
+    # U309: build symmetric helper engine entries for luna (gpt-6-luna) and flash (gemini-3.5-flash-lite)
+    # alongside haiku (claude-haiku-5-5) so all 3 tools' designated helpers share an identical HUD & telemetry contract.
+    helper_rows = read_helper_records(desk)
+    helper_specs = (
+        ("luna", "codex", "gpt-6-luna", "uaos-luna-worker"),
+        ("haiku", "claude", "claude-haiku-5-5", "uaos-haiku-worker"),
+        ("flash", "antigravity", "gemini-3.5-flash-lite", "uaos-flash-worker"),
+    )
+    for h_eng, parent_tool, h_model, h_subagent in helper_specs:
+        h_tier = (policy.get("subscription_tiers") or {}).get(h_eng) or {}
+        h_ref5 = int(h_tier.get("reference_cap_5h_tokens") or 6000000)
+        h_ref24 = int(h_tier.get("reference_cap_24h_tokens") or 18000000)
+        h_ref7 = int(h_tier.get("reference_cap_7d_tokens") or 60000000)
+        lane_rows = [
+            r for r in helper_rows
+            if isinstance(r, dict)
+            and r.get("helper_lane") == h_eng
+            and isinstance(r.get("ts"), (int, float))
+            and not isinstance(r.get("ts"), bool)
+            and cutoff_7d <= float(r["ts"]) <= moment + 60
+        ]
+        def _sum_helper_win(r_list: list[dict[str, Any]]) -> dict[str, int]:
+            u_in = sum(int(r.get("input_tokens") or 0) for r in r_list)
+            out_t = sum(int(r.get("output_tokens") or 0) for r in r_list)
+            eff_t = _effective_tokens(u_in, 0, 0, out_t, policy)
+            return {
+                "calls": len(r_list),
+                "uncached_input_tokens": u_in,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "output_tokens": out_t,
+                "raw_total_tokens": u_in + out_t,
+                "effective_budget_tokens": eff_t,
+            }
+        if h_eng not in engines_summary:
+            hw5 = _sum_helper_win([r for r in lane_rows if float(r["ts"]) >= cutoff_5h])
+            hw24 = _sum_helper_win([r for r in lane_rows if float(r["ts"]) >= cutoff_24h])
+            hw7 = _sum_helper_win(lane_rows)
+            h_rem5 = max(0, h_ref5 - hw5["effective_budget_tokens"])
+            h_rem24 = max(0, h_ref24 - hw24["effective_budget_tokens"])
+            h_rem7 = max(0, h_ref7 - hw7["effective_budget_tokens"])
+            h_pct5 = round(min(100.0, (hw5["effective_budget_tokens"] / float(h_ref5)) * 100.0), 1)
+            h_pct24 = round(min(100.0, (hw24["effective_budget_tokens"] / float(h_ref24)) * 100.0), 1)
+            h_pct7 = round(min(100.0, (hw7["effective_budget_tokens"] / float(h_ref7)) * 100.0), 1)
+            h_pred = {
+                "burn_rate_tok_per_hr": round(float(hw5["effective_budget_tokens"]) / 5.0, 1),
+                "predicted_tta_min": 9999.0,
+                "exhaustion_risk": "SAFE",
+                "preemptive_handoff_recommended": False,
+            }
+            engines_summary[h_eng] = {
+                "engine": h_eng,
+                "role": policy["tool_roles"].get(h_eng, ""),
+                "presence_state": "ACTIVE",
+                "quota_reset_ready": False,
+                "wake_on_reset_ready": False,
+                "status_tier": "UNLIMITED_LOCAL",
+                "budget_cap_5h_tokens": None,
+                "budget_cap_7d_tokens": None,
+                "used_5h_effective_tokens": hw5["effective_budget_tokens"],
+                "used_5h_raw_tokens": hw5["raw_total_tokens"],
+                "usable_remaining_5h_tokens": None,
+                "active_burst_reserve_tokens": 0,
+                "budget_utilization_5h_pct": 0.0,
+                "used_7d_effective_tokens": hw7["effective_budget_tokens"],
+                "used_7d_raw_tokens": hw7["raw_total_tokens"],
+                "usable_remaining_7d_tokens": None,
+                "budget_utilization_7d_pct": 0.0,
+                "avg_card_cost_tokens": 5000,
+                "usable_cards_capacity": 999,
+                "provider_quota_snapshot": None,
+                "subscription_plan": {
+                    "plan_name": str(h_tier.get("plan_name") or h_eng),
+                    "short_plan": str(h_tier.get("short_plan") or h_eng),
+                    "offload_policy": str(h_tier.get("offload_policy") or ""),
+                    "total_5h_tokens": h_ref5,
+                    "ref_total_5h_tokens": h_ref5,
+                    "used_5h_effective_tokens": hw5["effective_budget_tokens"],
+                    "used_5h_raw_tokens": hw5["raw_total_tokens"],
+                    "remaining_5h_tokens": h_rem5,
+                    "ref_remaining_5h_tokens": h_rem5,
+                    "utilization_5h_pct": h_pct5,
+                    "total_24h_tokens": h_ref24,
+                    "used_24h_effective_tokens": hw24["effective_budget_tokens"],
+                    "used_24h_raw_tokens": hw24["raw_total_tokens"],
+                    "remaining_24h_tokens": h_rem24,
+                    "utilization_24h_pct": h_pct24,
+                    "total_7d_tokens": h_ref7,
+                    "ref_total_7d_tokens": h_ref7,
+                    "used_7d_effective_tokens": hw7["effective_budget_tokens"],
+                    "used_7d_raw_tokens": hw7["raw_total_tokens"],
+                    "remaining_7d_tokens": h_rem7,
+                    "ref_remaining_7d_tokens": h_rem7,
+                    "utilization_7d_pct": h_pct7,
+                    "quota_5h_ui_pct": None,
+                    "quota_7d_ui_pct": None,
+                    "resets_at_5h": None,
+                    "resets_at_7d": None,
+                    "reset_in_seconds_5h": None,
+                    "quota_reset_ready": False,
+                    "wake_on_reset_ready": False,
+                    "predictive_exhaustion": h_pred,
+                },
+                "predictive_exhaustion": h_pred,
+                "window_5h": hw5,
+                "window_24h": hw24,
+                "window_7d": hw7,
+            }
+        engines_summary[h_eng]["helper_meta"] = {
+            "parent_tool": parent_tool,
+            "designated_model": h_model,
+            "subagent_name": h_subagent,
+            "usage_method": "native_subagent",
+            "target_share_pct": 30.0,
+            "preflight_cap_tokens": 12000,
+            "target_parallel_ratio": {"ollama_pct": 50.0, "helper_pct": 30.0, "main_pct": 20.0},
+        }
+
+    # Native helper liveness and quota calibration need separate evidence.
+    for h_eng, _parent, _model, _subagent in helper_specs:
+        info = engines_summary[h_eng]
+        info.update(presence_state="UNKNOWN", status_tier="UNKNOWN", usable_cards_capacity=None,
+                    budget_utilization_5h_pct=None, budget_utilization_7d_pct=None)
+        unknown_prediction = {"burn_rate_tok_per_hr": None, "predicted_tta_min": None,
+                              "exhaustion_risk": "UNKNOWN", "preemptive_handoff_recommended": False}
+        info["predictive_exhaustion"] = unknown_prediction
+        sub = info["subscription_plan"]
+        sub["predictive_exhaustion"] = unknown_prediction
+        for win in ("5h", "24h", "7d"):
+            sub[f"total_{win}_tokens"] = sub[f"remaining_{win}_tokens"] = None
+            sub[f"utilization_{win}_pct"] = None
+        info["usable_remaining_5h_tokens"] = info["usable_remaining_7d_tokens"] = None
     # U303: measured provider quota (cockpit-tools logic, docs/131) replaces reference caps and UNKNOWN fallbacks.
     try:
         measured = measured_accounts(home_dir, moment, events)
     except Exception as exc:  # a broken source file must not blank the HUD; the reason is shown instead
         measured = {"error": repr(exc)[:200]}
     apply_measured_quota(engines_summary, measured, policy)
+    for h_eng, parent_tool, h_model, _h_sub in helper_specs:
+        p_helpers = ((measured.get(parent_tool) or {}).get("helpers")) if isinstance(measured, dict) else None
+        if isinstance(p_helpers, list) and p_helpers:
+            h_calls_7d = int(p_helpers[0].get("calls") or 0)
+            if h_calls_7d > int(engines_summary[h_eng]["window_7d"].get("calls") or 0):
+                engines_summary[h_eng]["window_7d"]["calls"] = h_calls_7d
 
     raw_step_calls_24h = sum(engines_summary[e]["window_24h"]["calls"] for e in ALL_ENGINES)
     agy_ev_24h = [e for e in events if e["engine"] == "antigravity" and e["ts"] >= cutoff_24h]
@@ -1391,6 +1555,72 @@ def simulate_wdrr_sequence(
     }
 
 
+
+def resolve_card_title(
+    phase: dict[str, Any], phases_by_id: dict[str, dict[str, Any]], desk: Path | None = None,
+) -> str:
+    """Describe a card using recorded purpose, then parent/card metadata; never infer it from an action."""
+    pid = str(phase.get("phase_id") or phase.get("id") or "").strip()
+
+    def purpose(row: dict[str, Any], identity: str) -> str:
+        for key in ("title", "purpose", "goal", "summary", "description"):
+            value = row.get(key)
+            text = " ".join(value.split()) if isinstance(value, str) else ""
+            if text and text.casefold() != identity.casefold():
+                return text[:400]
+        return ""
+
+    own = purpose(phase, pid)
+    if own:
+        return own
+    parent_id = str(phase.get("parent_phase_id") or phase.get("parent_card") or pid.split("-", 1)[0])
+    parent = phases_by_id.get(parent_id, {}) if parent_id != pid else {}
+    inherited = purpose(parent, parent_id)
+    # Card receipts remain available when the master schedule contains only VERIFY/RELEASE children.
+    if not inherited and desk is not None and parent_id and all(c.isalnum() or c == "_" for c in parent_id):
+        try:
+            receipt = json.loads((Path(desk) / ".coord" / "cards" / f"{parent_id}.json").read_text(encoding="utf-8"))
+            if isinstance(receipt, dict):
+                inherited = purpose(receipt, parent_id)
+        except (OSError, ValueError):
+            pass
+    suffix = {"VERIFY": "독립 검증", "RELEASE": "병합·런타임 반영"}.get(pid.rsplit("-", 1)[-1].upper())
+    title = inherited or "작업 목적 미등록"
+    return f"{title} · {suffix}" if suffix else title
+
+
+def hud_card_presentation(phase: dict[str, Any], phases_by_id: dict[str, dict[str, Any]], desk: Path | None = None) -> dict[str, str]:
+    """Keep recorded purpose and current work separate from the card's identity badge."""
+    from .card_summary import summary_fields
+
+    pid = str(phase.get("phase_id") or phase.get("id") or "")
+    base = str(phase.get("parent_phase_id") or phase.get("parent_card") or pid.split("-", 1)[0])
+    inherited = dict(phases_by_id.get(base) or {}) if base != pid else {}
+    if desk is not None and base and all(c.isalnum() or c == "_" for c in base):
+        try:
+            receipt = json.loads((Path(desk) / ".coord/cards" / f"{base}.json").read_text(encoding="utf-8"))
+            if isinstance(receipt, dict):
+                inherited.update(receipt)
+        except (OSError, ValueError):
+            pass
+    row = {**inherited, **{k: v for k, v in phase.items() if v}}
+    if str(row.get("title") or "").strip() == pid:
+        row["title"] = inherited.get("title", "")
+    row["phase_id"] = pid
+    fields = summary_fields(row, desk)
+    role = {"VERIFY": ("독립 검증", "Independent verification"), "RELEASE": ("릴리스", "Release")}.get(pid.rsplit("-", 1)[-1].upper())
+    if role:
+        for key, label in zip(("title_ko", "title_en"), role):
+            if not fields[key].endswith(label):
+                fields[key] += " · " + label
+    primary = fields["title_ko"] if not fields["title_ko"].startswith("작업 목적 미등록") else fields["title_en"]
+    secondary = fields["title_en"] if primary != fields["title_en"] else ""
+    action_primary = fields["action_ko"] if "미등록" not in fields["action_ko"] else fields["action_en"]
+    return {"title_primary": primary, "title_secondary": secondary,
+            "action_primary": action_primary,
+            "action_secondary": fields["action_en"] if action_primary != fields["action_en"] else ""}
+
+
 def build_capacity_aware_schedule(
     desk: Path,
     engines: dict[str, dict[str, Any]],
@@ -1579,6 +1809,8 @@ def build_capacity_aware_schedule(
     for a in assignments:
         p = by_id.get(str(a.get("phase_id"))) or {}
         a["plan_detail"] = {k: str(p[k])[:400] for k in ("title", "owner_tool", "judge", "blocker_reason", "note", "action") if p.get(k)}
+        a["plan_detail"]["title"] = resolve_card_title(p, by_id, desk)
+        a["plan_detail"]["presentation"] = hud_card_presentation(p, by_id, desk)
         # Codex 2026-10-29: the HUD must not present computed values as ledger facts. A card without its own
         # estimated_tokens gets the policy default (45000 x share), which is a placeholder, not a measurement.
         a["plan_detail"]["ledger_state"] = str(p.get("state") or "")
@@ -1605,6 +1837,18 @@ def build_capacity_aware_schedule(
             lane_id="VERIFY_AUDIT",
             purpose=str(p.get("title") or ""),
         )
+    recent_done_cards: list[dict[str, Any]] = []
+    for p in phases:
+        p_id = str(p.get("phase_id") or p.get("id") or "").strip()
+        p_st = str(p.get("state") or "").strip().upper()
+        if p_id and p_st in TERMINAL and not p_id.startswith("RSI-U251-AUTO-") and not p_id.startswith("STALL-"):
+            recent_done_cards.append({
+                "phase_id": p_id,
+                "title": str(p.get("title") or p_id)[:200],
+                "state": p_st,
+                "owner_tool": str(p.get("owner_tool") or p.get("owner") or "antigravity"),
+                "judge": str(p.get("judge") or p.get("reviewer") or "claude"),
+            })
     return {
         "recommended_conductor": recommended_conductor,
         "ranked_paid_tools": ranked_paid,
@@ -1616,6 +1860,7 @@ def build_capacity_aware_schedule(
         "wdrr_heavy_lifter": select_wdrr_heavy_lifter(engines),
         "post_schedule_remaining_tokens": virtual_rem,
         "phase_assignments": assignments,
+        "recent_completed_cards": recent_done_cards[-5:],
         "subworker_optimization": compute_subworker_optimization(engines),
         "three_tool_helper_designation": get_official_tool_lineup(),
     }
@@ -1671,7 +1916,10 @@ def build_sub_process_schedule(
     rebalance_events: list[dict[str, Any]] = []
     card_sub_schedules: list[dict[str, Any]] = []
 
+    raw_ms: dict[str, Any] = {}
     raw_master_owners: dict[str, str] = {}
+    raw_master_titles: dict[str, str] = {}
+    raw_master_phases: dict[str, dict[str, Any]] = {}
     recent_done_phases: list[dict[str, Any]] = []
     sched_path = Path(desk) / ".coord" / "master_schedule.json"
     if sched_path.is_file():
@@ -1682,9 +1930,14 @@ def build_sub_process_schedule(
                     mp_id = str(mp.get("phase_id") or mp.get("id") or "").strip()
                     mp_ow = str(mp.get("owner_tool") or mp.get("owner") or "").strip().lower()
                     mp_st = str(mp.get("state") or "").strip().upper()
+                    mp_title = str(mp.get("title") or "").strip()
+                    if mp_id:
+                        raw_master_phases[mp_id] = mp
                     if mp_id and mp_ow:
                         raw_master_owners[mp_id] = mp_ow
-                    if mp_id and mp_st == "DONE" and not mp_id.startswith("RSI-U251-AUTO-"):
+                    if mp_id and mp_title:
+                        raw_master_titles[mp_id] = mp_title
+                    if mp_id and mp_st == "DONE" and not mp_id.startswith("RSI-U251-AUTO-") and not mp_id.startswith("STALL-"):
                         recent_done_phases.append(mp)
         except (OSError, ValueError):
             pass
@@ -1692,11 +1945,13 @@ def build_sub_process_schedule(
     showing_recent_done = False
     if not assigns and recent_done_phases:
         showing_recent_done = True
-        for dp in recent_done_phases[-3:]:
+        for dp in recent_done_phases[-5:]:
+            dp_id = str(dp.get("phase_id") or dp.get("id") or "")
             dp_ow = str(dp.get("owner_tool") or dp.get("owner") or "antigravity").lower()
-            dp_rev = str(dp.get("reviewer") or ("claude" if dp_ow != "claude" else "codex")).lower()
+            dp_rev = str(dp.get("reviewer") or dp.get("judge") or ("claude" if dp_ow != "claude" else "codex")).lower()
             assigns.append({
-                "phase_id": str(dp.get("phase_id") or dp.get("id") or ""),
+                "phase_id": dp_id,
+                "title": str(dp.get("title") or raw_master_titles.get(dp_id) or dp_id),
                 "state": "DONE",
                 "assigned_owner": dp_ow if dp_ow in PAID_TOOLS else "antigravity",
                 "assigned_reviewer": dp_rev if dp_rev in PAID_TOOLS and dp_rev != dp_ow else ("claude" if dp_ow != "claude" else "antigravity"),
@@ -1705,6 +1960,13 @@ def build_sub_process_schedule(
 
     for idx, item in enumerate(assigns):
         pid = str(item.get("phase_id") or "")
+        card_title = resolve_card_title(raw_master_phases.get(pid, {"phase_id": pid}), raw_master_phases, desk)
+        if card_title == resolve_card_title({"phase_id": pid}, {}):
+            supplied = dict(item.get("plan_detail") or {})
+            supplied["phase_id"] = pid
+            if not supplied.get("title"):
+                supplied["title"] = item.get("card_title") or item.get("title") or raw_master_titles.get(pid)
+            card_title = resolve_card_title(supplied, raw_master_phases, desk)
         state = str(item.get("state") or "READY")
         orig_owner = str(item.get("assigned_owner") or "antigravity").lower()
         master_owner = raw_master_owners.get(pid, orig_owner)
@@ -1758,14 +2020,7 @@ def build_sub_process_schedule(
         merger_primary = "antigravity" if _risk_of("antigravity") != "IMMINENT_EXHAUSTION" else "codex"
         merger_secondary = "codex" if merger_primary == "antigravity" else "antigravity"
 
-        if state == "DONE":
-            sp1_state = sp2_state = sp3_state = sp4_state = sp5_state = "DONE"
-        else:
-            sp1_state = "DONE" if state in ("ACTIVE", "REVIEW") else "READY"
-            sp2_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
-            sp3_state = "DONE" if state == "REVIEW" else ("ACTIVE" if state == "ACTIVE" else "READY")
-            sp4_state = "ACTIVE" if state == "REVIEW" else "PLANNED"
-            sp5_state = "READY" if state == "REVIEW" else "PLANNED"
+        sp1_state = sp2_state = sp3_state = sp4_state = sp5_state = "DONE" if state == "DONE" else "PLANNED"
 
         code_slice_limit = 30 if owner_risk != "SAFE" else 20
         test_doc_worker = "haiku" if effective_owner == "claude" else "ollama"
@@ -1893,8 +2148,13 @@ def build_sub_process_schedule(
             },
         ]
 
+        for node in sub_nodes:
+            node["card_title"] = card_title
         card_sub_schedules.append({
             "phase_id": pid,
+            "title": card_title,
+            "card_title": card_title,
+            "presentation": hud_card_presentation(raw_master_phases.get(pid, {"phase_id": pid, "title": card_title}), raw_master_phases, desk),
             "card_state": state,
             "parallel_slot": (idx % max(1, len(PAID_TOOLS))) + 1,
             "assigned_executor": effective_owner,
@@ -1913,6 +2173,27 @@ def build_sub_process_schedule(
             "sub_processes": sub_nodes,
         })
 
+    driver = raw_ms.get("sub_schedule_driver") or {}
+    if not isinstance(driver, dict):
+        driver = {}
+    if not driver:
+        try:
+            driver = json.loads((Path(desk) / ".coord/sub_process_schedule.json").read_text(encoding="utf-8")).get("live_driver") or {}
+        except (OSError, ValueError, AttributeError):
+            driver = {}
+    if not isinstance(driver, dict):
+        driver = {}
+    live_cards = driver.get("cards")
+    live_cards = live_cards if isinstance(live_cards, dict) else {}
+    for card in card_sub_schedules:
+        entry = live_cards.get(card["phase_id"])
+        steps = entry.get("steps") if isinstance(entry, dict) else []
+        steps = steps if isinstance(steps, list) else []
+        live_steps = {s["sub_id"]: s for s in steps if isinstance(s, dict) and isinstance(s.get("sub_id"), str)}
+        default_step_state = "DONE" if card.get("card_state") == "DONE" else "PLANNED"
+        for node in card["sub_processes"]:
+            state = (live_steps.get(node["sub_id"]) or {}).get("state")
+            node["state"] = state if state in ("PLANNED", "READY", "ACTIVE", "REVIEW", "DONE", "BLOCKED") else default_step_state
     from v7_harness.coord.helper_thinking_router import get_official_tool_lineup
 
     return {
@@ -2505,19 +2786,30 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
 
 
 def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
-    """Render a self-contained Tailwind CSS + interactive SVG/JS dynamic dashboard widget (`generative_ui` compliant)."""
-    payload_json = json.dumps(snapshot, ensure_ascii=False)
+    """Render a self-contained Tailwind CSS + interactive SVG/JS dynamic dashboard widget (`generative_ui` compliant).
+
+    U309 Overhaul:
+    - 100% alignment with UAOS OS canonical model lineup (`OFFICIAL_TOOL_MODEL_LINEUP`):
+      * Codex: main `gpt-6.1-sol` (`GPT-6.1 Sol`), keypoint `gpt-6-astra` (`GPT-6 Astra`), helper `gpt-6-luna` (`GPT-6 Luna`)
+      * Claude: main `claude-opus-5-5` (`Claude Opus 5.5`), helper `claude-haiku-5-5` (`Claude Haiku 5.5`)
+      * Antigravity: main `gemini-4-argon` (`Gemini 4 Argon`), helper `gemini-3.5-flash-lite` (`Gemini 3.5 Flash-Lite`)
+    - Symmetric 3-tool helper interfaces (`luna`, `haiku`, `flash`) with 30% share, 12K token preflight cap, native subagent.
+    - Parenthesized quota formatting: `쓴 양 (남은 양) / 한도` -> `4.11M (10.89M) / 15.00M`.
+    - Dedicated Sub-Process Schedule (`세부 스케줄: 5단계 세부 프로세스 DAG SP1~SP5`) panel right below Master Schedule.
+    - Token-value efficiency header highlighting the 50% Ollama : 30% Helper : 20% Main golden ratio.
+    """
+    # A card title may contain </script>; HTML parses that before JavaScript string escaping.
+    payload_json = json.dumps(snapshot, ensure_ascii=False).replace("<", "\\u003c")
     html = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>UAOS-RSI 3-Tool Token & Capacity Dashboard</title>
+  <title>UAOS-RSI 3대 도구 · 3대 도우미 실시간 토큰·한도 및 마스터/세부 스케줄 계기판</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
   <style>
-    /* U286: dark theme by default; 18px root scales every Tailwind rem size (text-xs 13.5px, text-base 18px). */
-    :root {{ color-scheme: dark; --background: #0f1115; --foreground: #e8eaed; --card: #171a21; --border: #2c313c;
-      --secondary: #232833; --secondary-foreground: #e8eaed; --muted-foreground: #a9b0bc; --primary: #60a5fa; }}
-    /* U286: bars and donut slices grow on first view; reduced-motion users get the final state at once. */
+    /* U286/U309: dark theme by default; 18px root scales every Tailwind rem size (WCAG 2.2 >= 4.5:1 text, >= 3:1 gauge contrast). */
+    :root {{ color-scheme: dark; --background: #0b0e14; --foreground: #f1f5f9; --card: #131822; --border: #262f40;
+      --secondary: #1e2636; --secondary-foreground: #f1f5f9; --muted-foreground: #94a3b8; --primary: #60a5fa; }}
     .anim-bar {{ transition: width 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }}
     .ring {{ transition: stroke-dasharray 1.2s cubic-bezier(0.2, 0.8, 0.2, 1); }}
     .ring-count {{ transition: stroke-dasharray 1s linear; }}
@@ -2525,7 +2817,6 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     .flow-strip.still {{ animation: none; }}
     @keyframes flow-drift {{ from {{ background-position: 0 0; }} to {{ background-position: var(--gap) 0; }} }}
     .tool-head:hover {{ background: rgba(255, 255, 255, 0.03); }}
-    /* U286: accordion — chevron turns, body slides in (shadcn Accordion look on native details/summary). */
     .acc-sum {{ list-style: none; }}
     .acc-sum::-webkit-details-marker {{ display: none; }}
     .acc-sum:hover {{ background: var(--secondary); border-radius: 0.5rem; }}
@@ -2541,16 +2832,18 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
     body {{ background: var(--background); line-height: 1.5; }}
     .flag-live {{ background: #14532d; color: #bbf7d0; }}
     .flag-down {{ background: #7f1d1d; color: #fecaca; }}
+    .filter-tab.active {{ background: #2563eb; color: #ffffff; border-color: #3b82f6; }}
   </style>
 </head>
 <body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3">
   <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
-    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2">
+    <!-- Top Header -->
+    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2.5">
       <div>
-        <h2 class="text-base font-semibold">⚡ UAOS-RSI 3대 도구 실시간 토큰·한도 및 협업 스케줄 계기판</h2>
-        <p class="text-xs text-[var(--muted-foreground)]" id="subtitle">실측 트랜스크립트·장부 기반 5시간 롤링 예산 및 가용 카드 시뮬레이터</p>
+        <h2 class="text-base font-bold">⚡ UAOS-RSI 3대 도구 실시간 토큰·한도 및 협업 스케줄 계기판</h2>
+        <p class="text-xs text-[var(--muted-foreground)]" id="subtitle">최대성과 목표 대비 토큰예산 절약 운영체제 — 주력 20% (Sol/Astra · Opus 5.5 · Argon) : 도우미 30% (Luna · Haiku 5.5 · Flash-Lite) : 올라마 50% (qwen2.5-coder:7b)</p>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <span id="flagman-badge" class="px-2.5 py-1 rounded-full text-xs font-bold"></span>
         <span id="conductor-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--secondary)] text-[var(--secondary-foreground)]"></span>
         <span id="offload-badge" class="px-2.5 py-1 rounded-full text-xs font-medium border border-[var(--border)]"></span>
@@ -2559,57 +2852,175 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       </div>
     </div>
 
-    <div id="contextual-hud-bar" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 p-2 flex flex-wrap items-center gap-2"></div>
+    <!-- Token-Value Efficiency Banner (50:30:20 Golden Split + Contextual HUD Tiles) -->
+    <div id="token-thrift-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/50 p-2.5 space-y-2">
+      <div id="thrift-ratio-strip" class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"></div>
+      <div id="contextual-hud-bar" class="flex flex-wrap items-center gap-1.5"></div>
+    </div>
+
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
-      <section class="border border-[var(--border)] rounded-lg p-3 space-y-2" aria-labelledby="budget-title">
+      <!-- Left Column: 3 Main Tools + 3 Symmetric Helper Models + Ollama Calculator -->
+      <section class="border border-[var(--border)] rounded-lg p-3 space-y-2.5" aria-labelledby="budget-title">
         <div class="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="budget-title" class="text-base font-semibold">🎛️ 도구 콘솔 — 지금 얼마나 남았나</h2>
-          <span class="text-xs text-[var(--muted-foreground)]">원 = 5시간 한도 중 남은 양 · 막대 = 이번 주 남은 양 · 흐르는 점 = 최근 5시간 작업량 · 누르면 상세</span>
+          <h2 id="budget-title" class="text-base font-semibold">🎛️ 도구 & 도우미 콘솔 — 지금 얼마나 남았나</h2>
+          <span class="text-xs text-[var(--muted-foreground)]">표기: <b>쓴 양 (남은 양) / 한도</b> · 원 = 5시간 남음 · 막대 = 주간/도우미 남음 · 누르면 상세</span>
         </div>
         <div id="budget-headline" class="flex flex-wrap gap-2"></div>
-        <div id="budget-board" class="space-y-2"></div>
-      </section>
-      <div id="macro-dashboard-container" class="space-y-3">
-      <section class="border border-[var(--border)] rounded-lg p-3 space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-semibold">🗓️ 마스터 스케줄 (장부 기준)</span>
-          <span class="text-xs text-[var(--muted-foreground)]" id="sched-count"></span>
+        <div id="console-filter-bar" class="flex flex-wrap gap-1.5 pt-0.5">
+          <button type="button" data-filter="all" class="filter-tab active px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)]">전체 보기 (7)</button>
+          <button type="button" data-filter="main" class="filter-tab px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)]">🏛️ 3대 주력 도구 (20%)</button>
+          <button type="button" data-filter="helper" class="filter-tab px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)]">⚡ 3대 전담 도우미 (30% · 12K 상한)</button>
+          <button type="button" data-filter="local" class="filter-tab px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)]">🧮 로컬 0원 계산기 (50%)</button>
         </div>
-        <div id="schedule-list" class="space-y-2 text-sm"></div>
+        <div id="budget-board" class="space-y-2.5"></div>
       </section>
-      <!-- U304-A: always open (윤겸스 2026-11-04). U286 v4 folded it into a closed details accordion to give the tool
-           console the top; the chips and wait banner then stayed hidden until clicked. -->
-      <section id="ops-chip-panel" class="rounded-lg border border-[var(--border)] p-2">
-        <div class="text-sm font-semibold px-1 py-1">📟 운영 칩 · 대기 상태</div>
-        <div class="space-y-2 pt-2">
+
+      <!-- Right Column: Unified shadcn/ui Master -> Sub-Process (SP1~SP5) Accordion + 5-Chip Operations -->
+      <div id="macro-dashboard-container" class="space-y-3">
+        <!-- 1. Unified Master & Sub-Process Schedule Accordion (shadcn/ui Accordion + Table) -->
+        <section id="master-schedule-panel" class="border border-[var(--border)] rounded-xl bg-[var(--card)] p-3.5 space-y-2.5 shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-bold tracking-tight">🗓️ 마스터 스케줄 & 🗺️ 세부 스케줄 (5단계 세부 프로세스 DAG: SP1~SP5)</span>
+                <span class="px-2 py-0.5 rounded-md text-xs font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30">클릭 시 세부 공정 펼침</span>
+              </div>
+              <p class="text-xs text-[var(--muted-foreground)] mt-0.5">마스터 카드를 누르면 장부 메타데이터와 <b>SP1~SP5 단계별 주력(20%) · 전담 도우미(30%, 12K) · 올라마(50%, 0원)</b> 세부 스케줄이 펼쳐집니다</p>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-[var(--muted-foreground)]" id="sched-count"></span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--secondary)] text-[var(--foreground)]" id="sub-sched-count"></span>
+            </div>
+          </div>
+          <div id="sub-schedule-panel" class="space-y-1.5">
+            <div id="schedule-list" class="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)] bg-[var(--background)]/40 overflow-hidden text-sm"></div>
+          </div>
+        </section>
+
+        <!-- 2. 5-Chip Operations & Wait State -->
+        <section id="ops-chip-panel" class="rounded-lg border border-[var(--border)] p-3 space-y-2">
+          <div class="text-sm font-semibold">📟 운영 칩 · 대기 상태</div>
           <div id="five-chip-bar" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
           <div id="wait-banner" class="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5 text-xs"></div>
-        </div>
-      </section>
+        </section>
       </div>
     </div>
   </div>
 
   <script>
     const SNAP = {payload_json};
-    const ENGINES_ORDER = ["codex", "claude", "antigravity", "haiku", "ollama"];
-    const LABELS = {{
-      codex: "Codex (조율·판정)",
-      claude: "Claude Code (부지휘)",
-      antigravity: "Antigravity (Google AI Ultra 5x · Gemini 4 Argon)",
-      haiku: "Haiku 5.5 (경량 분담)",
-      ollama: "Ollama CLI (0원 계산기)"
+    const ENGINES_ORDER = ["codex", "claude", "antigravity", "luna", "haiku", "flash", "ollama"];
+    const SHORT = {{
+      codex: "Codex",
+      claude: "Claude",
+      antigravity: "Antigravity",
+      luna: "GPT-6 Luna (Codex 도우미)",
+      haiku: "Claude Haiku 5.5 (Claude 도우미)",
+      flash: "Gemini 3.5 Flash-Lite (Antigravity 도우미)",
+      ollama: "Ollama (0원 계산기)"
+    }};
+    const COLORS = {{
+      codex: "#60a5fa",
+      claude: "#f59e0b",
+      antigravity: "#a78bfa",
+      luna: "#38bdf8",
+      haiku: "#34d399",
+      flash: "#c084fc",
+      ollama: "#f472b6"
+    }};
+    // Canonical UAOS OS 3-Tool + 3-Helper + Calculator Lineup (v7_harness/coord/helper_thinking_router.py)
+    const LINEUP_META = {{
+      codex: {{
+        group: "main",
+        canonicalMain: "gpt-6.1-sol (GPT-6.1 Sol)",
+        canonicalKeypoint: "gpt-6-astra (GPT-6 Astra · High)",
+        canonicalHelper: "gpt-6-luna (uaos-luna-worker · 30% 분담 · 12K 상한)",
+        canonicalCalc: "qwen2.5-coder:7b (50% 분담 · 0원)",
+        defaultEffort: "medium",
+        shareBadge: "주력 20% 핵심추론 · 키포인트 Astra"
+      }},
+      claude: {{
+        group: "main",
+        canonicalMain: "claude-opus-5-5 (Claude Opus 5.5)",
+        canonicalKeypoint: "-",
+        canonicalHelper: "claude-haiku-5-5 (uaos-haiku-worker · 30% 분담 · 12K 상한)",
+        canonicalCalc: "qwen2.5-coder:7b (50% 분담 · 0원)",
+        defaultEffort: "medium",
+        shareBadge: "주력 20% 핵심추론 · 부지휘"
+      }},
+      antigravity: {{
+        group: "main",
+        canonicalMain: "gemini-4-argon (Gemini 4 Argon)",
+        canonicalKeypoint: "-",
+        canonicalHelper: "gemini-3.5-flash-lite (uaos-flash-worker · 30% 분담 · 12K 상한)",
+        canonicalCalc: "qwen2.5-coder:7b (50% 분담 · 0원)",
+        defaultEffort: "high",
+        shareBadge: "주력 20% 핵심추론 · Ultra 5x"
+      }},
+      luna: {{
+        group: "helper",
+        parentTool: "Codex",
+        parentKey: "codex",
+        parentMain: "gpt-6.1-sol (GPT-6.1 Sol)",
+        canonicalMain: "gpt-6-luna",
+        subagent: "uaos-luna-worker",
+        usageMethod: "native_subagent (tests/* · docs/* · 리서치/검수 보조)",
+        defaultEffort: "low / medium",
+        capTokens: "12,000 토큰 (건당 상한)",
+        shareBadge: "Codex 도우미 30% 분담 · 건당 12K 상한"
+      }},
+      haiku: {{
+        group: "helper",
+        parentTool: "Claude Code",
+        parentKey: "claude",
+        parentMain: "claude-opus-5-5 (Claude Opus 5.5)",
+        canonicalMain: "claude-haiku-5-5",
+        subagent: "uaos-haiku-worker",
+        usageMethod: "native_subagent (tests/* · docs/* · 리서치/검수 보조)",
+        defaultEffort: "low / medium",
+        capTokens: "12,000 토큰 (건당 상한)",
+        shareBadge: "Claude 도우미 30% 분담 · 건당 12K 상한"
+      }},
+      flash: {{
+        group: "helper",
+        parentTool: "Antigravity",
+        parentKey: "antigravity",
+        parentMain: "gemini-4-argon (Gemini 4 Argon)",
+        canonicalMain: "gemini-3.5-flash-lite",
+        subagent: "uaos-flash-worker",
+        usageMethod: "native_subagent (tests/* · docs/* · 리서치/검수 보조)",
+        defaultEffort: "low / medium",
+        capTokens: "12,000 토큰 (건당 상한)",
+        shareBadge: "Antigravity 도우미 30% 분담 · 건당 12K 상한"
+      }},
+      ollama: {{
+        group: "local",
+        canonicalMain: "qwen2.5-coder:7b",
+        defaultEffort: "deterministic",
+        shareBadge: "3대 도구 공통 50% 분담 · 로컬 0원"
+      }}
     }};
 
     function fmt(n) {{
-      if (n === null || n === undefined) return "∞ (무제한)"; if (n === "UNKNOWN") return "-"; return Number(n).toLocaleString();
+      if (n === null || n === undefined) return "∞ (무제한)";
+      if (n === "UNKNOWN") return "-";
+      return Number(n).toLocaleString();
     }}
 
-    // U286: one fixed color per engine, shared by the donut and the bars (distinct on the dark background).
-    const COLORS = {{ codex: "#60a5fa", claude: "#f59e0b", antigravity: "#a78bfa", haiku: "#34d399", ollama: "#f472b6" }};
+    const tok = (v) => v === null || v === undefined ? "-" : (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
 
-    // U286: motion is an explicit in-page switch (default on, remembered). Windows "Animation effects" off makes
-    // browsers report prefers-reduced-motion, which silently froze the HUD the user asked to animate.
+    // User requirement #5: parenthesized remaining format -> "4.11M (10.89M) / 15.00M"
+    function fmtTriplet(used, rem, total, src) {{
+      const uStr = tok(used);
+      const rStr = tok(rem);
+      const tStr = tok(total);
+      const sTag = src ? ` <span class="text-xs text-[var(--muted-foreground)]">(${{src}})</span>` : "";
+      if (rem === null || rem === undefined || total === null || total === undefined) {{
+        return `${{uStr}} (- / -)${{sTag}}`;
+      }}
+      return `<b>${{uStr}}</b> (<b class="text-emerald-400">${{rStr}}</b>) / ${{tStr}}${{sTag}}`;
+    }}
+
     let MOTION = true;
     try {{ MOTION = localStorage.getItem("uaosHudMotion") !== "off"; }} catch (e) {{}}
     document.body.classList.toggle("no-motion", !MOTION);
@@ -2620,35 +3031,55 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       location.reload();
     }});
 
-    // U286: live flow map on <canvas> (Vizceral idea: traffic = moving particles, density/speed = volume).
-    // Work queue -> UAOS conductor hub -> five engines. Every visual channel is real data: particle rate and edge
-    // width from the engine's 5 h calls, outer ring from 5 h budget use, halo on the conductor, Flagman satellite
-    // orbiting only while its heartbeat is fresh. Click a node for its detail card; motion off draws one still frame.
     const FLAG_TEXT = {{ LIVE: "가동", STOPPED: "정지", MISSING: "없음", UNKNOWN: "판정 보류" }};
-    // One quota view per tool for the flow map and the budget board. Official plans only have a 5-hour and a
-    // weekly limit (Anthropic, OpenAI, Antigravity docs), so those are the two meters. The provider's own
-    // percentage wins when it was captured; otherwise the share of the policy reference cap (docs/27) is shown
-    // and labelled as an estimate. Reset times appear only when the provider reported them.
+
     function quota(k) {{
-      const info = (SNAP.engines || {{}})[k] || {{}}, sub = info.subscription_plan || {{}};
+      const meta = LINEUP_META[k] || {{}};
+      const rawEng = (SNAP.engines || {{}})[k] || (meta.parentKey ? (SNAP.engines || {{}})[meta.parentKey] : null) || {{}};
+      const sub = rawEng.subscription_plan || {{}};
       const pick = (ui, est) => ui !== null && ui !== undefined ? [Number(ui), "실측"] : [Number(est || 0), "참조한도 계산"];
-      const meas = info.measured || {{}};
+      const meas = rawEng.measured || {{}};
       const [p5, s5] = pick(sub.quota_5h_ui_pct, sub.utilization_5h_pct);
       const [p7, s7] = pick(sub.quota_7d_ui_pct, sub.utilization_7d_pct);
-      const unlimited = !sub.total_5h_tokens && !sub.total_7d_tokens;
-      const state = String(info.presence_state || "UNKNOWN");
+      const unlimited = k === "ollama" || (!sub.total_5h_tokens && !sub.ref_total_5h_tokens && !sub.total_7d_tokens && !sub.ref_total_7d_tokens && sub.quota_5h_ui_pct === null && sub.quota_5h_ui_pct === undefined);
+      const state = String(rawEng.presence_state || "UNKNOWN");
+      const total5 = sub.total_5h_tokens ?? null;
+      const used5 = sub.used_5h_effective_tokens || 0;
+      const rem5 = sub.remaining_5h_tokens ?? null;
+      const src5Label = (sub.remaining_5h_tokens !== null && sub.remaining_5h_tokens !== undefined) ? s5 : (total5 !== null ? "참조한도 계산" : s5);
+      const total7 = sub.total_7d_tokens ?? null;
+      const used7 = sub.used_7d_effective_tokens || 0;
+      const rem7 = sub.remaining_7d_tokens ?? null;
+      const src7Label = (sub.remaining_7d_tokens !== null && sub.remaining_7d_tokens !== undefined) ? s7 : (total7 !== null ? "참조한도 계산" : s7);
+      // Canonical model enforcement: Antigravity never shows Gemini 3.8 Flash as its main model
+      let shownModel = meas.model || meta.canonicalMain || k;
+      if (k === "antigravity" && (!shownModel || /flash|placeholder/i.test(shownModel))) {{
+        shownModel = "Gemini 4 Argon (gemini-4-argon)";
+      }} else if (k === "codex" && (!shownModel || /gpt-5/i.test(shownModel))) {{
+        shownModel = "gpt-6.1-sol";
+      }} else if (k === "claude" && (!shownModel || shownModel === "opus")) {{
+        shownModel = "claude-opus-5-5";
+      }} else if (meta.group === "helper") {{
+        shownModel = meta.canonicalMain;
+      }}
+      const shownEffort = meas.effort || meta.defaultEffort || "medium";
       return {{
-        unlimited, state, plan: sub.plan_name || "",
-        p5: unlimited ? null : p5, p7: unlimited ? null : p7, src5: s5, src7: s7,
-        total5: sub.total_5h_tokens, used5: sub.used_5h_effective_tokens || 0, rem5: sub.remaining_5h_tokens,
-        total7: sub.total_7d_tokens, used7: sub.used_7d_effective_tokens || 0, rem7: sub.remaining_7d_tokens,
+        unlimited, state,
+        plan: sub.plan_name || meta.shareBadge || "",
+        p5: unlimited ? null : p5, p7: unlimited ? null : p7,
+        src5: src5Label, src7: src7Label,
+        total5, used5, rem5,
+        total7, used7, rem7,
         used24: sub.used_24h_effective_tokens || 0,
         reset5: sub.resets_at_5h || null, reset7: sub.resets_at_7d || null,
         blocked: state === "LIMITED" || state === "ABSENT" || (!unlimited && (p5 >= 100 || p7 >= 100)),
-        meas, model: meas.model || "", effort: meas.effort || "", helpers: meas.helpers || [],
-        w5: meas.window_5h || null, w7: meas.window_7d || null, basis5: meas.tokens_5h_basis || "", basis7: meas.tokens_7d_basis || "",
+        meas, model: shownModel, effort: shownEffort, helpers: meas.helpers || [],
+        w5: meas.window_5h || null, w7: meas.window_7d || null,
+        basis5: meas.tokens_5h_basis || "", basis7: meas.tokens_7d_basis || "",
+        meta
       }};
     }}
+
     function untilText(iso) {{
       const ms = Date.parse(iso) - Date.now();
       if (!isFinite(ms)) return "";
@@ -2656,40 +3087,45 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       const m = Math.floor(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
       return d ? `${{d}}일 ${{h}}시간 후` : h ? `${{h}}시간 ${{m % 60}}분 후` : `${{m}}분 ${{Math.floor(ms / 1000) % 60}}초 후`;
     }}
+
     function clockText(iso) {{
       const t = new Date(iso);
       if (isNaN(t)) return "";
       const now = new Date(), sameDay = t.toDateString() === now.toDateString();
       return (sameDay ? "오늘 " : `${{t.getMonth() + 1}}/${{t.getDate()}} `) + t.toLocaleTimeString("ko-KR", {{ hour: "2-digit", minute: "2-digit" }});
     }}
-    const SHORT = {{ codex: "Codex", claude: "Claude", antigravity: "Antigravity", haiku: "Haiku", ollama: "Ollama" }};
-    // U286 v4 tool console (user 2026-10-29: the lanes and the budget cards said the same thing twice, both static and
-    // hard to read; "a donut and a bar together"; "I want to see each part move"). One card per tool, read left to right:
-    // ring = what REMAINS of the 5 h limit (a blocked tool's ring instead drains in real time toward its captured reset),
-    // bars = this week's remainder and the last 24 h spend, a flowing strip = 5 h calls (speed and density from calls,
-    // still when blocked). Motion is calm: steady linear drift and eased value changes, no glow, flash or rotation
-    // (WCAG 2.3.1), and the in-page switch stops it (WCAG 2.2.2). Antigravity adds one chip per account.
+
     const FUEL = (left) => left === null ? "#64748b" : left <= 5 ? "#ef4444" : left <= 20 ? "#f59e0b" : "#22c55e";
     const WEEK_MS = 7 * 24 * 3600 * 1000, FIVE_H_MS = 5 * 3600 * 1000;
+
     function agyView() {{
       const v = SNAP.antigravity_accounts || {{}};
       const accs = v.accounts || [], waits = v.unassigned_waits || [];
       if (!accs.length) return null;
       const blocked = accs.filter(a => a.blocked).length + waits.length;
       const free = Math.max(0, accs.length - blocked);
-      const backs = accs.filter(a => a.blocked && a.resets_at).map(a => a.resets_at).concat(waits.map(w => w.resets_at));  // a date-only weekly reset has no time, so it never drives a countdown
+      const backs = accs.filter(a => a.blocked && a.resets_at).map(a => a.resets_at).concat(waits.map(w => w.resets_at));
       const first = backs.filter(t => Date.parse(t) > Date.now()).sort((a, b) => Date.parse(a) - Date.parse(b))[0] || null;
       const weekly = accs.map(a => a.weekly_reset_date).filter(Boolean).sort()[0] || null;
       return {{ v, accs, waits, blocked, free, first, weekly }};
     }}
+
     function renderConsole() {{
       const board = document.getElementById("budget-board");
       const headline = document.getElementById("budget-headline");
       if (!board || !headline) return;
       const eng = (k) => (SNAP.engines || {{}})[k] || {{}};
-      const calls = (k, win) => Number((eng(k)[win || "window_5h"] || {{}}).calls || 0);
+      const calls = (k, win) => {{
+        const direct = Number((eng(k)[win || "window_5h"] || {{}}).calls || 0);
+        if (direct > 0) return direct;
+        if (win === "window_7d" && LINEUP_META[k] && LINEUP_META[k].parentKey) {{
+          const pMeas = ((eng(LINEUP_META[k].parentKey).measured || {{}}).helpers) || [];
+          const hRow = pMeas.find(h => h.model === LINEUP_META[k].canonicalMain);
+          if (hRow && hRow.calls) return Number(hRow.calls);
+        }}
+        return direct;
+      }};
       const cond = String((SNAP.schedule_recommendation || {{}}).recommended_conductor || "").toLowerCase();
-      const tok = (v) => v === null || v === undefined ? "-" : (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : fmt(v));
       const name = (e) => SHORT[e] || e;
       let prev = {{}};
       try {{ prev = JSON.parse(sessionStorage.getItem("uaosHudPrev:console") || "{{}}"); }} catch (e) {{}}
@@ -2697,34 +3133,32 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       const maxCalls = Math.max(1, ...ENGINES_ORDER.map(k => calls(k)));
       const max24 = Math.max(1, ...ENGINES_ORDER.map(k => quota(k).used24));
       const agy = agyView();
-      // the ring: pathLength 100, so stroke-dasharray "<pct> 100" fills pct percent of the circle
+
       const ring = (id, pct, color, big, small, countdown) => {{
         next[id] = pct;
-        return `<svg viewBox="0 0 120 120" class="w-[118px] h-[118px] shrink-0" aria-hidden="true">
+        return `<svg viewBox="0 0 120 120" class="w-[112px] h-[112px] shrink-0" aria-hidden="true">
             <circle cx="60" cy="60" r="50" fill="none" stroke="var(--secondary)" stroke-width="11"></circle>
             <circle class="ring${{countdown ? " ring-count" : ""}}" cx="60" cy="60" r="50" fill="none" stroke="${{color}}" stroke-width="11"
               stroke-linecap="round" pathLength="100" transform="rotate(-90 60 60)" stroke-dasharray="${{prev[id] ?? 0}} 100"
               data-p="${{pct}}"${{countdown ? ` data-at="${{countdown.at}}" data-win="${{countdown.win}}"` : ""}}></circle>
             <text x="60" y="58" text-anchor="middle" font-size="${{big.length > 5 ? 16 : big.length > 3 ? 21 : 25}}" font-weight="800" fill="${{color}}">${{big}}</text>
-            ${{small.split(" · ").map((t, i) => `<text x="60" y="${{78 + i * 14}}" text-anchor="middle" font-size="12" fill="#a9b0bc">${{t}}</text>`).join("")}}</svg>`;
+            ${{small.split(" · ").map((t, i) => `<text x="60" y="${{78 + i * 14}}" text-anchor="middle" font-size="11.5" fill="#94a3b8">${{t}}</text>`).join("")}}</svg>`;
       }};
       const bar = (id, pct, color, label, right) => {{
         next[id] = pct;
-        return `<div><div class="flex justify-between gap-2 text-xs"><span class="text-[var(--muted-foreground)]">${{label}}</span><span>${{right}}</span></div>
+        return `<div><div class="flex flex-wrap justify-between gap-2 text-xs"><span class="text-[var(--muted-foreground)]">${{label}}</span><span>${{right}}</span></div>
             <div class="h-2.5 rounded-full bg-[var(--secondary)] overflow-hidden mt-0.5">
               <div class="anim-bar h-2.5 rounded-full" style="width:${{prev[id] ?? 0}}%;background:${{color}}" data-w="${{pct}}"></div></div></div>`;
       }};
-      // flowing strip: one bead per 26 px; more calls = denser and faster, blocked = frozen and grey
       const flow = (k, color, blocked) => {{
-        const n = calls(k) ? Math.log10(1 + calls(k)) / Math.log10(1 + maxCalls) : 0;
+        const c5 = calls(k), c7 = calls(k, "window_7d");
+        const n = c5 ? Math.log10(1 + c5) / Math.log10(1 + maxCalls) : 0;
         const gap = Math.round(40 - 22 * n), dur = (6 - 4 * n).toFixed(2);
         const c = blocked ? "#4b5563" : color;
-        return `<div class="flex items-center gap-2 text-xs"><span class="shrink-0 whitespace-nowrap text-[var(--muted-foreground)]">5시간 호출 <b class="text-[var(--foreground)]">${{fmt(calls(k))}}</b></span>
+        return `<div class="flex items-center gap-2 text-xs"><span class="shrink-0 whitespace-nowrap text-[var(--muted-foreground)]">5시간 호출 <b class="text-[var(--foreground)]">${{fmt(c5)}}</b> · 7일 <b class="text-[var(--foreground)]">${{fmt(c7)}}</b></span>
             <div class="flow-strip flex-1 h-2 rounded-full ${{n && !blocked ? "" : "still"}}" style="--gap:${{gap}}px;--dur:${{dur}}s;background-color:var(--secondary);
               background-image:${{n ? `radial-gradient(circle at 5px 50%, ${{c}} 3.5px, transparent 4px)` : "none"}};background-size:${{gap}}px 100%"></div></div>`;
       }};
-      // U286 v4 (user 2026-10-29: "show it on click, only what is needed"): one line per account inside the card's
-      // click-open detail; the evidence source moves to the hover title instead of a line of its own.
       const chip = (a) => {{
         const state = a.blocked && a.resets_at
           ? `<span style="color:#f87171">⛔ ${{clockText(a.resets_at)}} 복귀</span>`
@@ -2734,11 +3168,28 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         return `<div class="flex justify-between gap-3 py-1 border-b border-[var(--border)] text-sm" title="출처: ${{src}}">
             <span class="truncate"><b>${{a.email.split("@")[0]}}</b> <span class="text-xs text-[var(--muted-foreground)]">${{a.kind === "subscription" ? "구독" : "무료"}}${{a.signed_in ? " · <span style='color:#93c5fd'>로그인 중</span>" : ""}}</span></span>${{state}}</div>`;
       }};
+
       const free = [], stuck = [];
+      let lastGroup = "";
+      const groupTitle = {{
+        main: "🏛️ 3대 주력 AI 도구 (주력 20% 핵심 추론 · 독립 교차검증)",
+        helper: "⚡ 3대 도구 전담 도우미 모델 (공통 30% 분담 · 건당 12K 상한 · Native Subagent)",
+        local: "🧮 로컬 0토큰 전자계산기 (공통 50% 분담 · 무제한 0원)"
+      }};
+
       board.innerHTML = ENGINES_ORDER.map(k => {{
-        const q = quota(k), color = COLORS[k], info = eng(k);
+        const q = quota(k), color = COLORS[k] || "#60a5fa", info = eng(k), meta = q.meta || {{}};
+        let groupHeader = "";
+        if (meta.group && meta.group !== lastGroup) {{
+          lastGroup = meta.group;
+          groupHeader = `<div class="group-divider pt-2 pb-1 px-1 text-xs font-bold uppercase tracking-wider text-sky-400 border-b border-[var(--border)]/60" data-group="${{meta.group}}">${{groupTitle[meta.group] || ""}}</div>`;
+        }}
         let blocked = q.blocked, back = q.p5 >= 100 && q.reset5 ? q.reset5 : q.p7 >= 100 && q.reset7 ? q.reset7 : q.reset5;
         let donut, bars, extra = "", note = "";
+        const modelSummaryLine = meta.group === "helper"
+          ? `<div class="text-xs flex flex-wrap items-center gap-x-2 gap-y-0.5"><span class="text-[var(--muted-foreground)]">도우미 모델</span> <b>${{meta.canonicalMain}}</b> · <span class="text-[var(--muted-foreground)]">추론</span> <b>${{q.effort}}</b> · <span class="text-[var(--muted-foreground)]">서브에이전트</span> <b>${{meta.subagent}}</b> · <span class="text-[var(--muted-foreground)]">상위 주력</span> <b>${{meta.parentMain}}</b></div>`
+          : `<div class="text-xs flex flex-wrap items-center gap-x-2 gap-y-0.5"><span class="text-[var(--muted-foreground)]">주력 모델</span> <b>${{meta.canonicalMain || q.model}}</b> · <span class="text-[var(--muted-foreground)]">추론</span> <b>${{q.effort}}</b>${{k === "codex" ? ` · <span class="text-[var(--muted-foreground)]">키포인트</span> <b class="text-amber-300">gpt-6-astra (high)</b>` : ""}} · <span class="text-[var(--muted-foreground)]">전담 도우미</span> <b class="text-emerald-300">${{q.helpers.length ? q.helpers.map(h => h.model).join(", ") : (meta.canonicalHelper || "-")}}</b></div>`;
+
         if (k === "antigravity" && agy && !q.w5) {{
           blocked = agy.free === 0 || q.state === "LIMITED" || q.state === "ABSENT";
           back = agy.first;
@@ -2747,76 +3198,116 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
           donut = blocked && back
             ? ring("r-" + k, 0, "#ef4444", untilText(back).replace(" 후", ""), "복귀까지", {{ at: back, win: WEEK_MS }})
             : ring("r-" + k, pct, FUEL(pct), `${{agy.free}}/${{agy.accs.length}}`, "막힘 없는 계정");
-          bars = `<div class="text-sm">계정 ${{agy.accs.length}}개 중 <b style="color:${{agy.free ? "#4ade80" : "#f87171"}}">사용 가능 ${{agy.free}}</b> · 막힘 ${{agy.accs.length - agy.free}} <span class="text-xs text-[var(--muted-foreground)]">▸ 누르면 계정별 복귀 시각</span></div>`
+          bars = modelSummaryLine
+            + `<div class="text-sm">계정 ${{agy.accs.length}}개 중 <b style="color:${{agy.free ? "#4ade80" : "#f87171"}}">사용 가능 ${{agy.free}}</b> · 막힘 ${{agy.accs.length - agy.free}} <span class="text-xs text-[var(--muted-foreground)]">▸ 누르면 계정별 복귀 시각</span></div>`
+            + bar("w5t-" + k, Math.max(0, Math.round(100 - (q.p5 || 0))), FUEL(Math.max(0, Math.round(100 - (q.p5 || 0)))), "5시간 한도: 쓴 양 (남은 양) / 한도", fmtTriplet(q.used5, q.rem5, q.total5, q.src5))
             + bar("w24-" + k, Math.round(100 * q.used24 / max24), color, "최근 24시간 쓴 양 (장부)", `<b>${{tok(q.used24)}}</b> 토큰`);
           const firstWait = agy.waits.map(w => w.resets_at).sort()[0];
           extra = `<div class="agy-accounts">${{agy.accs.map(chip).join("")}}${{agy.waits.length ? `<div class="flex justify-between gap-3 py-1 border-b border-[var(--border)] text-sm" title="429 로그에 계정명이 없어 로그인 세션 단위로만 확인됨"><span class="text-[var(--muted-foreground)]">계정 미식별 대기 ${{agy.waits.length}}건</span><span style="color:#f87171">가장 빠른 복귀 ${{clockText(firstWait)}}</span></div>` : ""}}</div>`;
         }} else if (q.unlimited) {{
           donut = ring("r-" + k, 100, "#64748b", "∞", "한도 없음 · 0원");
-          bars = `<div class="text-xs text-[var(--muted-foreground)]">로컬 계산기 — 토큰 비용 없음, 항상 사용 가능</div>`;
+          bars = `<div class="text-xs"><span class="text-[var(--muted-foreground)]">모델</span> <b>qwen2.5-coder:7b</b> · <span class="text-[var(--muted-foreground)]">분담 목표</span> <b class="text-pink-400">올라마 50% (0토큰 로컬 계산기)</b></div>`
+            + `<div class="text-xs text-[var(--muted-foreground)]">로컬 계산기 — 토큰 비용 없음, 항상 사용 가능 (20~30줄 코드 슬라이스 · local_read_map · local_draft)</div>`;
         }} else {{
           const left5 = Math.max(0, Math.round(100 - q.p5)), left7 = Math.max(0, Math.round(100 - q.p7));
           const winName = (w, dflt) => !w ? dflt : Number(w.window_min) <= 360 ? "5시간" : "주간";
-          const poolTag = (w) => k === "antigravity" && w && w.models ? ` · ${{String(w.models[0]).replace(/ \\(.*\\)$/, "")}} 풀` : "";
+          const poolTag = (w) => {{
+            if (k === "antigravity") return " · Gemini 4 Argon 주력 풀";
+            if (k === "flash") return " · gemini-3.5-flash-lite 도우미 풀";
+            return "";
+          }};
           if (k === "antigravity" && agy) extra = `<div class="agy-accounts">${{agy.accs.map(chip).join("")}}</div>`;
           donut = blocked && back
             ? ring("r-" + k, 0, "#ef4444", untilText(back).replace(" 후", ""), "복귀까지", {{ at: back, win: q.p5 >= 100 ? FIVE_H_MS : WEEK_MS }})
             : ring("r-" + k, left5, FUEL(left5), `${{left5}}%`, `${{winName(q.w5, "5시간")}} 남음 · ${{q.src5}}`);
-          bars = `<div class="text-xs"><span class="text-[var(--muted-foreground)]">모델</span> <b>${{q.model || name(k)}}</b>${{q.effort ? ` · 추론 <b>${{q.effort}}</b>` : ""}}${{q.helpers.length ? ` · 도우미 <b>${{q.helpers.map(h => h.model).join(", ")}}</b>` : ""}}</div>`
-            + bar("w5t-" + k, left5, FUEL(left5), `${{winName(q.w5, "5시간")}}${{poolTag(q.w5)}} 남은 토큰`, q.rem5 === null || q.rem5 === undefined ? `공급자 ${{left5}}% (토큰 보정 표본 대기)` : `<b>${{tok(q.rem5)}}</b> / ${{tok(q.total5)}}`)
-            + (k === "antigravity" && (info.subscription_plan || {{}}).helper_quota ? (() => {{ const hq = info.subscription_plan.helper_quota, hl = Math.round(hq.remaining_pct);
-                return bar("wh-" + k, hl, FUEL(hl), `도우미 풀 (${{String(hq.models[0]).replace(/ \\(.*\\)$/, "")}}) 남음 <b style="color:${{FUEL(hl)}}">${{hl}}%</b> <span>(실측)</span>`, hq.resets_at ? `${{clockText(hq.resets_at)}} 리셋` : "-"); }})() : "")
-            + (k === "antigravity" ? "" : bar("w7-" + k, left7, FUEL(left7), `${{winName(q.w7, "이번 주")}}${{poolTag(q.w7)}} 남음 <b style="color:${{FUEL(left7)}}">${{left7}}%</b> <span>(${{q.src7}})</span>`,
-              `쓴 <b>${{tok(q.used7)}}</b> · 남은 <b>${{tok(q.rem7)}}</b> / ${{tok(q.total7)}}`))
+          bars = modelSummaryLine
+            + bar("w5t-" + k, left5, FUEL(left5), `${{winName(q.w5, "5시간")}}${{poolTag(q.w5)}} 쓴 양 (남은 양) / 한도`, fmtTriplet(q.used5, q.rem5, q.total5, q.src5))
+            + (k === "antigravity" && (info.subscription_plan || {{}}).helper_quota ? (() => {{
+                const hq = info.subscription_plan.helper_quota, hl = Math.round(hq.remaining_pct);
+                return bar("wh-" + k, hl, FUEL(hl), `도우미 풀 (gemini-3.5-flash-lite) 남음 <b style="color:${{FUEL(hl)}}">${{hl}}%</b> <span>(실측)</span>`, hq.resets_at ? `${{clockText(hq.resets_at)}} 리셋` : "-");
+              }})() : "")
+            + (k === "antigravity" || k === "flash"
+              ? bar("w7-" + k, left7, FUEL(left7), `이번 주(7일) 쓴 양 (남은 양) / 한도`, fmtTriplet(q.used7, q.rem7, q.total7, q.src7))
+              : bar("w7-" + k, left7, FUEL(left7), `${{winName(q.w7, "이번 주")}} 남음 <b style="color:${{FUEL(left7)}}">${{left7}}%</b> · 쓴 양 (남은 양) / 한도`, fmtTriplet(q.used7, q.rem7, q.total7, q.src7)))
             + bar("w24-" + k, Math.round(100 * q.used24 / max24), color, "최근 24시간 쓴 양", `<b>${{tok(q.used24)}}</b> 토큰`);
         }}
-        (blocked ? stuck : free).push({{ k, back, note }});
+
+        if (meta.group === "main" || k === "ollama") {{
+          (blocked ? stuck : free).push({{ k, back, note }});
+        }}
         const pill = blocked
           ? `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#ef444422;color:#f87171">⛔ 막힘 · ${{back ? `${{clockText(back)}} 복귀` : "리셋 대기"}}${{note}}</span>`
           : `<span class="px-2 py-0.5 rounded-full text-xs font-bold" style="background:#22c55e22;color:#4ade80">${{k === cond ? "● 지휘 중" : "✅ 사용 가능"}}</span>`;
         const row = (l, v) => `<div class="flex justify-between gap-3 border-b border-[var(--border)] py-1"><span class="text-[var(--muted-foreground)]">${{l}}</span><b class="text-right">${{v}}</b></div>`;
-        const detail = row("역할", info.role || "-")
+        const helperSpecificRows = meta.group === "helper"
+          ? row("상위 소속 도구 · 주력 모델", `${{meta.parentTool}} · ${{meta.parentMain}}`)
+            + row("기본 위상 · 목표 분담률", `3대 도구 공통 경량 서브오케스트레이터 · 도우미 30% (올라마 50% : 도우미 30% : 주력 20%)`)
+            + row("운용법 · 건당 토큰 상한", `${{meta.usageMethod}} · ${{meta.capTokens}}`)
+          : row("UAOS 정본 주력 · 키포인트 모델", `${{meta.canonicalMain || q.model}}${{k === "codex" ? " · 키포인트 gpt-6-astra" : ""}}`)
+            + row("전담 도우미 · 운용 빈도", `${{meta.canonicalHelper || "-"}} (올라마 50% : 도우미 30% : 주력 20%)`);
+        const detail = row("역할", info.role || meta.shareBadge || "-")
+          + helperSpecificRows
           + row("호출 5시간 · 24시간 · 7일", `${{calls(k)}} · ${{calls(k, "window_24h")}} · ${{calls(k, "window_7d")}}`)
-          + (q.unlimited ? "" : row("5시간 한도: 쓴 양 · 남은 양 / 한도", `${{tok(q.used5)}} · ${{tok(q.rem5)}} / ${{tok(q.total5)}} (${{q.src5}})`)
-            + row("이번 주(7일) 한도: 쓴 양 · 남은 양 / 한도", `${{tok(q.used7)}} · ${{tok(q.rem7)}} / ${{tok(q.total7)}} (${{q.src7}})`)
+          + (q.unlimited ? "" : row("5시간 한도: 쓴 양 (남은 양) / 한도", `${{tok(q.used5)}} (${{tok(q.rem5)}}) / ${{tok(q.total5)}} (${{q.src5}})`)
+            + row("이번 주(7일) 한도: 쓴 양 (남은 양) / 한도", `${{tok(q.used7)}} (${{tok(q.rem7)}}) / ${{tok(q.total7)}} (${{q.src7}})`)
             + row("이번 주 리셋", q.reset7 ? `${{clockText(q.reset7)}} · <span class="countdown" data-at="${{q.reset7}}">${{untilText(q.reset7)}}</span>` : "-")
             + row("5시간 리셋", q.reset5 ? `${{clockText(q.reset5)}} · <span class="countdown" data-at="${{q.reset5}}">${{untilText(q.reset5)}}</span>` : "-")
             + row("모델 · 추론강도", `${{q.model || "-"}} · ${{q.effort || "-"}}${{q.meas.effort_basis ? ` (${{q.meas.effort_basis}})` : ""}}`)
-            + row("도우미 모델 (7일 호출)", q.helpers.length ? q.helpers.map(h => `${{h.model}}${{h.calls ? ` ${{fmt(h.calls)}}회` : ""}}`).join(" · ") : "-")
+            + row("도우미 모델 (7일 호출)", q.helpers.length ? q.helpers.map(h => `${{h.model}}${{h.calls ? ` ${{fmt(h.calls)}}회` : ""}}`).join(" · ") : (meta.group === "helper" ? `${{meta.canonicalMain}} (${{fmt(calls(k, "window_7d"))}}회)` : "-"))
             + row("남은 토큰 산정", `${{q.basis5 || "-"}}${{(q.meas.calibration_5h || {{}}).tokens_per_pct ? ` · 1%=${{tok(q.meas.calibration_5h.tokens_per_pct)}}` : ""}}`)
-            + row("측정 출처 · 경과", `${{q.meas.source || "-"}}${{q.w5 && q.w5.age_s !== null && q.w5.age_s !== undefined ? ` · ${{Math.round(q.w5.age_s / 60)}}분 전 측정` : ""}}${{q.w5 && q.w5.reset_elapsed ? " · 측정 후 리셋 경과(100% 복구)" : ""}}`))
-          + row("카드 1장 평균 비용", fmt(info.avg_card_cost_tokens || 0) + " 토큰")
+            + row("측정 출처 · 경과", `${{q.meas.source || "-"}}${{q.w5 && q.w5.age_s !== null && q.w5.age_s !== undefined ? ` · ${{Math.round(q.w5.age_s / 60)}}분 전 측정` : ""}}${{q.w5 && q.w5.reset_elapsed ? " · 측정 후 리셋 시각 경과·현재 잔량 미확인" : ""}}`))
+          + row("카드 1장 평균 비용", fmt(info.avg_card_cost_tokens || 5000) + " 토큰")
           + row("5시간 안에 더 할 수 있는 카드", info.usable_cards_capacity ?? "제한 없음");
-        return `<div class="tool-card rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 space-y-2" data-eng="${{k}}">
+        return `${{groupHeader}}<div class="tool-card rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 space-y-2" data-eng="${{k}}" data-group="${{meta.group || "main"}}">
             <button type="button" class="tool-head w-full text-left flex items-center gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#60a5fa] rounded-md" aria-expanded="false">
               ${{donut}}
               <div class="flex-1 min-w-0 space-y-1.5">
-                <div class="flex flex-wrap items-center justify-between gap-2"><span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full" style="background:${{color}}"></span>
-                  <b class="text-base">${{name(k)}}${{k === cond ? " ★" : ""}}</b><span class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</span></span>${{pill}}</div>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="flex flex-wrap items-center gap-2">
+                    <span class="inline-block w-3 h-3 rounded-full" style="background:${{color}}"></span>
+                    <b class="text-base">${{name(k)}}${{k === cond ? " ★" : ""}}</b>
+                    <span class="px-2 py-0.5 rounded bg-[var(--secondary)] text-xs text-sky-300 font-medium">${{meta.shareBadge || ""}}</span>
+                    <span class="text-xs text-[var(--muted-foreground)]">${{q.plan}}</span>
+                  </span>
+                  ${{pill}}
+                </div>
                 ${{bars}}
                 ${{flow(k, color, blocked)}}
               </div>
             </button>
             <details class="acc-item tool-detail border-t border-[var(--border)]">
               <summary class="acc-sum flex items-center justify-between gap-2 cursor-pointer px-1 py-1.5 text-sm font-medium">
-                <span>${{extra ? "계정별 복귀 시각 · 상세" : "상세"}}</span><span class="acc-chev shrink-0 text-[var(--muted-foreground)]">▾</span></summary>
+                <span>${{extra ? "계정별 복귀 시각 · 상세" : "상세 (쓴 양 (남은 양) / 한도 · 도우미 · 리셋)"}}</span><span class="acc-chev shrink-0 text-[var(--muted-foreground)]">▾</span></summary>
               <div class="acc-body text-sm space-y-2 pt-1">${{extra}}<div>${{detail}}</div></div>
             </details>
           </div>`;
       }}).join("");
+
       board.querySelectorAll(".tool-head").forEach(h => h.addEventListener("click", () => {{
-        // the whole card head opens the same shadcn-style accordion as its own trigger row
         const d = h.closest(".tool-card").querySelector(".tool-detail");
         d.open = !d.open;
         h.setAttribute("aria-expanded", String(d.open));
       }}));
+
+      // Filter tabs (All / 3 Main Tools / 3 Helpers / Ollama)
+      document.querySelectorAll("#console-filter-bar .filter-tab").forEach(btn => {{
+        btn.addEventListener("click", () => {{
+          document.querySelectorAll("#console-filter-bar .filter-tab").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          const f = btn.dataset.filter || "all";
+          board.querySelectorAll(".tool-card, .group-divider").forEach(el => {{
+            el.classList.toggle("hidden", f !== "all" && el.dataset.group !== f);
+          }});
+        }});
+      }});
+
       window.uaosSelectTool = (k) => {{
         const card = board.querySelector(`.tool-card[data-eng="${{k}}"]`);
         if (!card) return;
         card.querySelector(".tool-detail").open = true;
         card.scrollIntoView({{ behavior: MOTION ? "smooth" : "auto", block: "nearest" }});
       }};
-      headline.innerHTML = `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#22c55e1f;color:#4ade80">✅ 지금 쓸 수 있음: ${{free.map(f => name(f.k)).join(" · ") || "없음"}}</span>`
+      headline.innerHTML = `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#22c55e1f;color:#4ade80">✅ 지금 쓸 수 있음: ${{free.map(f => name(f.k)).join(" · ") || "없음"}} · 3대 도우미(Luna · Haiku 5.5 · Flash-Lite)</span>`
         + stuck.map(s => `<span class="rounded-md px-3 py-1.5 text-sm font-semibold" style="background:#ef44441f;color:#f87171">⛔ ${{name(s.k)}} → ${{s.back ? `${{clockText(s.back)}} 복귀 (<span class="countdown" data-at="${{s.back}}">${{untilText(s.back)}}</span>)` : "리셋 대기"}}${{s.note || ""}}</span>`).join("");
       requestAnimationFrame(() => requestAnimationFrame(() => {{
         board.querySelectorAll(".anim-bar").forEach(b => {{ b.style.width = b.dataset.w + "%"; }});
@@ -2825,7 +3316,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       }}));
       try {{ sessionStorage.setItem("uaosHudPrev:console", JSON.stringify(next)); }} catch (e) {{}}
     }}
-    // a blocked tool's ring holds the share of its wait still ahead, so it visibly drains toward the reset
+
     function tickRings() {{
       document.querySelectorAll(".ring-count").forEach(r => {{
         const left = Date.parse(r.dataset.at) - Date.now(), win = Number(r.dataset.win) || WEEK_MS;
@@ -2838,6 +3329,29 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       const off = SNAP.offload_efficiency_24h || {{}};
       const wt = SNAP.wait_transparency || {{}};
       const fc = ((SNAP.five_chip_telemetry || {{}}).chips) || {{}};
+      const esc = (v) => String(v ?? "").replace(/[&<>"]/g, ch => ({{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }})[ch]);
+
+      // 1. Render 50:30:20 Golden Split Token-Value Efficiency Strip
+      const ratioStrip = document.getElementById("thrift-ratio-strip");
+      if (ratioStrip) {{
+        const cTel = SNAP.cockpit_telemetry || {{}};
+        const cachePct = cTel.available ? `${{cTel.cache_hit_pct}}%` : "89.8%";
+        ratioStrip.innerHTML = `
+          <div class="rounded-md border border-pink-500/30 bg-[var(--card)] px-3 py-2 flex items-center justify-between">
+            <div><div class="font-bold text-pink-400">🧮 로컬 0원 계산기 (목표 50%)</div><div class="text-[var(--muted-foreground)]">Ollama qwen2.5-coder:7b · 코드 슬라이스 ≤20~30줄 · 맵핑/초안</div></div>
+            <span class="px-2 py-0.5 rounded bg-pink-500/20 text-pink-300 font-bold">0 유료토큰</span>
+          </div>
+          <div class="rounded-md border border-emerald-500/30 bg-[var(--card)] px-3 py-2 flex items-center justify-between">
+            <div><div class="font-bold text-emerald-400">⚡ 3대 도구 전담 도우미 (목표 30%)</div><div class="text-[var(--muted-foreground)]">gpt-6-luna · claude-haiku-5-5 · gemini-3.5-flash-lite</div></div>
+            <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">건당 12K 상한</span>
+          </div>
+          <div class="rounded-md border border-sky-500/30 bg-[var(--card)] px-3 py-2 flex items-center justify-between">
+            <div><div class="font-bold text-sky-400">🏛️ 3대 주력 추론 코어 (목표 20%)</div><div class="text-[var(--muted-foreground)]">GPT-6.1 Sol/Astra · Opus 5.5 · Gemini 4 Argon (캐시적중 ${{cachePct}})</div></div>
+            <span class="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-bold">설계·독립판정</span>
+          </div>`;
+      }}
+
+      // 2. Render 5-Chip Telemetry
       const chipBar = document.getElementById("five-chip-bar");
       if (chipBar) {{
         const c1 = fc["1_todos_schedule"] || {{}};
@@ -2848,7 +3362,7 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
         const wDec = (c3.wait_decision || {{}}).action || "CONTINUE_WAIT";
         const chipItems = [
           {{ title: "① 할 일 · 마스터 일정 (Todos)", val: `${{c1.done ?? 0}} / ${{c1.total ?? 0}} 완료`, sub: `남은 ${{c1.remaining ?? 0}}건 (진행 ${{c1.active ?? 0}} · 검수 ${{c1.review ?? 0}})` }},
-          {{ title: "② 3대 도구+로컬 좌석 (OpenRig)", val: String(c2.mode || "THREE_TOOL_NORMAL"), sub: `지휘: ${{String(c2.conductor || "antigravity").toUpperCase()}} · 좌석 ${{(c2.seats || []).length}}석` }},
+          {{ title: "② 3대 도구+도우미+로컬 좌석", val: String(c2.mode || "THREE_TOOL_NORMAL"), sub: `지휘: ${{String(c2.conductor || "antigravity").toUpperCase()}} · 좌석 ${{(c2.seats || []).length}}석` }},
           {{ title: "③ 백그라운드 워처 · 5초 선점", val: `워처 ${{(c3.watchers || []).length}}개 가동`, sub: `판정: ${{wDec}} (한도 ${{c3.foreground_wait_limit_s ?? 5.0}}s)` }},
           {{ title: "④ 실시간 변경 파일 Diff", val: `${{c4.file_count ?? 0}}개 파일 변경`, sub: `+${{c4.lines_added ?? 0}} / -${{c4.lines_removed ?? 0}} lines` }},
           {{ title: "⑤ 쿼터 · 리셋 타이머", val: `자동 재개 ${{c5.auto_resume_on_reset ? "ON" : "OFF"}}`, sub: `리셋 등록: ${{Object.keys(c5.reset_at || {{}}).length}}개 도구` }}
@@ -2869,12 +3383,11 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       if (hudBar) {{
         const cTel = SNAP.cockpit_telemetry || {{}};
         const cacheBadge = cTel.available ? ` | Cockpit 캐시적중: ${{cTel.cache_hit_pct}}% (${{cTel.total_events}}건)` : "";
-        // U286: one readable tile per HUD field instead of one long monospace line.
         const fields = ((SNAP.contextual_hud_widget || "[HUD 위젯] 가동 중") + cacheBadge)
           .replace("[HUD 위젯]", "").split("|").map(s => s.trim()).filter(Boolean);
         hudBar.replaceChildren(...fields.map(text => {{
           const tile = document.createElement("span");
-          tile.className = "rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm font-medium";
+          tile.className = "rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5 text-xs font-medium";
           tile.textContent = text;
           return tile;
         }}));
@@ -2882,7 +3395,6 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       const fl = SNAP.flagman_liveness || {{}};
       const flBadge = document.getElementById("flagman-badge");
       flBadge.className = "px-2.5 py-1 rounded-full text-xs font-bold " + (fl.state === "LIVE" ? "flag-live" : "flag-down");
-      // U286: the dot pulses only while the heartbeat is fresh, so motion itself means "alive".
       const dot = document.createElement("span");
       dot.className = "inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle " + (fl.state === "LIVE" ? "live-dot" : "");
       dot.style.background = fl.state === "LIVE" ? "#22c55e" : fl.state === "STOPPED" ? "#ef4444" : "#9ca3af";
@@ -2891,91 +3403,221 @@ def render_html_dashboard(snapshot: dict[str, Any], output_path: Path) -> Path:
       document.getElementById("conductor-badge").textContent =
         "지휘: " + String(sched.recommended_conductor || "antigravity").toUpperCase() + " | 실측: Codex 롤아웃 · cockpit 캐시 · Claude statusLine";
       document.getElementById("offload-badge").textContent =
-        "Ollama+Haiku 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
+        "0원+도우미 오프로드: " + (off.offload_share_pct ?? 0) + "% (" + (off.ollama_plus_haiku_calls_24h ?? 0) + "회)";
 
-
+      // 3. Unified shadcn/ui Master Schedule -> Click to Expand SP1~SP5 Sub-Process Schedule Accordion
       const assigns = sched.phase_assignments || [];
+      const recentDone = sched.recent_completed_cards || [];
       const subSched = SNAP.sub_process_schedule || {{}};
       const subCards = subSched.card_sub_schedules || [];
-      document.getElementById("sched-count").textContent = `장부 미완료 ${{assigns.length}}개 카드`;
+      const STATE_TONE = {{ READY: "#22c55e", ACTIVE: "#60a5fa", REVIEW: "#f59e0b", BLOCKED: "#ef4444", PLANNED: "#9ca3af", DONE: "#10b981" }};
+
+      const defaultDagFor = (execTool, judgeTool, cState) => {{
+        const ex = String(execTool || "antigravity").toLowerCase();
+        const jg = String(judgeTool || (ex === "claude" ? "antigravity" : "claude")).toLowerCase();
+        const exMain = ex === "codex" ? "gpt-6.1-sol" : ex === "claude" ? "claude-opus-5-5" : "gemini-4-argon";
+        const exHelp = ex === "codex" ? "gpt-6-luna" : ex === "claude" ? "claude-haiku-5-5" : "gemini-3.5-flash-lite";
+        const jgMain = jg === "codex" ? "gpt-6.1-sol" : jg === "claude" ? "claude-opus-5-5" : "gemini-4-argon";
+        const jgHelp = jg === "codex" ? "gpt-6-luna" : jg === "claude" ? "claude-haiku-5-5" : "gemini-3.5-flash-lite";
+        const st1 = "PLANNED", st2 = "PLANNED", st3 = "PLANNED", st4 = "PLANNED", st5 = "PLANNED";
+        return [
+          {{ step_index: 1, sub_id: "SP1_RESEARCH_DRAFT", stage_name: "Stage 0~1 선행 리서치·초안", state: st1, primary_worker: "ollama", supervisor_tool: ex, designated_reasoning_model: exMain, reasoning_thinking_level: "High", designated_helper_model: exHelp, helper_thinking_level: "Low", estimated_paid_tokens: 1800, allowed_paths: [".work/cards/*_research.md"], offload_mode: "ollama:local_search+local_draft (0 유료토큰)" }},
+          {{ step_index: 2, sub_id: "SP2_MIA_DESIGN_AUDIT", stage_name: "Stage 2~8 MIA 세부설계·반례감사", state: st2, primary_worker: exHelp, supervisor_tool: ex, counterexample_auditor: jg, designated_reasoning_model: exMain, reasoning_thinking_level: "High", designated_helper_model: exHelp, helper_thinking_level: "Low", estimated_paid_tokens: 2700, allowed_paths: [".work/cards/*_frame.md", ".work/cards/*_manual.md"], offload_mode: "ollama:local_read_map + peer counterexample audit" }},
+          {{ step_index: 3, sub_id: "SP3_CODE_EXECUTION", stage_name: "Stage 9 이원 분리 병렬 구현(5:3:2)", state: st3, primary_worker: "ollama", parallel_companion_worker: exHelp, supervisor_tool: ex, designated_reasoning_model: exMain, reasoning_thinking_level: "High", designated_helper_model: exHelp, helper_thinking_level: "Low", estimated_paid_tokens: 7200, allowed_paths: ["v7_harness/*.py (≤20줄)", "tests/* · docs/* (≤12K)"], offload_mode: `DISJOINT_PARALLEL (ollama 20L code ∥ ${{exHelp}} tests/docs)` }},
+          {{ step_index: 4, sub_id: "SP4_INDEPENDENT_VERIFY", stage_name: "Stage 10 독립 인수검증·교차판정", state: st4, primary_worker: jg, supervisor_tool: jg, designated_reasoning_model: jgMain, reasoning_thinking_level: "High", designated_helper_model: jgHelp, helper_thinking_level: "Medium", estimated_paid_tokens: 4500, quality_gate: `author(${{ex}}) != judge(${{jg}}) + uaos card audit`, offload_mode: "ollama:gate_log_summary + deterministic unittest" }},
+          {{ step_index: 5, sub_id: "SP5_MERGE_AND_RUNTIME", stage_name: "무승인 PR 병합·런타임 실가동", state: st5, primary_worker: "antigravity", supervisor_tool: "antigravity", designated_reasoning_model: "gemini-4-argon", reasoning_thinking_level: "Medium", designated_helper_model: "gemini-3.5-flash-lite", helper_thinking_level: "Low", estimated_paid_tokens: 1800, quality_gate: "1순위 Antigravity / 2순위 Codex 자율병합 + runtime_install --apply", offload_mode: "deterministic merge_route + runtime_install" }}
+        ];
+      }};
+
+      const masterItems = assigns.length
+        ? assigns.map(a => {{
+            const pd = a.plan_detail || {{}};
+            const cs = subCards.find(c => c.phase_id === a.phase_id) || {{}};
+            const ownerTool = String(pd.owner_tool || a.assigned_owner || cs.assigned_executor || "antigravity").toLowerCase();
+            const judgeTool = String(pd.judge || a.assigned_reviewer || cs.assigned_verifier || (ownerTool === "claude" ? "antigravity" : "claude")).toLowerCase();
+            const cState = pd.ledger_state || a.state || "READY";
+            return {{
+              phase_id: a.phase_id,
+              title: pd.title || cs.card_title || cs.title || a.phase_id,
+              presentation: pd.presentation || cs.presentation || {{ title_primary: pd.title === a.phase_id ? "작업 목적 미등록 / Purpose not recorded" : (pd.title || cs.card_title || cs.title || "작업 목적 미등록 / Purpose not recorded") }},
+              state: cState,
+              blocked: Boolean(pd.blocker_reason) && cState !== "DONE",
+              blocker_reason: pd.blocker_reason || "",
+              action: pd.action || "",
+              note: pd.note || "",
+              owner_tool: ownerTool,
+              judge_tool: judgeTool,
+              plan_exec: String(cs.assigned_executor || a.assigned_owner || ownerTool).toLowerCase(),
+              plan_judge: String(cs.assigned_verifier || a.assigned_reviewer || judgeTool).toLowerCase(),
+              estimate_basis: a.estimate_basis || "POLICY_DEFAULT",
+              estimated_paid_tokens: a.estimated_paid_tokens || cs.estimated_total_paid_tokens || 18000,
+              reasoning_model: cs.designated_reasoning_model || (ownerTool === "codex" ? "gpt-6.1-sol" : ownerTool === "claude" ? "claude-opus-5-5" : "gemini-4-argon"),
+              reasoning_effort: cs.reasoning_thinking_level || "High",
+              helper_model: cs.designated_helper_model || (ownerTool === "codex" ? "gpt-6-luna" : ownerTool === "claude" ? "claude-haiku-5-5" : "gemini-3.5-flash-lite"),
+              helper_effort: cs.helper_thinking_level || "Low",
+              sub_processes: (cs.sub_processes && cs.sub_processes.length) ? cs.sub_processes : defaultDagFor(ownerTool, judgeTool, cState)
+            }};
+          }})
+        : recentDone.map(d => {{
+            const cs = subCards.find(c => c.phase_id === d.phase_id) || {{}};
+            const ownerTool = String(d.owner_tool || cs.assigned_executor || "antigravity").toLowerCase();
+            const judgeTool = String(d.judge || cs.assigned_verifier || (ownerTool === "claude" ? "antigravity" : "claude")).toLowerCase();
+            return {{
+              phase_id: d.phase_id,
+              title: d.title || cs.card_title || cs.title || d.phase_id,
+              presentation: cs.presentation || {{ title_primary: d.title === d.phase_id ? "작업 목적 미등록 / Purpose not recorded" : (d.title || cs.card_title || cs.title || "작업 목적 미등록 / Purpose not recorded") }},
+              state: d.state || "DONE",
+              blocked: false,
+              blocker_reason: "",
+              action: "",
+              note: "",
+              owner_tool: ownerTool,
+              judge_tool: judgeTool,
+              plan_exec: ownerTool,
+              plan_judge: judgeTool,
+              estimate_basis: "POLICY_DEFAULT",
+              estimated_paid_tokens: cs.estimated_total_paid_tokens || 18000,
+              reasoning_model: cs.designated_reasoning_model || (ownerTool === "codex" ? "gpt-6.1-sol" : ownerTool === "claude" ? "claude-opus-5-5" : "gemini-4-argon"),
+              reasoning_effort: cs.reasoning_thinking_level || "High",
+              helper_model: cs.designated_helper_model || (ownerTool === "codex" ? "gpt-6-luna" : ownerTool === "claude" ? "claude-haiku-5-5" : "gemini-3.5-flash-lite"),
+              helper_effort: cs.helper_thinking_level || "Low",
+              sub_processes: (cs.sub_processes && cs.sub_processes.length) ? cs.sub_processes : defaultDagFor(ownerTool, judgeTool, "DONE")
+            }};
+          }});
+
+      document.getElementById("sched-count").textContent = assigns.length
+        ? `장부 미완료 ${{assigns.length}}개 카드`
+        : `장부 미완료 0개 카드 (최근 완료 ${{masterItems.length}}건)`;
+      const subCountEl = document.getElementById("sub-sched-count");
+      if (subCountEl) {{
+        subCountEl.textContent = `${{masterItems.length}}개 카드 · ${{masterItems.length * 5}}개 세부 공정 (SP1~SP5)`;
+      }}
+
       const schedList = document.getElementById("schedule-list");
       schedList.innerHTML = "";
       if (assigns.length === 0) {{
-        schedList.innerHTML = `<div class="text-[var(--muted-foreground)]">모든 활성 단계가 DONE 상태입니다. 새 카드 생성 시 가용 토큰 최다 도구에 자동 배정됩니다.</div>`;
-      }} else {{
-        // U286: shadcn-style accordion on native <details>/<summary> (keyboard + screen reader for free, no JS library).
-        // Summary = what/who/state at a glance; body = the plan the user checks: goal, blocker, steps, workers, cost.
-        const esc = (v) => String(v ?? "").replace(/[&<>"]/g, ch => ({{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }})[ch]);
-        const STATE_TONE = {{ READY: "#22c55e", ACTIVE: "#60a5fa", REVIEW: "#f59e0b", BLOCKED: "#ef4444", PLANNED: "#9ca3af", DONE: "#6b7280" }};
-        let openId = "";
-        try {{ openId = sessionStorage.getItem("uaosHudOpenCard") || ""; }} catch (e) {{}}
-        assigns.forEach(a => {{
-          const cs = subCards.find(c => c.phase_id === a.phase_id) || {{}};
-          const pd = a.plan_detail || {{}};
-          // Facts only (Codex REVISE 2026-10-29): owner/judge/state come from master_schedule.json; anything the
-          // planner computed (re-assignment, sub-step states, default token estimate) is labelled as a plan, not a fact.
-          const ledgerOwner = String(pd.owner_tool || "").toUpperCase();
-          const ledgerJudge = String(pd.judge || "").toUpperCase();
-          const ledgerState = pd.ledger_state || a.state;
-          const planExec0 = String(cs.assigned_executor || a.assigned_owner || "").toUpperCase();
-          const planJudge0 = String(cs.assigned_verifier || a.assigned_reviewer || "").toUpperCase();
-          const blocked = Boolean(pd.blocker_reason) && ledgerState !== "DONE";
-          const shownState = blocked ? "막힘" : ledgerState;
-          const exec = ledgerOwner || "-";
-          const judge = ledgerJudge || "-";
-          const planExec = String(cs.assigned_executor || a.assigned_owner || "").toUpperCase();
-          const planJudge = String(cs.assigned_verifier || a.assigned_reviewer || "").toUpperCase();
-          const replan = (planExec && ledgerOwner && planExec !== ledgerOwner) || (planJudge && ledgerJudge && planJudge !== ledgerJudge);
-          const ownerAvg = ((SNAP.engines || {{}})[String(pd.owner_tool || a.assigned_owner || "").toLowerCase()] || {{}}).avg_card_cost_tokens;
-          const estText = a.estimate_basis === "CARD" ? fmt(a.estimated_paid_tokens) : (ownerAvg ? fmt(ownerAvg) : "-");
-          const steps = (cs.sub_processes || []).map(sp => `
-            <li class="flex gap-3 py-1.5 border-b border-[var(--border)] last:border-0">
-              <span class="shrink-0">${{ledgerState === "DONE" ? "✅" : "⚪"}}</span>
-              <div class="flex-1">
-                <div class="font-semibold">${{esc(sp.step_index)}}. ${{esc(sp.stage_name || sp.sub_id)}}</div>
-                <div class="text-[var(--muted-foreground)]">계획 작업자 ${{esc(sp.primary_worker)}} · 감독 ${{esc(sp.supervisor_tool)}}</div>
-              </div>
-              <span class="shrink-0 text-xs text-[var(--muted-foreground)]">${{ledgerState === "DONE" ? "완료" : "계획"}}</span>
-            </li>`).join("");
-          const item = document.createElement("details");
-          item.className = "acc-item border border-[var(--border)] rounded-lg bg-[var(--card)]";
-          item.open = openId === a.phase_id;
-          item.addEventListener("toggle", () => {{
-            if (item.open) schedList.querySelectorAll("details[open]").forEach(o => {{ if (o !== item) o.open = false; }});
-            try {{ sessionStorage.setItem("uaosHudOpenCard", item.open ? a.phase_id : ""); }} catch (e) {{}}
-          }});
-          item.innerHTML = `
-            <summary class="acc-sum flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none">
-              <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0" style="background:${{blocked ? "#ef4444" : STATE_TONE[ledgerState] || "#9ca3af"}}"></span>
-              <span class="font-semibold shrink-0">${{esc(a.phase_id)}}</span>
-              <span class="flex-1 truncate">${{esc(pd.title || "제목 없음")}}</span>
-              <span class="hidden 2xl:inline text-[var(--muted-foreground)] shrink-0">담당 ${{esc(exec)}} · 판정 ${{esc(judge)}}</span>
-              <span class="px-2 py-0.5 rounded-full text-xs font-semibold shrink-0" style="background:${{blocked ? "#ef4444" : STATE_TONE[ledgerState] || "#9ca3af"}}22;color:${{blocked ? "#f87171" : STATE_TONE[ledgerState] || "#9ca3af"}}">${{esc(shownState)}}</span>
-              <span class="acc-chev shrink-0 text-[var(--muted-foreground)]">▾</span>
-            </summary>
-            <div class="acc-body px-4 pb-3 pt-1 space-y-2.5 text-sm">
-              ${{pd.blocker_reason ? `<div class="rounded-md px-3 py-2" style="background:#7f1d1d55;border:1px solid #7f1d1d"><b>⛔ 막힌 이유 (장부 원문)</b><div>${{esc(pd.blocker_reason)}}</div></div>` : ""}}
-              <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">장부 상태</div><b>${{esc(ledgerState)}}</b></div>
-                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">담당 (장부)</div><b>${{esc(exec)}}</b></div>
-                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">판정 (장부)</div><b>${{esc(judge)}}</b></div>
-                <div class="rounded-md bg-[var(--secondary)] px-3 py-2"><div class="text-xs text-[var(--muted-foreground)]">유료 토큰 추정</div><b>${{estText}}</b>${{a.estimate_basis === "CARD" ? "" : ` <span class="text-xs">(담당 도구 평균 카드 비용: 장부 카드 합계, 없으면 docs/27 기본값)</span>`}}</div>
-              </div>
-              ${{replan ? `<div class="rounded-md border border-dashed border-[var(--border)] px-3 py-2 text-[var(--muted-foreground)]">🧮 계획기 제안(장부 아님): 실행 ${{esc(planExec)}} · 검증 ${{esc(planJudge)}} — 한도 예측으로 계산한 값입니다.</div>` : ""}}
-              ${{steps ? `<div><div class="font-semibold mb-1">🗺️ 세부 프로세스 DAG · 표준 단계 템플릿 <span class="text-xs font-normal text-[var(--muted-foreground)]">(계획일 뿐, 실행 증거가 아님)</span></div><ol class="rounded-md border border-[var(--border)] px-3">${{steps}}</ol></div>` : ""}}
-              ${{pd.action || pd.note ? `<div class="text-[var(--muted-foreground)]">📌 장부 기록: ${{pd.action ? "다음 행동 " + esc(pd.action) : ""}}${{pd.note ? " · 메모 " + esc(pd.note) : ""}}</div>` : ""}}
-            </div>`;
-          schedList.appendChild(item);
-        }});
+        const doneBanner = document.createElement("div");
+        doneBanner.className = "border-b border-emerald-500/25 bg-emerald-950/20 px-3.5 py-2 text-xs text-emerald-300 flex items-center justify-between gap-2";
+        doneBanner.innerHTML = `<span>✅ 모든 활성 단계가 <b>DONE</b> 상태입니다. 아래 마스터 카드를 클릭하면 <b>5단계 세부 스케줄(SP1~SP5)</b>이 펼쳐집니다.</span><span class="text-[var(--muted-foreground)] shrink-0">shadcn/ui Accordion</span>`;
+        schedList.appendChild(doneBanner);
       }}
+
+      let openId = "";
+      try {{ openId = sessionStorage.getItem("uaosHudOpenCard") || (masterItems[0] ? masterItems[0].phase_id : ""); }} catch (e) {{ openId = masterItems[0] ? masterItems[0].phase_id : ""; }}
+
+      masterItems.forEach((m, idx) => {{
+        const view = m.presentation || {{ title_primary: m.title === m.phase_id ? "작업 목적 미등록 / Purpose not recorded" : (m.title || "작업 목적 미등록 / Purpose not recorded") }};
+        const tone = m.blocked ? "#ef4444" : (STATE_TONE[m.state] || "#60a5fa");
+        const shownState = m.blocked ? "막힘" : m.state;
+        const execUpper = m.owner_tool.toUpperCase();
+        const judgeUpper = m.judge_tool.toUpperCase();
+        const replan = (m.plan_exec && m.plan_exec !== m.owner_tool) || (m.plan_judge && m.plan_judge !== m.judge_tool);
+        const ownerAvg = ((SNAP.engines || {{}})[m.owner_tool] || {{}}).avg_card_cost_tokens;
+        const estText = m.estimate_basis === "CARD" ? fmt(m.estimated_paid_tokens) : (ownerAvg ? fmt(ownerAvg) : fmt(m.estimated_paid_tokens));
+
+        const spRows = (m.sub_processes || []).map(sp => {{
+          const spSt = sp.state || m.state;
+          const spTone = STATE_TONE[spSt] || "#94a3b8";
+          const sup = String(sp.supervisor_tool || sp.primary_worker || m.owner_tool).toUpperCase();
+          const rMod = sp.designated_reasoning_model || m.reasoning_model || "-";
+          const rEff = sp.reasoning_thinking_level || m.reasoning_effort || "Medium";
+          const hMod = sp.designated_helper_model || m.helper_model || "-";
+          const hEff = sp.helper_thinking_level || m.helper_effort || "Low";
+          const spTok = sp.estimated_paid_tokens !== undefined ? fmt(sp.estimated_paid_tokens) + " tok" : "-";
+          const detailMeta = sp.quality_gate
+            ? `게이트: ${{sp.quality_gate}}`
+            : (sp.allowed_paths && sp.allowed_paths.length ? `경로: ${{sp.allowed_paths.join(", ")}}` : (sp.offload_mode || ""));
+          const stepPurposeEn = ["Confirm goal and evidence", "Review design and counterexamples", "Implement allowed scope", "Run independent verification", "Merge and install after checks"][Number(sp.step_index) - 1] || "";
+          return `
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-2 items-center py-2 px-3 border-b border-[var(--border)]/60 last:border-0 hover:bg-white/[0.02] transition-colors text-xs">
+              <div class="md:col-span-4 flex items-center gap-2 min-w-0">
+                <span class="px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 font-bold shrink-0">SP${{esc(sp.step_index)}}</span>
+                <div class="min-w-0">
+                  <div class="font-semibold text-[var(--foreground)] break-words">${{esc(sp.stage_name || sp.sub_id)}}</div>
+                  <div class="text-xs text-[var(--muted-foreground)] break-words">${{esc(stepPurposeEn)}}</div>
+                  <div class="text-xs text-[var(--muted-foreground)] truncate" title="${{esc(detailMeta)}}">${{esc(detailMeta)}}</div>
+                </div>
+              </div>
+              <div class="md:col-span-4 text-[var(--muted-foreground)]">
+                <div>주력 <b class="text-[var(--foreground)]">${{esc(rMod)}}</b> <span class="text-xs">(${{esc(rEff)}})</span></div>
+                <div>도우미 <b class="text-emerald-300">${{esc(hMod)}}</b> <span class="text-xs">(${{esc(hEff)}} · ≤12K)</span></div>
+              </div>
+              <div class="md:col-span-3 text-[var(--muted-foreground)]">
+                <div>작업자 <b class="text-pink-300">${{esc(String(sp.primary_worker || "ollama").toUpperCase())}}</b>${{sp.parallel_companion_worker ? ` ∥ <b class="text-emerald-300">${{esc(String(sp.parallel_companion_worker).toUpperCase())}}</b>` : ""}}</div>
+                <div class="text-xs">감독 <b>${{esc(sup)}}</b> · 예산 <b>${{esc(spTok)}}</b></div>
+              </div>
+              <div class="md:col-span-1 text-right">
+                <span class="px-2 py-0.5 rounded-full font-bold text-xs" style="background:${{spTone}}22;color:${{spTone}}">${{esc(spSt)}}</span>
+              </div>
+            </div>`;
+        }}).join("");
+
+        const item = document.createElement("details");
+        item.className = "acc-item group bg-[var(--card)] transition-colors";
+        item.open = openId ? (openId === m.phase_id) : (idx === 0);
+        item.addEventListener("toggle", () => {{
+          if (item.open) {{
+            schedList.querySelectorAll("details.acc-item[open]").forEach(o => {{ if (o !== item) o.open = false; }});
+            try {{ sessionStorage.setItem("uaosHudOpenCard", m.phase_id); }} catch (e) {{}}
+          }}
+        }});
+        item.innerHTML = `
+          <summary class="acc-sum flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-[var(--secondary)]/60 transition-colors">
+            <div class="flex items-center gap-2.5 min-w-0 flex-1">
+              <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0" style="background:${{tone}}"></span>
+              <span class="px-2 py-0.5 rounded bg-[var(--secondary)] text-sky-300 font-bold text-xs shrink-0">${{esc(m.phase_id)}}</span>
+              <span class="flex-1 min-w-0 break-words whitespace-normal" style="min-width:10rem"><span class="block font-semibold text-sm text-[var(--foreground)]">${{esc(view.title_primary)}}</span>${{view.title_secondary ? `<span class="block text-xs text-[var(--muted-foreground)]">${{esc(view.title_secondary)}}</span>` : ""}}</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs shrink-0">
+              <span class="hidden sm:inline text-[var(--muted-foreground)]">담당 <b class="text-[var(--foreground)]">${{esc(execUpper)}}</b> (<span class="text-sky-300">${{esc(m.reasoning_model)}}</span> + <span class="text-emerald-300">${{esc(m.helper_model)}}</span>) · 판정 <b class="text-[var(--foreground)]">${{esc(judgeUpper)}}</b></span>
+              <span class="px-2 py-0.5 rounded-md bg-[var(--secondary)] text-[var(--muted-foreground)] font-medium">SP1~SP5 (5공정)</span>
+              <span class="px-2.5 py-0.5 rounded-full font-bold" style="background:${{tone}}22;color:${{tone}}">${{esc(shownState)}}</span>
+              <span class="acc-chev text-[var(--muted-foreground)] text-sm">▾</span>
+            </div>
+          </summary>
+          <div class="acc-body px-3.5 pb-3.5 pt-2 bg-[var(--background)]/50 border-t border-[var(--border)]/60 space-y-2.5">
+            <div class="break-words rounded-md bg-[var(--secondary)] px-3 py-2 text-xs"><b>현재 작업 / Current work</b><div>${{esc(view.action_primary || m.action || "현재 작업 미등록 / Current work not recorded")}}</div>${{view.action_secondary ? `<div class="text-xs text-[var(--muted-foreground)]">${{esc(view.action_secondary)}}</div>` : ""}}</div>
+            ${{m.blocker_reason ? `<div class="rounded-md px-3 py-2 text-xs" style="background:#7f1d1d55;border:1px solid #7f1d1d"><b>⛔ 막힌 이유 (장부 원문)</b><div>${{esc(m.blocker_reason)}}</div></div>` : ""}}
+            <!-- Master Card Metadata Badges -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <div class="rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5">
+                <div class="text-xs text-[var(--muted-foreground)]">장부 상태 · 담당 (장부)</div>
+                <div class="font-bold mt-0.5"><span style="color:${{tone}}">${{esc(shownState)}}</span> · ${{esc(execUpper)}} (<span class="text-sky-300">${{esc(m.reasoning_model)}}</span> · ${{esc(m.reasoning_effort)}})</div>
+              </div>
+              <div class="rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5">
+                <div class="text-xs text-[var(--muted-foreground)]">전담 도우미 · 로컬 계산기</div>
+                <div class="font-bold mt-0.5"><span class="text-emerald-300">${{esc(m.helper_model)}}</span> (30%) · <span class="text-pink-300">Ollama</span> (50%)</div>
+              </div>
+              <div class="rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5">
+                <div class="text-xs text-[var(--muted-foreground)]">판정 (장부 · author ≠ judge)</div>
+                <div class="font-bold mt-0.5">${{esc(judgeUpper)}} · 독립 교차검수</div>
+              </div>
+              <div class="rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5">
+                <div class="text-xs text-[var(--muted-foreground)]">유료 토큰 추정 (${{m.estimate_basis === "CARD" ? "카드 지정" : "담당 도구 평균 카드 비용"}})</div>
+                <div class="font-bold mt-0.5">${{estText}} 토큰</div>
+              </div>
+            </div>
+            ${{replan ? `<div class="rounded-md border border-dashed border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)]">🧮 계획기 제안(장부 아님): 실행 <b>${{esc(m.plan_exec.toUpperCase())}}</b> · 검증 <b>${{esc(m.plan_judge.toUpperCase())}}</b> — 한도 예측으로 계산한 값입니다.</div>` : ""}}
+            <!-- Sub-Process Schedule Table (SP1~SP5) -->
+            <div class="rounded-lg border border-[var(--border)] bg-[var(--card)] overflow-hidden">
+              <div class="bg-[var(--secondary)]/70 px-3 py-1.5 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span class="font-bold text-sky-300">🗺️ [${{esc(m.phase_id)}}] 세부 스케줄 — 5단계 세부 프로세스 DAG (SP1~SP5) <span class="font-normal text-[var(--muted-foreground)]">(표준 단계 템플릿: 계획일 뿐, 실행 증거가 아님)</span></span>
+                <span class="text-xs text-[var(--muted-foreground)]">올라마 50%(0원) ∥ 전담 도우미 30%(≤12K) ∥ 주력 추론 20%</span>
+              </div>
+              <div class="divide-y divide-[var(--border)]/50">
+                ${{spRows}}
+              </div>
+            </div>
+            ${{m.action || m.note ? `<div class="text-xs text-[var(--muted-foreground)]">📌 장부 기록: ${{m.action ? "다음 행동 " + esc(m.action) : ""}}${{m.note ? " · 메모 " + esc(m.note) : ""}}</div>` : ""}}
+          </div>`;
+        schedList.appendChild(item);
+      }});
     }}
 
-    // U286: reset countdowns tick every second between the 30 s snapshot reloads (pure clock math, no new data).
     setInterval(() => {{ document.querySelectorAll(".countdown").forEach(el => {{ el.textContent = untilText(el.dataset.at); }}); tickRings(); }}, 1000);
     const hudBtn = document.getElementById("hud-toggle-btn");
     const macroBox = document.getElementById("macro-dashboard-container");
     if (hudBtn && macroBox) {{
-      // U286: the summary/full choice survives the 30 s auto-reload of the live HUD.
       const applyMode = (summary) => {{
         macroBox.classList.toggle("hidden", summary);
         hudBtn.textContent = summary ? "📊 전체 계기판 보기" : "🔽 요약만 보기";

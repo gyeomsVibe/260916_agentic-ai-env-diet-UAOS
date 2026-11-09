@@ -631,6 +631,20 @@ def cmd_coord_hud(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_coord_mobile_hud(args: argparse.Namespace) -> int:
+    """U306: Mobile HUD status exporter and lightweight HTTP server (uaos coord mobile-hud)."""
+    from .coord.mobile_hud import export_mobile_status, serve_mobile_api
+
+    project = Path(args.project)
+    if getattr(args, "serve", False):
+        serve_mobile_api(project, host=args.host, port=args.port)
+        return 0
+    out = export_mobile_status(project)
+    print(json.dumps({"ok": True, "exported": str(out)}, ensure_ascii=False))
+    return 0
+
+
 def cmd_coord_statusline_claude(args: argparse.Namespace) -> int:
     """U303-B: Claude Code statusLine command; records measured rate limits, prints one status line."""
     from .coord.claude_statusline import main as statusline_main
@@ -1125,6 +1139,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_hud.add_argument("--no-open", action="store_true", help="Do not open the page in the browser")
     p_coord_hud.set_defaults(func=cmd_coord_hud)
 
+    from .coord.native_meter import add_parser as add_meter_parser
+    add_meter_parser(p_coord_subs)
+
     p_coord_sl = p_coord_subs.add_parser("statusline-claude", help="U303-B: Claude Code statusLine recorder of measured rate limits")
     p_coord_sl.set_defaults(func=cmd_coord_statusline_claude)
     p_coord_qf = p_coord_subs.add_parser("quota-feed-claude", help="S1: record the Claude desktop usage reading")
@@ -1133,6 +1150,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_qf.add_argument("--week-pct", type=float, required=True)
     p_coord_qf.add_argument("--week-resets", required=True, help="ISO time or epoch seconds")
     p_coord_qf.set_defaults(func=cmd_coord_quota_feed_claude)
+
+    p_coord_mobile = p_coord_subs.add_parser("mobile-hud", help="U306: Mobile HUD status exporter and API server (iOS Scriptable & Android KWGT)")
+    p_coord_mobile.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_mobile.add_argument("--serve", action="store_true", help="Run lightweight local HTTP server")
+    p_coord_mobile.add_argument("--host", default="0.0.0.0", help="HTTP server host (default: 0.0.0.0)")
+    p_coord_mobile.add_argument("--port", type=int, default=8765, help="HTTP server port (default: 8765)")
+    p_coord_mobile.set_defaults(func=cmd_coord_mobile_hud)
+
 
     p_coord_hm = p_coord_subs.add_parser(
         "helper-matrix",
@@ -1248,6 +1273,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_init.add_argument("--project", default=".", help="Project to prepare for UAOS (default: .)")
     p_coord_init.set_defaults(func=cmd_coord_init)
     _add_docs_parsers(subparsers)
+
+    p_coord_lib = p_coord_subs.add_parser(
+        "library",
+        help="U250/U314: Index, inspect, or isolate selected and excluded sessions in .work/library",
+    )
+    p_coord_lib.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_lib.add_argument("--action", choices=["index", "inspect", "session", "excluded"], default="index")
+    p_coord_lib.add_argument("--repo", default=None, help="Repository folder name in .work/library")
+    p_coord_lib.set_defaults(func=cmd_coord_library)
 
     p_coord_inbox = p_coord_subs.add_parser("inbox")
     p_coord_inbox.add_argument("--project", default=".", help="Project root (default: .)")
@@ -3093,6 +3127,58 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
 _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window", "lanes"})
+
+
+def cmd_coord_library(args: argparse.Namespace) -> int:
+    from .library_store import (
+        LibraryStoreError,
+        build_library_catalog_index,
+        create_excluded_library_session,
+        create_library_project_session,
+        identify_library_project,
+    )
+    project_root = Path(args.project).resolve()
+    action = getattr(args, "action", "index") or "index"
+    repo_name = getattr(args, "repo", None)
+    try:
+        if action == "inspect":
+            if not repo_name:
+                print(json.dumps({"ok": False, "error": "--repo is required for inspect"}, ensure_ascii=False))
+                return 2
+            payload = identify_library_project(project_root, repo_name)
+            print(json.dumps({"ok": True, "project": payload}, ensure_ascii=False, indent=2))
+            return 0
+        if action == "session":
+            if not repo_name:
+                print(json.dumps({"ok": False, "error": "--repo is required for session"}, ensure_ascii=False))
+                return 2
+            payload = create_library_project_session(project_root, repo_name)
+            print(json.dumps({"ok": True, "session": payload}, ensure_ascii=False, indent=2))
+            return 0
+        if action == "excluded":
+            payload = create_excluded_library_session(project_root)
+            print(json.dumps({"ok": True, "excluded_session": payload}, ensure_ascii=False, indent=2))
+            return 0
+        catalog = build_library_catalog_index(project_root)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "total_selected_projects": catalog["total_selected_projects"],
+                    "total_excluded_projects": catalog["total_excluded_projects"],
+                    "excluded_session_id": catalog["excluded_session_id"],
+                    "index_path": ".work/library/INDEX.json",
+                    "coord_index_path": ".coord/library_index.json",
+                    "excluded_session_file": catalog["excluded_session_file"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    except LibraryStoreError as exc:
+        print(json.dumps({"ok": False, "code": exc.code, "error": str(exc)}, ensure_ascii=False))
+        return 2
 
 
 def cmd_coord_lanes(args: argparse.Namespace) -> int:

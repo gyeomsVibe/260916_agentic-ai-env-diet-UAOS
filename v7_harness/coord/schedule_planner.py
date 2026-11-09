@@ -29,6 +29,7 @@ from v7_harness.coord.helper_thinking_router import (
     select_optimal_helper_and_thinking,
 )
 from v7_harness.coord.hook_context import shared_desk
+from v7_harness.coord.card_summary import summary_record
 
 ASSIGNMENT_SCHEMA = "uaos-schedule-assignment-v1"
 DRIVER_SCHEMA = "uaos-sub-schedule-driver-v1"
@@ -651,7 +652,8 @@ def _import_capacity_card(c: dict[str, Any]) -> dict[str, Any]:
         steps.append({"sub_id": sid, "step_index": int(sp.get("step_index") or len(steps) + 1), "stage": stage,
                       "state": str(sp.get("state") or "PLANNED").upper(),
                       "depends_on": list(sp.get("depends_on") or [])})
-    return {"card_id": pid, "title": pid, "lane": "", "author": author, "judge": judge, "files": 0,
+    return {"card_id": pid, "title": c.get("card_title") or c.get("title") or pid,
+            "lane": "", "author": author, "judge": judge, "files": 0,
             "text": " ".join(str(sp.get("stage_name") or "") for sp in c.get("sub_processes") or [] if isinstance(sp, dict)),
             "source": "capacity_planner:card_sub_schedules", "steps": steps}
 
@@ -698,11 +700,25 @@ def _sync_master(master: dict[str, Any], driver: dict[str, Any]) -> None:
         phase["current_sub_step"] = active
 
 
+def _display_summary(metadata: dict[str, Any], desk: Path) -> dict[str, str]:
+    fields = summary_record(metadata, desk)
+    return {key: fields[key] for key in ("display_title", "user_summary", "agent_summary")}
+
+
 def _write_both(desk: Path, master: dict[str, Any], driver: dict[str, Any]) -> None:
     master_path, sub_path = _paths(desk)
     driver["updated_at"] = _now_iso()
     master["sub_schedule_driver"] = driver
     _sync_master(master, driver)
+    for phase in master.get("phases") or []:
+        if isinstance(phase, dict):
+            phase.update(_display_summary(phase, desk))
+    phase_by_id = {p.get("phase_id"): p for p in master.get("phases") or [] if isinstance(p, dict)}
+    for cid, card in driver["cards"].items():
+        source = {**phase_by_id.get(cid, {}), **card, "phase_id": cid}
+        card.update(_display_summary(source, desk))
+        for step in card["steps"]:
+            step.update(_display_summary({**source, **step}, desk))
     sub = _read_json(sub_path)
     sub.setdefault("schema", "uaos-sub-process-schedule-v1")
     sub["live_driver"] = driver
@@ -712,11 +728,13 @@ def _write_both(desk: Path, master: dict[str, Any], driver: dict[str, Any]) -> N
         dcard = driver["cards"].get(str(c.get("phase_id") or ""))
         if not dcard:
             continue
+        c.update(_display_summary({**phase_by_id.get(c.get("phase_id"), {}), **dcard}, desk))
         by_sid = {s["sub_id"]: s for s in dcard["steps"]}
         for sp in c.get("sub_processes") or []:
             if isinstance(sp, dict) and sp.get("sub_id") in by_sid:
                 sp["u304c_assignment"] = by_sid[sp["sub_id"]].get("assignment")
                 sp["state"] = by_sid[sp["sub_id"]]["state"]
+                sp.update({k: by_sid[sp["sub_id"]][k] for k in ("display_title", "user_summary", "agent_summary")})
     for path in (master_path, sub_path):
         _backup(desk, path)
     _atomic_write(master_path, master)
@@ -842,7 +860,8 @@ def show_sub(project: str | Path) -> dict[str, Any]:
     desk = shared_desk(Path(project))
     driver = _read_json(_paths(desk)[0]).get("sub_schedule_driver") or {}
     return {"ok": True, "updated_at": driver.get("updated_at"),
-            "cards": {cid: [_step_line(s) for s in c["steps"]] for cid, c in (driver.get("cards") or {}).items()}}
+            "cards": {cid: [{**_step_line(s), **summary_record({**c, **s, "card_id": cid}, desk)}
+                             for s in c["steps"]] for cid, c in (driver.get("cards") or {}).items()}}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -904,7 +923,8 @@ def plan_master(
             p["model_assignment"] = assign_step(owner, est, card_id=pid, exhaustion_risk=_risk(owner),
                                                 allowance=allowance,
                                                 no_reroute=(normalize_tool_name(judge),) if judge else ())
-            out.append({"phase_id": pid, **{k: p["model_assignment"][k] for k in
+            p.update(_display_summary(p, desk))
+            out.append({"phase_id": pid, **_display_summary(p, desk), **{k: p["model_assignment"][k] for k in
                                             ("tool", "tier", "main_model", "main_effort", "helper_model", "helper_effort")}})
         master["schedule_budget"] = _budget_record(allowance, start)
         if not dry_run:
@@ -917,10 +937,11 @@ def plan_master(
 
 def show_master(project: str | Path) -> dict[str, Any]:
     """Assignments already written on the master phases (no re-plan, so no budget needed)."""
-    master = _read_json(_paths(shared_desk(Path(project)))[0])
+    desk = shared_desk(Path(project))
+    master = _read_json(_paths(desk)[0])
     phases = [p for p in master.get("phases") or [] if isinstance(p, dict) and p.get("model_assignment")]
     return {"ok": True, "budget": master.get("schedule_budget"),
-            "phases": [{"phase_id": p.get("phase_id"), "state": p.get("state"),
+            "phases": [{"phase_id": p.get("phase_id"), **summary_record(p, desk),
                         **{k: p["model_assignment"].get(k) for k in
                            ("tool", "tier", "main_model", "main_effort", "helper_model", "helper_effort")}}
                        for p in phases]}
