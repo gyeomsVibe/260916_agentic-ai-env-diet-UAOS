@@ -176,9 +176,11 @@ def prepare(project, card, tool, parent, *, source_head, reviewed_ref, max_token
             raise FabricRefusal("PARENT_SNAPSHOT_CHANGED", str(path))
         record = build_record(**fields)
         ports.store.write_record(record)
-    except FabricRefusal:  # known pre-native failure: durable FAILED record once fields are measured, then free capacity
-        _record_failure(ports, fields)
-        ports.lock.drop_fresh_lease(card, tool, slot)
+    except FabricRefusal as refusal:  # known pre-native failure: durable FAILED evidence, capacity freed even on OSError
+        try:
+            _record_failure(ports, fields, refusal.code)
+        finally:
+            ports.lock.drop_fresh_lease(card, tool, slot)
         raise
     return record
 
@@ -517,8 +519,12 @@ def await_turn(record, turn_key, *, ports, time_cap_s):
     return _save(rec, ports, state="WAITING" if status == "COMPLETED" else "FAILED", turns=turns)
 
 
-def _record_failure(ports, fields):
-    """Known pre-native failure: durable FAILED rev-0 record; an existing record is never overwritten."""
+def _record_failure(ports, fields, code):
+    """Known pre-native failure: always a durable prepare_failed intent (manifest null while unmeasured, never
+    invented), then a FAILED rev-0 record when the fields are schema-valid; an existing record is never overwritten."""
+    ports.store.append_intent(fields["card"], fields["tool"], "prepare_failed",
+                              {"state": "FAILED", "failure_code": code, "card_uuid": fields["card_uuid"],
+                               "source_manifest_sha256": fields["workspace"]["source_manifest_sha256"]})
     try:
         record = build_record(**fields)
         record["state"] = "FAILED"
