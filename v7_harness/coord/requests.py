@@ -541,18 +541,33 @@ def _letter_reply(path: Path) -> tuple[str, str, str] | None:
     except (OSError, UnicodeDecodeError, ValueError):
         record = None
     payload = record.get("payload") if isinstance(record, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("in_reply_to"), str) and payload["in_reply_to"]:
-        outcome = payload.get("outcome")
-        result = (payload["in_reply_to"], str(payload.get("actor") or ""),
-                  outcome if isinstance(outcome, str) and outcome else "REPLIED")
+    if isinstance(payload, dict):
+        actor = str(payload.get("actor") or "")
+        rep = payload.get("in_reply_to") or payload.get("reply_to") or payload.get("answering")
+        verdict = str(payload.get("verdict") or payload.get("outcome") or "").upper()
+        if isinstance(rep, str) and rep:
+            outcome = payload.get("verdict") or payload.get("outcome")
+            result = (rep, actor, outcome if isinstance(outcome, str) and outcome else "REPLIED")
+        elif verdict in VERDICT_OUTCOMES:
+            text = f"{payload.get('message') or ''} {payload.get('delta') or ''}".lower()
+            keys = [f"head:{s[:12]}" for s in re.findall(r"\b[0-9a-f]{12,40}\b", text)]
+            card = str(payload.get("card") or "").strip()
+            if card:
+                keys.append(f"card:{card}")
+            if keys:
+                result = ("|".join(dict.fromkeys(keys)), actor, verdict)
     _LETTER_CACHE[str(path)] = (mtime, result)
     return result
 
 
 def _letter_answer(project: Path, row: dict[str, Any], replies: dict[str, list[tuple[str, str, str]]]) -> dict[str, Any] | None:
-    for letter_id, actor, outcome in replies.get(str(row["request_id"]), []):
-        if actor == row.get("target"):
-            return {"ref": letter_id, "outcome": outcome}
+    head, card = str(row.get("head") or "").lower(), str(row.get("card") or "").strip()
+    lookup = [str(row["request_id"]), *([f"head:{head[:12]}"] if len(head) >= 12 else []),
+              *([f"card:{card}"] if card else [])]
+    for key in lookup:
+        for letter_id, actor, outcome in replies.get(key, []):
+            if actor == row.get("target"):
+                return {"ref": letter_id, "outcome": outcome}
     return None
 
 
@@ -563,15 +578,13 @@ def _letter_replies(project: Path, since: float) -> dict[str, list[tuple[str, st
     for folder in (box / "inbox", box / "ack"):
         if not folder.is_dir():
             continue
-        for path in sorted(folder.glob("*.json")):
-            try:
-                if path.stat().st_mtime < since:
-                    continue
-            except OSError:
-                continue
+        entries = [Path(e.path) for e in os.scandir(folder)
+                   if e.is_file() and e.name.endswith(".json") and e.stat().st_mtime >= since]
+        for path in sorted(entries, key=lambda p: p.name):
             reply = _letter_reply(path)
             if reply is not None:
-                replies.setdefault(reply[0], []).append((path.stem, reply[1], reply[2]))
+                for key in reply[0].split("|"):
+                    replies.setdefault(key, []).append((path.stem, reply[1], reply[2]))
     return replies
 
 

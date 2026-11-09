@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -621,6 +622,48 @@ def cmd_coord_capacity(args: argparse.Namespace) -> int:
 
 
 
+def cmd_coord_hud(args: argparse.Namespace) -> int:
+    """U303: live cockpit HUD from the installed runtime (`uaos coord hud --project <root>`)."""
+    from .coord.hud_live import serve
+
+    res = serve(Path(args.project), once=bool(args.once), open_page=not args.no_open)
+    print(json.dumps(res, ensure_ascii=False))
+    return 0
+
+
+
+def cmd_coord_mobile_hud(args: argparse.Namespace) -> int:
+    """U306: Mobile HUD status exporter and lightweight HTTP server (uaos coord mobile-hud)."""
+    from .coord.mobile_hud import export_mobile_status, serve_mobile_api
+
+    project = Path(args.project)
+    if getattr(args, "serve", False):
+        serve_mobile_api(project, host=args.host, port=args.port)
+        return 0
+    out = export_mobile_status(project)
+    print(json.dumps({"ok": True, "exported": str(out)}, ensure_ascii=False))
+    return 0
+
+
+def cmd_coord_statusline_claude(args: argparse.Namespace) -> int:
+    """U303-B: Claude Code statusLine command; records measured rate limits, prints one status line."""
+    from .coord.claude_statusline import main as statusline_main
+
+    return statusline_main()
+
+
+def cmd_coord_quota_feed_claude(args: argparse.Namespace) -> int:
+    """S1: record the Claude desktop app's usage reading (5h/weekly %, resets) at zero paid tokens."""
+    from pathlib import Path as _P
+
+    from .coord.claude_statusline import record_desktop
+
+    out = _P.home() / ".uaos" / "usage" / "claude_rate_limits.jsonl"
+    ok = record_desktop(args.five_hour_pct, args.five_hour_resets, args.week_pct, args.week_resets, out=out)
+    print(json.dumps({"ok": ok, "file": str(out)}))
+    return 0 if ok else 1
+
+
 def cmd_coord_flagman_pulse(args: argparse.Namespace) -> int:
     from .disjoint_mediator import run_independent_flagman_pulse
 
@@ -657,6 +700,42 @@ def cmd_coord_helper_matrix(args: argparse.Namespace) -> int:
         payload = audit_and_optimize_claude_ollama_haiku_parallel(project)
     else:
         payload = optimize_master_and_sub_schedules(project)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_coord_schedule(args: argparse.Namespace) -> int:
+    from .coord import schedule_planner as sp
+
+    project = Path(args.project)
+    try:
+        if args.action == "plan":
+            # U304 item 7: the measured budget is a required input; no file and no provider -> fail closed.
+            budget = None
+            if args.budget_file:
+                budget = json.loads(Path(args.budget_file).read_text(encoding="utf-8"))
+            else:
+                try:
+                    from .coord import usage_budget  # U304-D provider, wired once it lands
+                except ImportError:
+                    usage_budget = None
+                if usage_budget is not None and hasattr(usage_budget, "budget_snapshot"):
+                    budget = usage_budget.schedule_budget_for(project)
+            fn = sp.plan_sub if args.sub else sp.plan_master
+            payload = fn(project, card_file=args.card_file, keypoints=tuple(args.keypoint or ()),
+                         dry_run=bool(args.dry_run), budget=budget)
+        elif args.action == "show":
+            payload = sp.show_sub(project) if args.sub else sp.show_master(project)
+        else:
+            if not args.card:
+                raise ValueError("--card is required to advance")
+            if args.sub:
+                payload = sp.advance_sub(project, card=args.card, step=args.step, to=args.to or "DONE")
+            else:
+                payload = sp.advance_master(project, phase=args.card, to=args.to)
+    except (KeyError, ValueError, OSError, TimeoutError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -1004,6 +1083,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_push.add_argument("--supersede", action="store_true",
                               help="U295: push over an open verdict request; it is recorded STALE and its requester woken")
     p_coord_push.set_defaults(func=cmd_coord_push_check)
+    # U304-D: budget ledger + allocator; schedule writers read the same snapshot through budget_snapshot().
+    p_coord_budget = p_coord_subs.add_parser("budget", help="Per-subscription budget: measured windows, split, flagship")
+    p_coord_budget.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_budget.add_argument("--action", default="show", choices=["show", "observe", "gate"])
+    p_coord_budget.add_argument("--json", action="store_true")
+    p_coord_budget.add_argument("--refresh", action="store_true", help="Rebuild even when a fresh snapshot exists")
+    p_coord_budget.add_argument("--tool", default=None, choices=["claude", "codex", "antigravity"])
+    p_coord_budget.add_argument("--window", default=None, choices=["5h", "7d"])
+    p_coord_budget.add_argument("--used-pct", type=float, default=None)
+    p_coord_budget.add_argument("--resets-at", default=None, help="ISO time or epoch seconds")
+    p_coord_budget.add_argument("--observed-at", default=None)
+    p_coord_budget.add_argument("--source", default="manual_usage_card", help="Where the reading came from")
+    p_coord_budget.add_argument("--importance", type=int, default=None, help="gate: 1-5")
+    p_coord_budget.add_argument("--difficulty", type=int, default=None, help="gate: 1-5")
+    p_coord_budget.add_argument("--cheaper-failed", default=None, help="gate: work_id of the failed cheaper attempt")
+    p_coord_budget.add_argument("--keypoint-class", default=None)
+    p_coord_budget.add_argument("--used-steps-5h", type=int, default=0)
+    p_coord_budget.set_defaults(func=cmd_coord_budget)
     # U295 B2: one writer per PR branch.
     p_coord_lease = p_coord_subs.add_parser("lease", help="Acquire, release or show the one-writer lease of a branch")
     p_coord_lease.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1036,6 +1133,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_cap.add_argument("--html", default=None, help="Optional path to write interactive HTML dashboard widget")
     p_coord_cap.set_defaults(func=cmd_coord_capacity)
 
+    p_coord_hud = p_coord_subs.add_parser("hud", help="U303: live cockpit HUD (measured quota, models, schedule) from the installed runtime")
+    p_coord_hud.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_hud.add_argument("--once", action="store_true", help="Render one page and exit")
+    p_coord_hud.add_argument("--no-open", action="store_true", help="Do not open the page in the browser")
+    p_coord_hud.set_defaults(func=cmd_coord_hud)
+
+    from .coord.native_meter import add_parser as add_meter_parser
+    add_meter_parser(p_coord_subs)
+
+    p_coord_sl = p_coord_subs.add_parser("statusline-claude", help="U303-B: Claude Code statusLine recorder of measured rate limits")
+    p_coord_sl.set_defaults(func=cmd_coord_statusline_claude)
+    p_coord_qf = p_coord_subs.add_parser("quota-feed-claude", help="S1: record the Claude desktop usage reading")
+    p_coord_qf.add_argument("--five-hour-pct", type=float, required=True)
+    p_coord_qf.add_argument("--five-hour-resets", required=True, help="ISO time or epoch seconds")
+    p_coord_qf.add_argument("--week-pct", type=float, required=True)
+    p_coord_qf.add_argument("--week-resets", required=True, help="ISO time or epoch seconds")
+    p_coord_qf.set_defaults(func=cmd_coord_quota_feed_claude)
+
+    p_coord_mobile = p_coord_subs.add_parser("mobile-hud", help="U306: Mobile HUD status exporter and API server (iOS Scriptable & Android KWGT)")
+    p_coord_mobile.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_mobile.add_argument("--serve", action="store_true", help="Run lightweight local HTTP server")
+    p_coord_mobile.add_argument("--host", default="0.0.0.0", help="HTTP server host (default: 0.0.0.0)")
+    p_coord_mobile.add_argument("--port", type=int, default=8765, help="HTTP server port (default: 8765)")
+    p_coord_mobile.set_defaults(func=cmd_coord_mobile_hud)
+
+
     p_coord_hm = p_coord_subs.add_parser(
         "helper-matrix",
         help="U297: Official 3-tool helper model & reasoning lineup declaration, Thinking Level (Low/Medium/High) auto-selector, and schedule optimizer",
@@ -1055,6 +1178,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_hm.add_argument("--keypoint", action="store_true", help="Whether the task is a keypoint")
     p_coord_hm.add_argument("--utilization-5h-pct", type=float, default=0.0, help="Observed 5h utilization percentage")
     p_coord_hm.set_defaults(func=cmd_coord_helper_matrix)
+
+    # U304-C: schedule-time model/effort/helper assignment and the live driver of the detailed schedule.
+    p_coord_sched = p_coord_subs.add_parser(
+        "schedule",
+        help="U304-C: assign main model, effort, helper per master/sub step from estimates; drive the sub schedule",
+    )
+    p_coord_sched.add_argument("action", choices=["plan", "advance", "show"])
+    p_coord_sched.add_argument("--project", default=".", help="Project root (default: .)")
+    sched_scope = p_coord_sched.add_mutually_exclusive_group(required=True)
+    sched_scope.add_argument("--master", action="store_true", help="Master schedule (.coord/master_schedule.json)")
+    sched_scope.add_argument("--sub", action="store_true", help="Detailed schedule (.coord/sub_process_schedule.json)")
+    p_coord_sched.add_argument("--card-file", default=None, help="Card manual whose `## Cards` table is scheduled")
+    p_coord_sched.add_argument("--card", default=None, help="Card (sub advance) or phase id (master advance)")
+    p_coord_sched.add_argument("--step", default=None, help="Sub step id or stage code (default: the ACTIVE step)")
+    p_coord_sched.add_argument("--to", default=None, help="Target state (default: DONE for sub, next state for master)")
+    p_coord_sched.add_argument("--keypoint", action="append", default=[],
+                               help="Card/phase id the conductor declares a keypoint (user emphasis); repeatable")
+    p_coord_sched.add_argument("--dry-run", action="store_true", help="Plan without writing")
+    p_coord_sched.add_argument("--budget-file", default=None,
+                               help="Measured budget snapshot JSON (U304-D shape); plan fails closed without one")
+    p_coord_sched.set_defaults(func=cmd_coord_schedule)
 
     p_coord_rea = p_coord_subs.add_parser(
         "rea-audit",
@@ -1087,6 +1231,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_route.set_defaults(func=cmd_coord_route)
+    p_coord_part = p_coord_subs.add_parser("participation",
+                                           help="S5: decide TRIO/DUO/SOLO/HALT before dispatch; writes the snapshot")
+    p_coord_part.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_part.add_argument("--home", default=None, help="Home holding quota sources (default: the user's)")
+    p_coord_part.add_argument("--pool", action="append", default=[],
+                              help="tool=<S1 pool id> the dispatch really uses; an unbound pool never admits")
+    p_coord_part.set_defaults(func=cmd_coord_participation)
     p_coord_collect = p_coord_subs.add_parser(
         "usage-collect", help="Find usage rows left only in linked worktrees; --apply appends them to the desk ledger")
     p_coord_collect.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1122,6 +1273,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_init.add_argument("--project", default=".", help="Project to prepare for UAOS (default: .)")
     p_coord_init.set_defaults(func=cmd_coord_init)
     _add_docs_parsers(subparsers)
+
+    p_coord_lib = p_coord_subs.add_parser(
+        "library",
+        help="U250/U314: Index, inspect, or isolate selected and excluded sessions in .work/library",
+    )
+    p_coord_lib.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_lib.add_argument("--action", choices=["index", "inspect", "session", "excluded"], default="index")
+    p_coord_lib.add_argument("--repo", default=None, help="Repository folder name in .work/library")
+    p_coord_lib.set_defaults(func=cmd_coord_library)
 
     p_coord_inbox = p_coord_subs.add_parser("inbox")
     p_coord_inbox.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1163,17 +1323,20 @@ def build_parser() -> argparse.ArgumentParser:
                              help="U279: acquire from the bounded topic-grouped window pool (3 active per tool, LRU eviction, 70k token rotation)")
     p_coord_win.set_defaults(func=cmd_coord_window)
 
-    # U287/U292: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
+    # U287/U292/U293: 3-Tool Common Process-Classification Parallel Window Multiplexing & Real-Time Handoff
     p_coord_lanes = p_coord_subs.add_parser(
         "lanes",
-        help="U287/U292: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
+        help="U287/U292/U293: Group pending processes by classification lane, open dedicated windows, and dispatch/handoff in parallel",
     )
     p_coord_lanes.add_argument("--project", default=".", help="Project root (default: .)")
-    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session"], default="status")
+    p_coord_lanes.add_argument("--action", choices=["status", "dispatch", "handoff", "classify", "clear-obstacles", "provision-cards", "record-rsi-session", "sync-card-sessions", "launch-spec", "orchestrate-cards", "claim-topmost-window", "heal-dilemmas"], default="status")
     p_coord_lanes.add_argument("--session-id", default="", help="U292: RSI upgrade session ID for record-rsi-session")
     p_coord_lanes.add_argument("--title", default="", help="U292: RSI upgrade session title")
     p_coord_lanes.add_argument("--rules-version", default="7.6.2", help="U292: Global rules version pinned in RSI session")
     p_coord_lanes.add_argument("--lane", default="", help="Optional specific lane id (IMPL_CODE, VERIFY_AUDIT, ARCH_DESIGN, MERGE_RELEASE, RECOVERY_OPS)")
+    p_coord_lanes.add_argument("--pool", action="append", default=[],
+                               help="S5: tool=<S1 pool id> for dispatch; given -> refresh the participation snapshot "
+                                    "with these pools first, omitted -> use the standing snapshot")
     p_coord_lanes.add_argument("--actor", default="antigravity", choices=["codex", "claude", "antigravity"])
     p_coord_lanes.add_argument("--target", default="", help="Optional target tool for handoff")
     p_coord_lanes.add_argument("--card", default="", help="Optional card id for handoff")
@@ -1272,6 +1435,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_rsi_watch.add_argument("--project", default=".")
     p_rsi_watch.add_argument("--config", default=None, help="Watcher config JSON path")
     p_rsi_watch.set_defaults(func=cmd_rsi_watch)
+    p_rsi_endurance = p_rsi_subs.add_parser(
+        "endurance", help="Weekly 3-tool endurance report to .coord/reports/endurance_<date>.md (S6, 0 paid tokens)")
+    p_rsi_endurance.add_argument("--project", default=".")
+    p_rsi_endurance.add_argument("--force", action="store_true", help="Write even when a report from the last 7 days exists")
+    p_rsi_endurance.set_defaults(func=cmd_rsi_endurance)
 
     p_rsi_prepare = p_rsi_subs.add_parser("prepare", help="Prepare a release packet (dry-run by default, --apply to write)")
     p_rsi_prepare.add_argument("--project", default=".")
@@ -1676,6 +1844,17 @@ def cmd_card_audit(args: argparse.Namespace) -> int:
     except ValueError as exc:
         _print_json({"ok": False, "error": str(exc)})
         return 2
+    # U301: a repo that ships a UAOS VERSION may not pass audit with a missing, skipped or mismatched version-up.
+    repo = Path(args.project).resolve()
+    if (repo / "uaos_everywhere" / "VERSION").is_file():
+        from . import version_gate
+
+        try:
+            gate = version_gate.check(repo)
+        except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+            gate = {"ok": False, "codes": ["VERSION_GATE_UNAVAILABLE"], "error": str(exc)[:200]}
+        result["version_gate"] = gate
+        result["ok"] = bool(result["ok"] and gate["ok"])
     _print_json(result)
     return 0 if result["ok"] else 1
 
@@ -2319,6 +2498,36 @@ def cmd_coord_transplant_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coord_budget(args: argparse.Namespace) -> int:
+    """U304-D: per-subscription budget ledger, measured split and flagship gate (docs/108)."""
+    from .coord import usage_budget as ub
+    project = Path(args.project)
+    if args.action == "observe":
+        if not (args.tool and args.window and args.used_pct is not None and args.resets_at):
+            print("observe needs --tool --window --used-pct --resets-at", file=sys.stderr)
+            return 2
+        import time as _time
+        added = ub.record_observation(args.tool, args.window, args.used_pct, args.resets_at,
+                                      args.observed_at or _time.time(), args.source)
+        _print_json({"ok": True, "added": added, "tool": args.tool, "window": args.window})
+        return 0
+    snap = ub.budget_snapshot(project, refresh=args.refresh)
+    if args.action == "gate":
+        if not args.tool or args.importance is None or args.difficulty is None:
+            print("gate needs --tool --importance --difficulty", file=sys.stderr)
+            return 2
+        res = ub.flagship_gate(snap, args.tool, importance=args.importance, difficulty=args.difficulty,
+                               cheaper_route_failed=args.cheaper_failed, keypoint_class=args.keypoint_class,
+                               used_steps_5h=args.used_steps_5h)
+        _print_json(res)
+        return 0 if res["allow"] else 1
+    if args.json:
+        print(json.dumps(snap, ensure_ascii=False, indent=1, default=str))
+    else:
+        print(ub.render_text(snap))
+    return 0
+
+
 def cmd_coord_push_check(args: argparse.Namespace) -> int:
     """U146-A R2: deny-by-default push grant check."""
     from .coord import branch_guard
@@ -2372,9 +2581,30 @@ def cmd_coord_route(args: argparse.Namespace) -> int:
     states = {tool: (presence.get(tool) or {}).get("state", "UNKNOWN")
               for tool in ("codex", "claude", "antigravity")}
     authority = route_authority(states["codex"], states["claude"], states["antigravity"])
+    # S5: participation is reported beside authority; the exit code stays authority's (contract behaviour item 6).
+    import time
+    from .coord.participation import admissions, decide
+    from .coord.quota_sources import measured_accounts
+    try:
+        accounts = measured_accounts(Path.home(), time.time())
+    except Exception:
+        accounts = None
+    part = decide(states, admissions(accounts))
     print(json.dumps({"ok": not authority.startswith("BLOCKED_"), "authority": authority,
-                      "states": states, "quota_conversion": "FORBIDDEN"}, ensure_ascii=False))
+                      "states": states, "quota_conversion": "FORBIDDEN",
+                      "participation": {"mode": part["mode"], "roles": part["roles"]}}, ensure_ascii=False))
     return 0 if not authority.startswith("BLOCKED_") else 1
+
+
+def cmd_coord_participation(args: argparse.Namespace) -> int:
+    """S5: decide TRIO/DUO/SOLO/HALT from presence + quota admission and write the desk's boot snapshot."""
+    from .coord.hook_context import shared_desk
+    from .coord.participation import snapshot
+    desk = Path(shared_desk(Path(args.project))).resolve()
+    pools = dict(p.split("=", 1) for p in (args.pool or []) if "=" in p)
+    result = snapshot(desk, home=Path(args.home) if args.home else None, pools=pools)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
 
 
 def cmd_coord_thrift(args: argparse.Namespace) -> int:
@@ -2712,8 +2942,55 @@ def cmd_rsi_watch(args: argparse.Namespace) -> int:
     res = run_scheduler_cycle(project, config, now=time.time(), sleeper=time.sleep, record=_record,
                               fetch=lambda source, timeout: file_source_fetch(project, source, timeout),
                               trigger=lambda bundle: durable_trigger(project, bundle))
+    if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") and (
+        (project / ".coord" / "master_schedule.json").is_file()
+        or (project / ".coord" / "sub_process_schedule.json").is_file()
+    ):
+        try:
+            from .coord.process_lanes import sync_and_record_helper_parallel_rsi_session
+
+            u299_res = sync_and_record_helper_parallel_rsi_session(project, publish_mailbox_notices=False)
+            res["u299_rsi_session"] = {
+                "ok": bool(u299_res.get("ok", True)),
+                "session_id": u299_res.get("session_id"),
+                "operational_status": u299_res.get("operational_status"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            from .coord.stream import StreamRejected, append_event
+
+            err_msg = f"{type(exc).__name__}: {exc}"[:200]
+            res["u299_rsi_session"] = {"ok": False, "error": err_msg}
+            try:
+                append_event(
+                    project,
+                    actor="antigravity",
+                    kind="BLOCKED",
+                    step="U299",
+                    summary=f"rsi watch U299 session sync failed: {err_msg}"[:200],
+                    evidence={"cmd": "rsi watch", "exit": 1},
+                )
+            except (StreamRejected, OSError, RuntimeError):
+                res["u299_rsi_session"]["log_error"] = "STREAM_REJECTED"
+    if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA"):
+        # S6: the weekly endurance report rides the scheduled watch (0 paid tokens); it never changes the exit code.
+        try:
+            from .coord.endurance_report import maybe_write_weekly
+
+            res["endurance_report"] = maybe_write_weekly(project, Path.home(), time.time())
+        except Exception as exc:  # noqa: BLE001
+            res["endurance_report"] = {"status": "FAILED", "error": type(exc).__name__}
     _print_json(res)
     return 0 if res.get("status") in ("ACK_ONLY", "ACTIONABLE_DELTA") else 1
+
+
+def cmd_rsi_endurance(args: argparse.Namespace) -> int:
+    import time
+
+    from .coord.endurance_report import maybe_write_weekly
+
+    res = maybe_write_weekly(Path(args.project), Path.home(), time.time(), force=args.force)
+    _print_json(res)
+    return 0
 
 
 def cmd_rsi_retention(args: argparse.Namespace) -> int:
@@ -2832,6 +3109,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if arguments and arguments[0] == "usage":
         from .usage_accounting import main as usage_main
         return usage_main(arguments[1:])
+    if arguments and arguments[0] == "version":
+        from .version_gate import main as version_main
+        return version_main(arguments[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     if (getattr(args, "coord_subcommand", None) in _DESK_COMMANDS or getattr(args, "docs_cmd", None)) and getattr(args, "project", None):
@@ -2849,17 +3129,78 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 _DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window", "lanes"})
 
 
+def cmd_coord_library(args: argparse.Namespace) -> int:
+    from .library_store import (
+        LibraryStoreError,
+        build_library_catalog_index,
+        create_excluded_library_session,
+        create_library_project_session,
+        identify_library_project,
+    )
+    project_root = Path(args.project).resolve()
+    action = getattr(args, "action", "index") or "index"
+    repo_name = getattr(args, "repo", None)
+    try:
+        if action == "inspect":
+            if not repo_name:
+                print(json.dumps({"ok": False, "error": "--repo is required for inspect"}, ensure_ascii=False))
+                return 2
+            payload = identify_library_project(project_root, repo_name)
+            print(json.dumps({"ok": True, "project": payload}, ensure_ascii=False, indent=2))
+            return 0
+        if action == "session":
+            if not repo_name:
+                print(json.dumps({"ok": False, "error": "--repo is required for session"}, ensure_ascii=False))
+                return 2
+            payload = create_library_project_session(project_root, repo_name)
+            print(json.dumps({"ok": True, "session": payload}, ensure_ascii=False, indent=2))
+            return 0
+        if action == "excluded":
+            payload = create_excluded_library_session(project_root)
+            print(json.dumps({"ok": True, "excluded_session": payload}, ensure_ascii=False, indent=2))
+            return 0
+        catalog = build_library_catalog_index(project_root)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "total_selected_projects": catalog["total_selected_projects"],
+                    "total_excluded_projects": catalog["total_excluded_projects"],
+                    "excluded_session_id": catalog["excluded_session_id"],
+                    "index_path": ".work/library/INDEX.json",
+                    "coord_index_path": ".coord/library_index.json",
+                    "excluded_session_file": catalog["excluded_session_file"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    except LibraryStoreError as exc:
+        print(json.dumps({"ok": False, "code": exc.code, "error": str(exc)}, ensure_ascii=False))
+        return 2
+
+
 def cmd_coord_lanes(args: argparse.Namespace) -> int:
-    """U287/U292: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
+    """U287/U292/U293: Process-Classification Parallel Window Multiplexing CLI entrypoint."""
     from .coord.process_lanes import (
         audit_and_clear_nonstop_obstacles,
         classify_process_lane,
         handoff_lane_result,
+        heal_all_rsi_dilemmas_and_record_session,
         list_lane_windows,
         multiplex_and_dispatch_parallel,
         open_or_reuse_card_parallel_windows,
         record_rsi_upgrade_session,
     )
+    if getattr(args, "action", "status") == "heal-dilemmas":
+        res = heal_all_rsi_dilemmas_and_record_session(
+            Path(args.project),
+            actor=args.actor,
+            rules_version=getattr(args, "rules_version", "0.4.0") or "0.4.0",
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
     if getattr(args, "action", "status") == "clear-obstacles":
         res = audit_and_clear_nonstop_obstacles(Path(args.project))
         print(json.dumps(res, ensure_ascii=False, indent=2))
@@ -2867,6 +3208,44 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
 
     project = Path(args.project)
     action = getattr(args, "action", "status")
+    if action == "claim-topmost-window":
+        from .coord.card_sessions import ensure_topmost_user_window
+        res = ensure_topmost_user_window(
+            project,
+            args.actor,
+            getattr(args, "session_id", ""),
+            representative_title=getattr(args, "title", ""),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "sync-card-sessions":
+        from .coord.card_sessions import sync_claude_desktop_card_sessions
+        res = sync_claude_desktop_card_sessions(project)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "launch-spec":
+        from .coord.card_sessions import build_card_parallel_launch_spec
+        res = build_card_parallel_launch_spec(
+            project,
+            args.card or "U291",
+            title=getattr(args, "title", ""),
+            parent_session_id=getattr(args, "session_id", ""),
+            parent_title=getattr(args, "message", ""),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
+    if action == "orchestrate-cards":
+        from .coord.card_sessions import orchestrate_card_parallel_batch
+        raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
+        res = orchestrate_card_parallel_batch(
+            project,
+            raw_cards,
+            actor=args.actor,
+            parent_session_id=getattr(args, "session_id", ""),
+            parent_title=getattr(args, "title", ""),
+        )
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
     if action == "provision-cards":
         raw_cards = [c.strip() for c in str(args.card or "").split(",") if c.strip()]
         if not raw_cards:
@@ -2904,6 +3283,13 @@ def cmd_coord_lanes(args: argparse.Namespace) -> int:
         return 0 if res.get("ok") else 1
     if action == "dispatch":
         lanes = [args.lane] if args.lane else None
+        # S5 rev 4 (Codex judge U322-apply2): a pool-less refresh would read every tool JUDGE_ONLY and HALT, so the
+        # snapshot is refreshed only with the dispatch pools; without them the standing (expiry-checked) one decides.
+        dispatch_pools = dict(p.split("=", 1) for p in (getattr(args, "pool", None) or []) if "=" in p)
+        if dispatch_pools:
+            from .coord.hook_context import shared_desk
+            from .coord.participation import snapshot as participation_snapshot
+            participation_snapshot(Path(shared_desk(project)).resolve(), pools=dispatch_pools)
         res = multiplex_and_dispatch_parallel(
             project,
             actor=args.actor,
@@ -2939,10 +3325,17 @@ def _add_docs_parsers(subparsers) -> None:
         each.add_argument("--project", default=".", help="Project directory (default: .)")
 
 
+def _docs_root(project: str) -> Path:
+    """U302: documents always land in the main checkout's docs/, never in the worktree a tool session runs in."""
+    from .coord.hook_context import shared_desk
+
+    return shared_desk(Path(project).resolve())
+
+
 def cmd_docs_new(args: argparse.Namespace) -> int:
     """Create a new auto-numbered document and register in docs/00_DOCUMENT_INDEX.md."""
     from .docs_manager import register_new_doc
-    project = Path(args.project)
+    project = _docs_root(args.project)
     src = Path(args.from_file) if getattr(args, "from_file", None) else None
     path = register_new_doc(project, title=args.title, slug=args.slug,
                             category=args.category, author_tool=args.tool,
@@ -2957,7 +3350,7 @@ def cmd_docs_new(args: argparse.Namespace) -> int:
 def cmd_docs_next_num(args: argparse.Namespace) -> int:
     """Calculate and return the next sequential document number and prefix."""
     from .docs_manager import allocate_next_doc_number
-    num, prefix = allocate_next_doc_number(Path(args.project))
+    num, prefix = allocate_next_doc_number(_docs_root(args.project))
     print(json.dumps({"ok": True, "next_number": num, "prefix": prefix}, ensure_ascii=False))
     return 0
 
@@ -2967,7 +3360,7 @@ def cmd_docs_next_num(args: argparse.Namespace) -> int:
 def cmd_docs_sync(args: argparse.Namespace) -> int:
     """Audit and synchronize docs/00_DOCUMENT_INDEX.md table with existing documents."""
     from .docs_manager import sync_doc_index
-    count = sync_doc_index(Path(args.project))
+    count = sync_doc_index(_docs_root(args.project))
     print(json.dumps({"ok": True, "synced_count": count, "index": "docs/00_DOCUMENT_INDEX.md"}, ensure_ascii=False))
     return 0
 

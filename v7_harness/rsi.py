@@ -85,6 +85,8 @@ REMEDIES: dict[str, tuple[str, str]] = {
     # apply_after fixed all three, and copying known code through Ollama gains nothing over apply (U126 audit).
     "NO_FILE_BLOCK": ("manual_template", "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice"),
     "DICTATION_MISMATCH": ("manual_template", "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice"),
+    "SPLICE_UNSUPPORTED": ("manual_template", "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice"),
+    "SPLICE_SYNTAX": ("manual_template", "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice"),
     "PROVIDER_ERROR": ("environment", "Check that the Ollama service and model are up; do not escalate to a paid worker automatically"),
     "EXECUTION_ERROR": ("environment", "Check the worker command and the Ollama service before retrying"),
     "TIMEOUT": ("manual_template", "Split the task or raise timeout_s in the contract; reconcile the run first"),

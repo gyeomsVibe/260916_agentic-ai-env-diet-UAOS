@@ -400,11 +400,12 @@ def _owns_all_locks(project: Path, locks: list[str], token: str, session: str = 
 def _stalled_wait(project: Path, tools: tuple[str, ...], clock: Callable[[], float]) -> dict[str, Any] | None:
     """U179: the first stalled wait one of `tools` has a part in and has not been woken for yet."""
     from v7_harness.coord import stall
+    from v7_harness.coord.stream import StreamBusy
 
     for tool in tools:
         try:
             result = stall.scan(project, tool, now=clock())
-        except (OSError, ValueError):
+        except (OSError, ValueError, StreamBusy):
             continue  # a locked or unreadable stall state: the next scan looks again, the watch goes on
         for entry in result["stalled"] + result["blocked"]:
             if tool not in (entry["author"], entry["waiting_on"], entry.get("owner")):
@@ -419,10 +420,11 @@ def _stalled_wait(project: Path, tools: tuple[str, ...], clock: Callable[[], flo
     return None
 
 
-def main_desk_session(project: Path) -> str:
+def main_desk_session(project: Path, tool: str = "claude") -> str:
     """U296: the user's main Claude desk (topmost `[YYMMDD-N]` window), '' when no desk record exists."""
     try:
-        record = json.loads((Path(project) / PRESENCE_DIR / "user_desk_claude.json").read_text(encoding="utf-8"))
+        norm_tool = "antigravity" if str(tool or "claude").strip().lower() == "agy" else str(tool or "claude").strip().lower()
+        record = json.loads((Path(project) / PRESENCE_DIR / f"user_desk_{norm_tool}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return ""
     return str(record.get("thread") or "") if isinstance(record, dict) else ""
@@ -436,7 +438,7 @@ def _session_eligible(project: Path, tool: str, body: dict[str, Any], session: s
 
     if body.get("native_receiver") or body.get("window") or body.get("card"):
         return not _foreign(Path(project), tool, session, body)
-    desk = main_desk_session(project)
+    desk = main_desk_session(project, tool)
     return not desk or desk == session
 
 
@@ -518,6 +520,7 @@ def _request_wake(project: Path, tools: tuple[str, ...], session: str | None, no
     CAS (claim_wake) makes one watcher the winner; a fuzzy hint wakes once and closes nothing. A registry error keeps
     the watch running: the next scan looks again."""
     from v7_harness.coord import requests
+    from v7_harness.coord.stream import StreamBusy
 
     try:
         transitions = requests.scan(project, now=now)
@@ -537,7 +540,7 @@ def _request_wake(project: Path, tools: tuple[str, ...], session: str | None, no
                 continue
             return {"reason": "REQUEST_HINT", "id": item["request_id"], "request_id": item["request_id"],
                     "event_id": item["event_id"], "requested_target": item.get("requester")}
-    except (OSError, ValueError, requests.RequestError):
+    except (OSError, ValueError, requests.RequestError, StreamBusy):
         return None
     return None
 

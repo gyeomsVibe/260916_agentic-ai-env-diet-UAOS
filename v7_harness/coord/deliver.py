@@ -134,11 +134,12 @@ def _requires_wake(message: str) -> bool:
 
 def _wants_wake(message: str, *, wake_class: str | None = None, verdict: str | None = None,
                 verdict_requested: bool | None = None) -> bool:
-    if wake_class in ("NOTICE", "ACK_ONLY") or verdict_requested is False or _ACK_RE.search(
-            _QUOTED_RE.sub(" ", _FENCE_RE.sub(" ", message)).upper()):
-        return False
+    # U279: explicit fields win over text, as in `_declines_turn`; a verdict request quoting an earlier ACK_ONLY
+    # status used to lose its Claude wake (tests/test_u279_lossless_transport.py).
     if wake_class == "ACTIONABLE" or bool(verdict) or verdict_requested is True:
         return True
+    if wake_class in ("NOTICE", "ACK_ONLY") or verdict_requested is False:
+        return False
     return _requires_wake(message)
 
 
@@ -1382,7 +1383,7 @@ def _deliver_unlocked(
                                  str(box.inbox_dir / f"{message_id}.json"))
         # U74-D: an explicit ACK_ONLY never spends a paid turn, even with no watcher (global relay rule). The letter
         # is already published; the next session reads it from the inbox.
-        if _ACK_RE.search(message.upper()):
+        if not need_wake and _ACK_RE.search(message.upper()):
             return DeliverResult(False, "claude", "QUEUED_ACK_ONLY", (), "", message_id, digest,
                                  str(box.inbox_dir / f"{message_id}.json"))
 
@@ -1737,9 +1738,9 @@ def _deliver_impl(
         # U277 rev 2: the request is recorded before the marker, the publish and any dispatch (a failure sends nothing).
         _track(message_id, requested_target or target or "")
     pending = box.root / "delivery" / "pending" / f"{message_id}.json"
-    wants_turn = _wants_wake(message, wake_class=explicit.get("wake_class"), verdict=explicit.get("verdict"),
-                             verdict_requested=explicit.get("verdict_requested"))
-    if target == "claude" and wants_turn and not pending.is_file():
+    wake_requested = _wants_wake(message, wake_class=explicit.get("wake_class"), verdict=explicit.get("verdict"),
+                                 verdict_requested=explicit.get("verdict_requested"))
+    if target == "claude" and wake_requested and not pending.is_file():
         try:
             _write_receipt(pending, {"message_id": message_id, "target": "claude", "state": "PENDING"})
         except FileExistsError:
@@ -1816,7 +1817,7 @@ def _deliver_impl(
             handle.flush()
             os.fsync(handle.fileno())
     pending_owner = None
-    if target == "claude" and _requires_wake(message):
+    if target == "claude" and (wake_requested or _requires_wake(message)):
         # The guard winner takes ownership even if another contender created the provisional marker. Guard losers
         # cannot remove it; this closes the last window where a watcher could start a second paid turn.
         pending.parent.mkdir(parents=True, exist_ok=True)
@@ -1826,7 +1827,8 @@ def _deliver_impl(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", lane=lane, identity_digest=digest, wants_turn=wants_turn)
+                                 card=card, window=window or "", lane=lane, identity_digest=digest,
+                                 wants_turn=wants_turn or wake_requested)
     finally:
         _release_guard(guard, owner)
 

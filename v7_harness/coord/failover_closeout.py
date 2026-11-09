@@ -28,7 +28,7 @@ from typing import Any
 from . import next_card, presence
 from .stall import HUMAN_ONLY_RE, MAX_WAIT_S, STATE_DIR
 from contextlib import contextmanager
-from .stream import LOCK_TIMEOUT_S, StreamBusy, _LOCAL_LOCK, _exclusive, _try_lock, _unlock
+from .stream import LOCK_TIMEOUT_S, StreamBusy, _local_exclusive, _exclusive, _try_lock, _unlock
 
 
 @contextmanager
@@ -40,7 +40,7 @@ def _schedule_lock(root: Path, timeout_s: float | None = None):
         return
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + float(timeout_s)
-    with _LOCAL_LOCK:
+    with _local_exclusive(lock_path, deadline - time.monotonic()):
         fd = None
         try:
             while True:

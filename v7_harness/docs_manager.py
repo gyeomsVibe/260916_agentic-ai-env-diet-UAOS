@@ -96,7 +96,9 @@ def parse_doc_filename(filename: str) -> tuple[Optional[int], str, str]:
         'note.md' -> (None, '', 'note.md')
     """
     m = re.match(r"^(\d{2,})_(.*)$", filename)
-    if m:
+    # U302: a YYMMDD date prefix (e.g. 261023_usage-accounting.md) is not a sequence number; counting it made
+    # the next document 261024_ instead of 135_.
+    if m and len(m.group(1)) < 6:
         num = int(m.group(1))
         prefix = f"{m.group(1)}_"
         base_name = m.group(2)
@@ -177,7 +179,7 @@ def allocate_next_doc_number(project_root: Path, target_date: Optional[datetime]
     Returns (next_num, next_prefix), e.g. (84, '84_').
     """
     entries = scan_docs(project_root)
-    valid_numbers = [e.number for e in entries if e.number is not None and not e.is_index]
+    valid_numbers = [e.number for e in entries if e.number is not None and 0 < e.number < 10000 and not e.is_index]
     
     if not valid_numbers:
         return 1, "01_"

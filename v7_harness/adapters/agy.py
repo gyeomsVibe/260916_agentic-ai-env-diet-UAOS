@@ -121,6 +121,11 @@ def _classify_provider_error(text: str) -> str:
         return "QUOTA"
     if any(token in lowered for token in ("503", "no capacity", "unavailable")):
         return "TRANSIENT_CAPACITY"
+    if "model returned no file block" in lowered:
+        return "NO_FILE_BLOCK"
+    for prefix in ("DICTATION_MISMATCH", "SPLICE_UNSUPPORTED", "SPLICE_SYNTAX", "PROMPT_TOO_LARGE"):
+        if prefix.casefold() in lowered:
+            return prefix
     return "PROVIDER_ERROR"
 
 

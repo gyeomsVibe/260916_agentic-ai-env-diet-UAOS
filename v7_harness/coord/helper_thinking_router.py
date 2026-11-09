@@ -1,10 +1,10 @@
-"""U297: Official 3-Tool Helper Model Declaration, Reasoning Model Lineup Catalog,
-and Master/Sub-Process Schedule Thinking Level (Low/Medium/High) Auto-Selector.
+"""U297 + U304-B: the one common 3-tool helper rule and the Low/Medium/High thinking-level auto-selector.
 
-Officially declares and designates the maximum-performance-per-token low-cost Helper Models
-(도우미 모델) alongside Ollama CLI (`qwen2.5-coder:7b`) and Core/Flagship Reasoning Models
-for Codex, Antigravity, and Claude Code, and automatically optimizes helper model + Thinking Level
-selection across `.coord/master_schedule.json` and `.coord/sub_process_schedule.json`.
+U304-B (2026-11-04, 윤겸스 order items 2 and 4): every tool runs the same topology, matched 1:1 —
+main model + Ollama CLI calculator (`qwen2.5-coder:7b`) + exactly ONE helper model. The role of each seat, the
+usage method and the target call share are identical for Codex, Antigravity and Claude Code; only the model ids
+differ. Helpers were chosen by ability per token from measured 7-day calls and official rate cards; the evidence
+table lives in `docs/107_U304B_3도구_도우미모델_1대1_선정_리서치.md`.
 """
 
 from __future__ import annotations
@@ -33,161 +33,77 @@ SUB_PROCESS_STAGES: tuple[str, ...] = (
     "SP5_MERGE_AND_RUNTIME",
 )
 
-OFFICIAL_TOOL_MODEL_LINEUP: dict[str, dict[str, Any]] = {
-    "codex": {
-        "tool": "codex",
-        "calculator_worker": "ollama",
-        "calculator_model": "qwen2.5-coder:7b",
-        "primary_helper_model": "gpt-6-luna",
-        "primary_helper_display": "GPT-6 Luna",
-        "designated_helper_models": (
-            "gpt-6-luna",
-            "gpt-5.6-luna",
-            "gpt-5.6-terra",
-            "gpt-5.6-sol",
-            "gpt-6-sol",
-        ),
-        "helper_model_tiers": {
-            "primary_high_efficiency": "gpt-6-luna",
-            "lightweight_fast": "gpt-5.6-luna",
-            "stabilized_audit_helper": "gpt-5.6-terra",
-            "stabilized_code_helper": "gpt-5.6-sol",
-            "mid_tier_reasoning_helper": "gpt-6-sol",
-        },
-        "reasoning_model_lineup": {
-            "gpt_6_1_flagship": ("gpt-6.1-sol", "gpt-6.1-terra"),
-            "gpt_6_standard": ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna"),
-            "gpt_5_6_lightweight_stable": ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"),
-        },
-        "all_reasoning_models": (
-            "gpt-6.1-sol",
-            "gpt-6.1-terra",
-            "gpt-6-astra",
-            "gpt-6-sol",
-            "gpt-6-luna",
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-        ),
-        "model_display_names": {
-            "gpt-6.1-sol": "GPT-6.1 Sol",
-            "gpt-6.1-terra": "GPT-6.1 Terra",
-            "gpt-6-astra": "GPT-6 Astra",
-            "gpt-6-sol": "GPT-6 Sol",
-            "gpt-6-luna": "GPT-6 Luna",
-            "gpt-5.6-sol": "GPT-5.6 Sol",
-            "gpt-5.6-terra": "GPT-5.6 Terra",
-            "gpt-5.6-luna": "GPT-5.6 Luna",
-        },
-        "thinking_levels": THINKING_LEVELS,
-        "thinking_param_name": "reasoning_effort",
-        "helper_preflight_cap_tokens": 16000,
-        "target_parallel_ratio": {
-            "ollama_pct": 50.0,
-            "helper_pct": 30.0,
-            "reasoning_core_pct": 20.0,
-        },
+CALCULATOR_MODEL = "qwen2.5-coder:7b"
+
+# The common rule, identical for all 3 tools (U304-B). Seat roles mirror the 5:3:2 split already used by U271/U290.
+COMMON_HELPER_RULE: dict[str, Any] = {
+    "schema": "uaos-3tool-helper-rule-v1",
+    "topology": "main + ollama + one helper (1:1 per tool)",
+    "seats": {
+        "ollama": "deterministic extraction, local_read_map/local_search/local_draft, 20-30 line code slices (0 paid tokens)",
+        "helper": "bounded tests/docs, 2-5 file patches, failed-Ollama-slice rescue, triage; paths disjoint from Ollama",
+        "main": "architecture, independent cross-tool verdict, final integration",
     },
-    "antigravity": {
-        "tool": "antigravity",
-        "calculator_worker": "ollama",
-        "calculator_model": "qwen2.5-coder:7b",
-        "primary_helper_model": "gemini-3.8-flash",
-        "primary_helper_display": "Gemini 3.8 Flash",
-        "designated_helper_models": (
-            "gemini-3.8-flash",
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gpt-oss-120b",
-        ),
-        "helper_model_tiers": {
-            "primary_high_efficiency": "gemini-3.8-flash",
-            "stabilized_audit_helper": "gemini-3.7-flash",
-            "lightweight_fast": "gemini-3.6-flash",
-            "open_source_bulk_helper": "gpt-oss-120b",
-        },
-        "reasoning_model_lineup": {
-            "gemini_series": (
-                "gemini-4-argon",
-                "gemini-3.8-flash",
-                "gemini-3.7-flash",
-                "gemini-3.6-flash",
-                "gemini-3.1-pro",
-            ),
-            "claude_thinking_series": (
-                "claude-sonnet-5-5-thinking",
-                "claude-opus-5-5-thinking",
-            ),
-            "open_source_series": ("gpt-oss-120b",),
-        },
-        "all_reasoning_models": (
-            "gemini-4-argon",
-            "gemini-3.8-flash",
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gemini-3.1-pro",
-            "claude-sonnet-5-5-thinking",
-            "claude-opus-5-5-thinking",
-            "gpt-oss-120b",
-        ),
-        "model_display_names": {
-            "gemini-4-argon": "Gemini 4 Argon",
-            "gemini-3.8-flash": "Gemini 3.8 Flash",
-            "gemini-3.7-flash": "Gemini 3.7 Flash",
-            "gemini-3.6-flash": "Gemini 3.6 Flash",
-            "gemini-3.1-pro": "Gemini 3.1 Pro",
-            "claude-sonnet-5-5-thinking": "Claude Sonnet 5.5 (thinking)",
-            "claude-opus-5-5-thinking": "Claude Opus 5.5 (thinking)",
-            "gpt-oss-120b": "GPT-OSS-120b",
-        },
-        "thinking_levels": THINKING_LEVELS,
-        "thinking_param_name": "thinking_level",
-        "helper_preflight_cap_tokens": 16000,
-        "target_parallel_ratio": {
-            "ollama_pct": 50.0,
-            "helper_pct": 30.0,
-            "reasoning_core_pct": 20.0,
-        },
-    },
-    "claude": {
-        "tool": "claude",
-        "calculator_worker": "ollama",
-        "calculator_model": "qwen2.5-coder:7b",
-        "primary_helper_model": "claude-haiku-5-5",
-        "primary_helper_display": "Claude Haiku 5.5",
-        "designated_helper_models": ("claude-haiku-5-5",),
-        "helper_model_tiers": {
-            "primary_high_efficiency": "claude-haiku-5-5",
-            "lightweight_fast": "claude-haiku-5-5",
-            "stabilized_audit_helper": "claude-haiku-5-5",
-        },
-        "reasoning_model_lineup": {
-            "claude_series": (
-                "claude-opus-5-5",
-                "claude-sonnet-5-5",
-                "claude-haiku-5-5",
-            ),
-        },
-        "all_reasoning_models": (
-            "claude-opus-5-5",
-            "claude-sonnet-5-5",
-            "claude-haiku-5-5",
-        ),
-        "model_display_names": {
-            "claude-opus-5-5": "Claude Opus 5.5",
-            "claude-sonnet-5-5": "Claude Sonnet 5.5",
-            "claude-haiku-5-5": "Claude Haiku 5.5",
-        },
-        "thinking_levels": THINKING_LEVELS,
-        "thinking_param_name": "effort",
-        "helper_preflight_cap_tokens": 12000,
-        "target_parallel_ratio": {
-            "ollama_pct": 50.0,
-            "helper_pct": 30.0,
-            "reasoning_core_pct": 20.0,
-        },
-    },
+    "usage_method": "native subagent pinned to the exact helper model, budget-capped, telemetry row per call",
+    # Target share of calls per tool: Ollama 50 / helper 30 / main 20 (U271 golden ratio, kept unchanged).
+    "target_parallel_ratio": {"ollama_pct": 50.0, "helper_pct": 30.0, "reasoning_core_pct": 20.0},
+    # One cap for all helpers: Claude's Haiku lane cap (12,000, U271) is the only cap with a violation check; the
+    # former 16,000 for Codex/Antigravity had no measurement behind it.
+    "helper_preflight_cap_tokens": 12000,
+    "keypoint_rule": "main model at High effort; Codex alone may escalate to GPT-6 Astra (U257 CODEX_EXCLUSIVE_KEYPOINTS)",
 }
+
+# tool -> (main model, display, one helper, display, telemetry lane, native helper subagent, effort parameter name)
+_TOOL_SEATS: dict[str, tuple[str, str, str, str, str, str, str]] = {
+    # Codex main = the configured `model` in ~/.codex/config.toml (1,481 calls in 7 days). Helper GPT-6 Luna costs
+    # 0.032 credits/call vs 0.253 for GPT-6.1 Terra on the same measured token mix (docs/107 table 2).
+    "codex": ("gpt-6.1-sol", "GPT-6.1 Sol", "gpt-6-luna", "GPT-6 Luna", "luna", "uaos-luna-worker", "reasoning_effort"),
+    # Antigravity helper Gemini 3.5 Flash-Lite: SWE-Bench Pro 54.2 % / Terminal-bench 54.0 % at $0.30/$2.50,
+    # vs 3.8 Flash at $0.75/$3.75 (docs/107 table 3).
+    "antigravity": ("gemini-4-argon", "Gemini 4 Argon", "gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "flash",
+                    "uaos-flash-worker", "thinking_level"),
+    "claude": ("claude-opus-5-5", "Claude Opus 5.5", "claude-haiku-5-5", "Claude Haiku 5.5", "haiku",
+               "uaos-haiku-worker", "effort"),
+}
+
+# U257: only Codex has a keypoint escalation model (Astra on the $20 Plus plan: 5-45 messages per 5 h).
+KEYPOINT_ESCALATION_MODEL: dict[str, tuple[str, str] | None] = {
+    "codex": ("gpt-6-astra", "GPT-6 Astra"),
+    "antigravity": None,
+    "claude": None,
+}
+
+
+def _build_lineup(tool: str) -> dict[str, Any]:
+    main, main_disp, helper, helper_disp, lane, subagent, param = _TOOL_SEATS[tool]
+    escalation = KEYPOINT_ESCALATION_MODEL[tool]
+    reasoning = (main,) + ((escalation[0],) if escalation else ())
+    names = {main: main_disp, helper: helper_disp}
+    if escalation:
+        names[escalation[0]] = escalation[1]
+    return {
+        "tool": tool,
+        "main_model": main,
+        "main_display": main_disp,
+        "calculator_worker": "ollama",
+        "calculator_model": CALCULATOR_MODEL,
+        "primary_helper_model": helper,
+        "primary_helper_display": helper_disp,
+        "designated_helper_models": (helper,),
+        "helper_telemetry_lane": lane,
+        "helper_subagent": subagent,
+        "keypoint_escalation_model": escalation[0] if escalation else None,
+        "all_reasoning_models": reasoning,
+        "model_display_names": names,
+        "thinking_levels": THINKING_LEVELS,
+        "thinking_param_name": param,
+        "helper_preflight_cap_tokens": int(COMMON_HELPER_RULE["helper_preflight_cap_tokens"]),
+        "target_parallel_ratio": dict(COMMON_HELPER_RULE["target_parallel_ratio"]),
+        "usage_method": COMMON_HELPER_RULE["usage_method"],
+    }
+
+
+OFFICIAL_TOOL_MODEL_LINEUP: dict[str, dict[str, Any]] = {t: _build_lineup(t) for t in ("codex", "antigravity", "claude")}
 
 
 def normalize_tool_name(tool: str | None) -> str:
@@ -274,9 +190,15 @@ def select_optimal_helper_and_thinking(
     prefer_claude_thinking_on_agy: bool = False,
     prefer_open_source_on_agy: bool = False,
 ) -> dict[str, Any]:
-    """Automatically select the optimal Helper Model, Core Reasoning Model, and Thinking Levels
-    (`Low` / `Medium` / `High`) for a card session, role, 5-lane process class, and sub-process stage.
+    """Select the helper, main model and Low/Medium/High levels for a card, lane or sub-process stage.
+
+    U304-B: one rule for all 3 tools. The helper is always the tool's single designated helper and the reasoning
+    model is always its main model; only the effort levels move with the stage. `prefer_*_on_agy` are kept for
+    signature stability (U304-C calls this function) and are ignored: the retired multi-helper routes are gone.
+    U304-D: `target_532_ratio` names its `ratio_source`; a caller holding `usage_budget.budget_snapshot()` takes the
+    measured split from `parallel_ratio(tool, snapshot)` (the signature above is pinned for U304-C).
     """
+    del prefer_claude_thinking_on_agy, prefer_open_source_on_agy
     norm_tool = normalize_tool_name(tool)
     catalog = OFFICIAL_TOOL_MODEL_LINEUP[norm_tool]
     resolved_lane = (
@@ -295,9 +217,8 @@ def select_optimal_helper_and_thinking(
     )
     imminent = str(exhaustion_risk or "SAFE").upper() == "IMMINENT_EXHAUSTION"
     st_up = str(sub_stage or "").strip().upper()
-    purp_low = str(purpose or "").strip().lower()
 
-    # 1. Select Ollama CLI calculator task
+    # 1. Ollama CLI calculator task
     if st_up == "SP1_RESEARCH_DRAFT":
         ollama_task = "ollama:local_search+local_draft"
     elif st_up == "SP2_MIA_DESIGN_AUDIT" or resolved_lane == "ARCH_DESIGN":
@@ -310,143 +231,40 @@ def select_optimal_helper_and_thinking(
         slice_lines = 30 if high_pressure else 20
         ollama_task = f"ollama:code_slice_{slice_lines}L_v7_harness"
 
-    # 2. Select Helper Model & Helper Thinking Level + Core Reasoning Model & Core Thinking Level per tool
-    if norm_tool == "codex":
-        if st_up == "SP1_RESEARCH_DRAFT":
-            helper_model = "gpt-5.6-luna"
-            helper_thinking = "Low"
-            reasoning_model = "gpt-6-sol"
-            reasoning_thinking = "Low"
-        elif st_up == "SP2_MIA_DESIGN_AUDIT" or resolved_lane == "ARCH_DESIGN":
-            helper_model = "gpt-6-sol" if not high_pressure else "gpt-6-luna"
-            helper_thinking = "Medium"
-            reasoning_model = "gpt-6.1-sol" if is_keypoint else ("gpt-5.6-sol" if imminent else "gpt-6-astra")
-            reasoning_thinking = "High"
-        elif st_up == "SP4_INDEPENDENT_VERIFY" or resolved_lane == "VERIFY_AUDIT":
-            helper_model = "gpt-5.6-terra"
-            helper_thinking = "Low"
-            reasoning_model = "gpt-6.1-terra" if not imminent else "gpt-6-astra"
-            reasoning_thinking = "High"
-        elif st_up == "SP5_MERGE_AND_RUNTIME" or resolved_lane == "MERGE_RELEASE":
-            helper_model = "gpt-5.6-luna"
-            helper_thinking = "Low"
-            reasoning_model = "gpt-5.6-sol"
-            reasoning_thinking = "Low"
-        elif resolved_lane == "RECOVERY_OPS":
-            helper_model = "gpt-5.6-terra"
-            helper_thinking = "Medium"
-            reasoning_model = "gpt-6.1-terra"
-            reasoning_thinking = "High"
-        else:
-            # IMPL_CODE / SP3_CODE_EXECUTION
-            if high_pressure:
-                helper_model = "gpt-5.6-luna"
-                helper_thinking = "Low"
-            elif changed_lines > 30 or multi_file:
-                helper_model = "gpt-6-luna"
-                helper_thinking = "Medium"
-            else:
-                helper_model = "gpt-6-luna"
-                helper_thinking = "Low"
-            if is_keypoint:
-                reasoning_model = "gpt-6.1-sol"
-                reasoning_thinking = "High"
-            elif imminent:
-                reasoning_model = "gpt-5.6-sol"
-                reasoning_thinking = "Medium"
-            else:
-                reasoning_model = "gpt-6-astra"
-                reasoning_thinking = "High" if multi_file else "Medium"
-
-    elif norm_tool == "antigravity":
-        use_oss = prefer_open_source_on_agy or "oss" in purp_low or "open_source" in purp_low or "bulk" in purp_low
-        use_claude_thinking = prefer_claude_thinking_on_agy or "claude_thinking" in purp_low or "cross_family" in purp_low
-        if st_up == "SP1_RESEARCH_DRAFT":
-            helper_model = "gpt-oss-120b" if use_oss else "gemini-3.7-flash"
-            helper_thinking = "Low"
-            reasoning_model = "gemini-3.8-flash"
-            reasoning_thinking = "Low"
-        elif st_up == "SP2_MIA_DESIGN_AUDIT" or resolved_lane == "ARCH_DESIGN":
-            helper_model = "gemini-3.8-flash"
-            helper_thinking = "Medium"
-            if use_claude_thinking:
-                reasoning_model = "claude-opus-5-5-thinking"
-            elif is_keypoint:
-                reasoning_model = "gemini-4-argon"
-            else:
-                reasoning_model = "gemini-4-argon" if not imminent else "gemini-3.1-pro"
-            reasoning_thinking = "High"
-        elif st_up == "SP4_INDEPENDENT_VERIFY" or resolved_lane == "VERIFY_AUDIT":
-            helper_model = "gemini-3.7-flash"
-            helper_thinking = "Low"
-            if use_claude_thinking:
-                reasoning_model = "claude-sonnet-5-5-thinking"
-            else:
-                reasoning_model = "gemini-3.1-pro" if not is_keypoint else "gemini-4-argon"
-            reasoning_thinking = "High"
-        elif st_up == "SP5_MERGE_AND_RUNTIME" or resolved_lane == "MERGE_RELEASE":
-            helper_model = "gemini-3.6-flash"
-            helper_thinking = "Low"
-            reasoning_model = "gemini-3.8-flash"
-            reasoning_thinking = "Low"
-        elif resolved_lane == "RECOVERY_OPS":
-            helper_model = "gemini-3.7-flash"
-            helper_thinking = "Medium"
-            reasoning_model = "gemini-4-argon"
-            reasoning_thinking = "High"
-        else:
-            # IMPL_CODE / SP3_CODE_EXECUTION
-            if use_oss:
-                helper_model = "gpt-oss-120b"
-                helper_thinking = "Low"
-            elif high_pressure:
-                helper_model = "gemini-3.6-flash"
-                helper_thinking = "Low"
-            else:
-                helper_model = "gemini-3.8-flash"
-                helper_thinking = "Medium" if (changed_lines > 20 or multi_file) else "Low"
-            if use_claude_thinking:
-                reasoning_model = "claude-sonnet-5-5-thinking"
-            elif imminent:
-                reasoning_model = "gemini-3.8-flash"
-            else:
-                reasoning_model = "gemini-4-argon"
-            reasoning_thinking = "High" if (is_keypoint or multi_file) else "Medium"
-
+    # 2. Effort levels: one stage table for every tool (helper level, main level)
+    if st_up == "SP1_RESEARCH_DRAFT":
+        helper_thinking, reasoning_thinking = "Low", "Low"
+    elif st_up == "SP2_MIA_DESIGN_AUDIT" or resolved_lane == "ARCH_DESIGN":
+        helper_thinking, reasoning_thinking = "Medium", "High"
+    elif st_up == "SP4_INDEPENDENT_VERIFY" or resolved_lane == "VERIFY_AUDIT":
+        helper_thinking, reasoning_thinking = "Low", "High"
+    elif st_up == "SP5_MERGE_AND_RUNTIME" or resolved_lane == "MERGE_RELEASE":
+        helper_thinking, reasoning_thinking = "Low", "Low"
+    elif resolved_lane == "RECOVERY_OPS":
+        helper_thinking, reasoning_thinking = "Medium", "High"
     else:
-        # norm_tool == "claude"
-        helper_model = "claude-haiku-5-5"
-        if st_up == "SP1_RESEARCH_DRAFT":
-            helper_thinking = "Low"
-            reasoning_model = "claude-sonnet-5-5"
-            reasoning_thinking = "Low"
-        elif st_up == "SP2_MIA_DESIGN_AUDIT" or resolved_lane == "ARCH_DESIGN":
-            helper_thinking = "Medium"
-            reasoning_model = "claude-opus-5-5" if not imminent else "claude-sonnet-5-5"
-            reasoning_thinking = "High"
-        elif st_up == "SP4_INDEPENDENT_VERIFY" or resolved_lane == "VERIFY_AUDIT":
-            helper_thinking = "Low"
-            reasoning_model = "claude-opus-5-5" if not imminent else "claude-sonnet-5-5"
-            reasoning_thinking = "High"
-        elif st_up == "SP5_MERGE_AND_RUNTIME" or resolved_lane == "MERGE_RELEASE":
-            helper_thinking = "Low"
-            reasoning_model = "claude-sonnet-5-5"
-            reasoning_thinking = "Low"
-        elif resolved_lane == "RECOVERY_OPS":
-            helper_thinking = "Medium"
-            reasoning_model = "claude-opus-5-5"
-            reasoning_thinking = "High"
-        else:
-            # IMPL_CODE / SP3_CODE_EXECUTION
-            helper_thinking = "Low" if high_pressure else ("Medium" if (changed_lines > 20 or multi_file) else "Low")
-            reasoning_model = "claude-opus-5-5" if is_keypoint else "claude-sonnet-5-5"
-            reasoning_thinking = "High" if is_keypoint else "Medium"
+        # IMPL_CODE / SP3_CODE_EXECUTION; 20 lines = the U198 one-slice size
+        big = changed_lines > 20 or multi_file
+        helper_thinking = "Low" if high_pressure else ("Medium" if big else "Low")
+        reasoning_thinking = "High" if (is_keypoint or multi_file) else "Medium"
+    if imminent and reasoning_thinking == "High":
+        # A tool about to run out keeps its main model but stops paying for High effort.
+        reasoning_thinking = "Medium"
+
+    # 3. Models: the single helper and the main model; Codex keypoints may escalate to Astra (U257)
+    helper_model = str(catalog["primary_helper_model"])
+    escalation = catalog.get("keypoint_escalation_model")
+    if is_keypoint and escalation and not high_pressure:
+        reasoning_model = str(escalation)
+    else:
+        reasoning_model = str(catalog["main_model"])
 
     param_name = str(catalog["thinking_param_name"])
     native_config: dict[str, Any] = {
         "tool": norm_tool,
         "calculator_cli": f"ollama run {catalog['calculator_model']}",
         "helper_model": helper_model,
+        "helper_subagent": catalog["helper_subagent"],
         "helper_thinking_param": {param_name: helper_thinking.lower()},
         "reasoning_model": reasoning_model,
         "reasoning_thinking_param": {param_name: reasoning_thinking.lower()},
@@ -457,11 +275,13 @@ def select_optimal_helper_and_thinking(
             "CLAUDE_CODE_SUBAGENT_EFFORT": helper_thinking.lower(),
         }
     elif norm_tool == "codex":
+        # `model_reasoning_effort` is the config.toml key (or `-c model_reasoning_effort=high` per run).
         native_config["codex_flags"] = {
             "helper_model": helper_model,
             "helper_reasoning_effort": helper_thinking.lower(),
             "core_model": reasoning_model,
             "core_reasoning_effort": reasoning_thinking.lower(),
+            "config_key": "model_reasoning_effort",
         }
     else:
         native_config["gemini_thinking_config"] = {
@@ -489,7 +309,7 @@ def select_optimal_helper_and_thinking(
         "designated_reasoning_display": catalog["model_display_names"].get(reasoning_model, reasoning_model),
         "reasoning_thinking_level": reasoning_thinking,
         "thinking_level": reasoning_thinking,
-        "target_532_ratio": dict(catalog["target_parallel_ratio"]),
+        "target_532_ratio": parallel_ratio(norm_tool),
         "disjoint_parallel_ready": True,
         "native_config": native_config,
     }
@@ -654,7 +474,7 @@ def audit_and_optimize_claude_ollama_haiku_parallel(
             },
             "lane_3_opus_sonnet_20pct": {
                 "worker": "claude",
-                "models": ["claude-opus-5-5", "claude-sonnet-5-5"],
+                "models": [OFFICIAL_TOOL_MODEL_LINEUP["claude"]["main_model"]],
                 "thinking_levels": {"routine_supervision": "Medium", "mia_architecture_and_verdict": "High"},
                 "allowed_scope": ["architecture_frame", "independent_peer_verdict", "final_integration"],
             },
@@ -833,4 +653,19 @@ def optimize_master_and_sub_schedules(
         },
         "claude_ollama_haiku_parallel_audit": claude_audit,
         "master_phase_optimizations": master_phase_optimizations,
+    }
+
+
+def parallel_ratio(tool: str, budget_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """U304-D: the measured split from `usage_budget.budget_snapshot()` when given, else the static prior."""
+    prior = dict(COMMON_HELPER_RULE["target_parallel_ratio"])
+    tools = (budget_snapshot or {}).get("tools") or {}
+    shares = ((tools.get(normalize_tool_name(tool)) or {}).get("split") or {}).get("shares")
+    if not isinstance(shares, dict) or not shares:
+        return {**prior, "ratio_source": "static_prior"}
+    return {
+        "ollama_pct": round(float(shares.get("local") or 0.0) * 100.0, 1),
+        "helper_pct": round(float(shares.get("helper") or 0.0) * 100.0, 1),
+        "reasoning_core_pct": round(float(shares.get("core") or 0.0) * 100.0, 1),
+        "ratio_source": f"budget_snapshot:{budget_snapshot.get('id')}",
     }

@@ -80,3 +80,14 @@ Acting authority: claude (conductor, independent judge) + antigravity (author, m
 - U253 R3 (ed2f676): REWORK. The P1 U166 regression is fixed. P2 is still open: `_schedule_ready_wake` treats only DONE as finished. Claude's counterexample `.work/u253_r3_counter_claude.py` fails 4 of 4 terminal states.
 - Background token cost: the Antigravity auto-answer daemon (`agy_auto.jsonl`) used 469,340 tokens over 46 answers in 24 h, and 118,872 tokens over 18 answers in the last 1 h, at about 10k tokens per answer. Each wake of the Claude watcher costs one paid turn, about 110k tokens of context.
 - Retention: `~/.uaos/runtime` holds 134 versions (329 MB). Deleting any of them needs fresh approval from 윤겸스. Only a dry-run manifest has been prepared.
+
+## Codex return checklist (DESK-261102, Codex LIMITED at 2026-11-02T05:51Z)
+
+Acting authority: claude (conductor, independent judge) + antigravity (author, verifier, merger), by 윤겸스's order of 2026-11-02 and mutual agreement `relay_82bc5a24fe39e49fcda8e840f0109450` / `relay_d6d0a33a8d43b968548b7b18df4854fe` / `relay_1b21af1dd79e42a8e27e605233fe9f3b`.
+
+| Item | State found | Decision | Owner | Evidence |
+|---|---|---|---|---|
+| U289 desk routing (`wt_desk_routing_261031`) | Codex desk `01a19744` left scoped REVISE notes (14 files out of scope, `desk_title.py`/`user_window.py` regressions, `test_u207b` 2 FAILs) | Parked on Codex re-review list; only the 2 scoped files (`hook_context.py`, `test_u289_desk_routing.py`) are eligible after rework. | codex | `.work/wt_desk_routing_261031/.work/notes/desk2611013_u289_review.md` |
+| U296-L3 pilot judge (`01a19ad0`) | Codex stopped on quota during `U296-L3` pilot judge at 2026-11-02T05:51Z | Superseded and completed via PR #266 (`9c74735`, merged `fb1ccaa`) with independent Antigravity PASS verdict. | claude / antigravity | PR #266, `relay_d6d0a33a8d43b968548b7b18df4854fe` |
+| U279 lossless topic window transport | Codex gate required lossless transport proof before marking U279 DONE | In progress in Claude child card session `u279-lossless` (`local_f2d21092`, branch `claude/u279-lossless-transport-35d914`); U279 stays READY/ACTIVE until PR merges + runtime reinstall. | claude | `.coord/master_schedule.json` |
+| U299 3-tool helper/thinking + card-parallel RSI live session | User order to record & schedule continuous RSI telemetry (`U299-HELPER-THINKING-CARD-PARALLEL-OS`) and non-destructive workspace garbage manifest | Implemented on `agy/u299-rsi-helper-parallel-os`, non-author judged by Claude. | antigravity / claude | `.coord/rsi/sessions/U299-HELPER-THINKING-CARD-PARALLEL-OS/` |

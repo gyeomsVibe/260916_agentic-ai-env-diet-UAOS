@@ -411,7 +411,12 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
 
 def hook_lines(project: Path, tool: str, *, now: float | None = None) -> str:
     """The per-prompt hook text: one line per stalled step, shown only when it changed since this tool last saw it."""
-    result = scan(project, tool, now=now)
+    from .stream import StreamBusy
+
+    try:
+        result = scan(project, tool, now=now)
+    except StreamBusy:
+        return ""
     lines = []
     # Only an agreed reroute tells a tool to act (Codex judge U166-APPLY3, finding 1); before that it is a proposal
     # that this prompt has just agreed to.

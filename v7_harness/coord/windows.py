@@ -474,7 +474,7 @@ def _write_card_record_locked(project: Path, card: str, tool: str, entry: dict[s
 
 
 def record_window(project: Path, card: str, tool: str, window_id: str, *, now: float | None = None,
-                  **extra: Any) -> dict[str, Any]:
+                  title: str | None = None, **extra: Any) -> dict[str, Any]:
     """U127 / U279: atomically write one tool's window for a card under per-card `_window_lock` so parallel
     writers on the same card serialize without blocking other cards or lanes."""
     path = _record_path(project, card)
@@ -520,7 +520,7 @@ def record_window(project: Path, card: str, tool: str, window_id: str, *, now: f
             entry["in_flight_leases"] = {}
             entry["in_flight_count"] = 0
             entry["in_flight"] = False
-        return _write_card_record_locked(project, card, tool, entry)
+        return _write_card_record_locked(project, card, tool, entry, title=title)
 
 
 def acquire_window_lease(project: Path, card: str, tool: str, *, lease_id: str | None = None,
@@ -787,6 +787,7 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
         raise ValueError(f"unknown tool: {tool}")
     if session_id is not None and tool != "claude":
         raise ValueError("--session-id applies to claude only")
+    raw_session_id = session_id
     if session_id is not None:
         session_id = _claude_session_id(session_id)
     # Hold per-(card, tool) lock `open_<card>_<tool>` across launch so concurrent callers for the SAME
@@ -814,6 +815,8 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
             window_id = _open_codex(project, name, prompt, rpc)
         elif tool == "claude":
             window_id = str(session_id)
+            if isinstance(raw_session_id, str) and raw_session_id.strip().lower().startswith("local_"):
+                extra["native_id"] = f"local_{window_id}"
         else:
             window_id, tokens = _open_antigravity(project, prompt, runner)
             if tokens is not None:  # U131: the opening turn's size, so the U127 resume cap can read it
@@ -1113,11 +1116,11 @@ def acquire_topic_window(
 
 
 def _claude_session_id(session_id: str) -> str:
-    """U129: the caller's desktop session id, lower-cased; anything but a full UUID is refused."""
-    session_id = (session_id or "").strip().lower()
-    if not SESSION_ID_RE.fullmatch(session_id):
-        raise ValueError(f"bad claude session id: {session_id!r}")
-    return session_id
+    """U129/U293: the caller's desktop session id (bare UUID or `local_<uuid>`), lower-cased to bare UUID."""
+    from .card_sessions import normalize_claude_session_id
+
+    bare_uuid, _native_id = normalize_claude_session_id(session_id)
+    return bare_uuid
 
 
 def session_busy(project: Path, session_id: str, card: str) -> str | None:

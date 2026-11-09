@@ -227,6 +227,7 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
         candidates.append(p)
     own = [p for p in candidates if p.get("owner_tool") in (tool, "all")]
     claimed_out = False
+    worktree_mismatch = None
     for p in own:
         assigned = p.get("owner_session")
         if "owner_session" in p and (not isinstance(assigned, str) or not assigned or assigned != session):
@@ -238,8 +239,11 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
                 return {"state": "WAIT", "reason": "a claim needs a session id (U146a-R)", "card": card}
             if not _bound_here(p, project):
                 # U196: a wrong or missing checkout claims nothing and writes no claim file
-                return {"state": "WAIT", "code": "WORKTREE_MISMATCH", "card": card,
-                        "reason": "phase.worktree is not this existing checkout"}
+                # U311: keep the diagnostic, but scan independent cards before waiting.
+                if worktree_mismatch is None:
+                    worktree_mismatch = {"state": "WAIT", "code": "WORKTREE_MISMATCH", "card": card,
+                                         "reason": "phase.worktree is not this existing checkout"}
+                continue
             # The claim lives beside the schedule, so every worktree sees the same claims (R5).
             claims = path.parent / "next" / "claims"
             sha = None
@@ -274,6 +278,8 @@ def next_step(project: Path, tool: str, claim: bool = False, session: str | None
         return helped
     if others:
         return {"state": "HANDOFF", "card": str(others[0].get("phase_id")), "owner": others[0].get("owner_tool")}
+    if worktree_mismatch is not None:
+        return worktree_mismatch
     remaining = [p for p in phases if p.get("state") not in TERMINAL]
     open_cards = [str(p.get("phase_id")) for p in remaining if p.get("state") != "HUMAN"]
     if stacked:

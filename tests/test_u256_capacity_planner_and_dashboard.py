@@ -370,7 +370,9 @@ class U256Counter(unittest.TestCase):
 
     def test_paid_tool_remaining_is_unknown_by_default(self):
         # Never convert a quota guess to tokens: with no measured ledger, remaining capacity must be UNKNOWN, not a cap.
-        snap = C.collect_capacity_snapshot(self.root)
+        # U303: read an empty test home; the real home now holds measured provider quota (Codex rollouts,
+        # cockpit cache) that would turn this no-ledger case into a measured one.
+        snap = C.collect_capacity_snapshot(self.root, home=self.root / "empty_home", persist=False)
         for tool in C.PAID_TOOLS:
             rem = (snap.get("engines", snap).get(tool) or {}).get("usable_remaining_5h_tokens")
             self.assertIn(rem, (None, "UNKNOWN"), f"{tool} remaining {rem} with no ledger")

@@ -19,7 +19,7 @@
 
 - 모델 출력이 실행 파일·셸 명령이 되는 곳(명령 주입): **0곳**
 - 고정 실행 파일 + 모델 글은 데이터 인자로만 전달(DATA_ARG): **11곳** (U120 `coord/agy_dispatch.py` 추가; U166 병합자 호출은 같은 함수의 `check_args` 검사로 GUARDED)
-- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **18곳** (U277이 추가한 `coord/deliver.py` 원격 주소 읽기는 U277-C1에서 다시 제거; U103 `coord/desk_delta.py`, U134 `coord/presence.py`, U146-A `coord/next_card.py`·`coord/stop_gate.py`, U146a-R `coord/stop_gate.py` push 허가 읽기, U166 `coord/merge_route.py` PR 읽기, U181 `coord/boot_task.py` 부팅 실행기, U213 `coord/day_brief.py` 최근 병합 읽기 추가)
+- 코드가 만든 고정 명령, 호출자는 값 몇 개만 채움(FIXED_PLAN): **18곳** (U277이 추가한 `coord/deliver.py` 원격 주소 읽기는 U277-C1에서 다시 제거; U103 `coord/desk_delta.py`, U134 `coord/presence.py`, U146-A `coord/next_card.py`·`coord/stop_gate.py`, U146a-R `coord/stop_gate.py` push 허가 읽기, U166 `coord/merge_route.py` PR 읽기, U181 `coord/boot_task.py` 부팅 실행기, U213 `coord/day_brief.py` 최근 병합 읽기 추가; U326 `coord/session_fabric.py` Git 포트 추가)
 - 사람 운영자(operator)가 명령을 직접 넘기는 도구(OPERATOR_COMMAND): **3곳**
 - 따라서 U54-S2 결론: 지금 코드에는 POLICY_DENIED 관문을 새로 끼울 **실행 지점이 없다**. 새 CALLER_INPUT 지점이 생기면 `tests/test_u54_s2_caller_review.py`가 실패해서 이 검토를 다시 하게 만든다.
 
@@ -43,6 +43,7 @@
 | `coord/presence.py:415` | FIXED_PLAN | U134 대기 편지 발송. `python -c QUEUE_SPAWN_CODE <프로젝트> <도구>`: 실행 파일은 지금 파이썬(`sys.executable`), 스크립트는 코드 상수이고, 프로젝트 경로와 도구 이름(TOOLS 셋 중 하나, `_path`가 먼저 검사)은 `sys.argv` 값으로만 간다. 편지 본문은 argv에 없다(대기 파일에서 읽음). 셸 없음. |
 | `coord/next_card.py:31` | FIXED_PLAN | U146-A 일정 정본 위치. `git -C <프로젝트> rev-parse --path-format=absolute --git-common-dir`: 실행 파일·하위 명령·옵션이 모두 코드 상수이고 프로젝트 경로는 `-C` 값 한 칸이다. 셸 없음, 10초 제한, 읽기 전용. 일정·편지 내용은 인자로 들어가지 않는다. |
 | `coord/day_brief.py:45` | FIXED_PLAN | U213 하루 브리핑의 최근 병합 읽기. `git -C <프로젝트> log -1 --merges --format=%cs%x09%s <ref>`: 실행 파일·하위 명령·옵션이 코드 상수이고 ref는 코드 상수 `origin/main`·`HEAD` 중 하나, 프로젝트 경로는 `-C` 값 한 칸이다. 셸 없음, 5초 제한, 읽기 전용. 일정·편지·모델 글은 인자로 들어가지 않는다. |
+| `coord/session_fabric.py:264` | FIXED_PLAN | U326 카드 세션 Git 포트(`Git._run`). `git --no-optional-locks -C <경로> <하위 명령>`: 실행 파일과 하위 명령(`rev-parse`·`ls-tree`·`ls-files`·`diff`·`worktree add`·`status`)은 코드 상수다. 호출자 값은 프로젝트·작업 트리 경로, 검사를 거친 브랜치(`_BRANCH`)·40자 커밋 해시, 그리고 `reviewed_ref` 한 칸뿐이다. `reviewed_ref`는 `rev-parse --end-of-options` 뒤에 놓여 git 옵션으로 읽히지 않는다. 셸 없음. `GIT_CEILING_DIRECTORIES`로 상위 저장소를 찾아 올라가지 않는다. 모델 출력 경로는 없다. |
 | `coord/stop_gate.py:33` | FIXED_PLAN | U146-A 진척 서명. `git -C <프로젝트> rev-parse HEAD`: 고정 명령에 프로젝트 경로 한 칸만 들어간다. 셸 없음, 10초 제한, 읽기 전용. |
 | `coord/stop_gate.py:92` | FIXED_PLAN | U146a-R push 허가 읽기. `git -C <정본 위치> show refs/remotes/origin/main:.coord/grants/push.json`: 실행 파일·하위 명령·참조 이름·파일 경로가 모두 코드 상수이고 정본 위치(`coord_root`)는 `-C` 값 한 칸이다. 브랜치 이름은 인자로 들어가지 않는다(결과 JSON과 파이썬에서 비교). 셸 없음, 10초 제한, 읽기 전용. |
 | `coord/merge_route.py:50` | FIXED_PLAN | U166 PR 읽기. `gh pr view <번호> --json state,mergeable,headRefOid,headRefName,url`: 실행 파일·하위 명령·필드 목록이 코드 상수이고, 번호는 `check_args`가 양의 정수로 확인한 한 칸이다. 셸 없음, 60초 제한, 읽기 전용. (병합자 호출 `merge_route.py:156`은 같은 함수에서 `check_args`가 먼저 돌아 GUARDED: 고정 `agy`/`codex` argv, 요청 글은 정수 PR과 40자리 16진수 head만 넣은 argv 한 칸, `UAOS_WORKER=1`, 성공 판정은 `gh pr view`의 MERGED.) |
@@ -52,6 +53,7 @@
 | `deploy_pc.py:237` | FIXED_PLAN | 배포 단계 목록(`steps`)은 `deploy_pc`가 코드로 만든다. push 단계에만 ALLOW_PUSH를 준다. 원격 쓰기는 사람 승인 경계다. |
 | `global_install.py:417` | FIXED_PLAN | `schtasks /Create …`, `schtasks /Run …`. 작업 이름과 .cmd 경로는 설치기가 정한다. |
 | `rsi_release.py:674` | FIXED_PLAN | `rsi schedule`의 예약 작업 명령. 기본 드라이런이고 `--apply`에서만 실행된다. |
+| `version_gate.py:110` | FIXED_PLAN | `_git()`은 실행 파일 `git`이 고정이고, 호출처는 읽기 전용 `merge-base`·`diff --name-only`·`log`·`show`·`ls-files`만 쓴다. 바뀌는 값은 기준 ref와 경로 한 칸뿐이고 `shell=False`다. |
 | `execution/launcher.py:117` | FIXED_PLAN | `taskkill /F /T /PID <pid>`. pid는 이 프로세스가 띄운 자식이다. |
 | `execution/launcher.py:211` | FIXED_PLAN | `python -c <script>`. script는 `build_worker_script()`가 만든 고정 템플릿이다(`custom_script`는 시험용 인자). |
 | `olla.py:562` | FIXED_PLAN | `python -m v7_harness.olla digest -f <파일 경로>`. 경로 한 칸만 바뀐다. |

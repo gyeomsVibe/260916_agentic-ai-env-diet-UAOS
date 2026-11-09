@@ -111,7 +111,7 @@ class MasterTaskScheduler:
                 mia_stage="Step 2. 큰계획",
                 depends_on=["P1-COMMS"],
                 state="READY",
-                allowed_files=["docs/19_unified-agent-orchestration-design.md", "AGENTS.md"],
+                allowed_files=["docs/01_unified-agent-orchestration-design.md", "AGENTS.md"],
                 updated_at=now,
             ),
             PhaseItem(

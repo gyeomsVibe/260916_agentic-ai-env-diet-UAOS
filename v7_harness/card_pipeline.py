@@ -16,6 +16,7 @@ from subprocess import TimeoutExpired
 
 from v7_harness import runtime_install
 from v7_harness.coord import merge_route
+from v7_harness.coord.card_summary import compact_text, summary_fields, summary_record
 from v7_harness.coord.usage_ledger import record_usage
 from v7_harness.coord.presence import read as read_presence
 
@@ -297,7 +298,9 @@ def new_manual(desk, card, title, now: float | None = None) -> dict[str, Any]:
     if not record.is_file():
         record.parent.mkdir(parents=True, exist_ok=True)
         started = time.time() if now is None else now
-        record.write_text(json.dumps({"card": card, "title": title, "started_at": started}), encoding="utf-8")
+        metadata = summary_fields({"card": card, "title": title, "state": "READY"})
+        record.write_text(json.dumps({"card": card, "title": title, "started_at": started,
+                                      "title_ko": metadata["title_ko"], "title_en": metadata["title_en"]}), encoding="utf-8")
     return {"manual": str(manual), "created": created, "started_at": started_at(desk, card)}
 
 
@@ -343,20 +346,18 @@ def write_result(checkout, card, pr, mergeable, tests, blocker, title: str | Non
     path.parent.mkdir(parents=True, exist_ok=True)
     resolved_title = clean_core_title(title) if title else card_title(checkout, card)
     heading = f"# {card} — {resolved_title} result ({datetime.date.today().isoformat()})" if resolved_title else f"# {card} result ({datetime.date.today().isoformat()})"
-    path.write_text(f"{heading}\n\n{line}\n", encoding="utf-8")
-    user_line = (
-        format_status_line(
-            card,
-            resolved_title,
-            "REVIEW" if mergeable == "yes" else "BLOCKED",
-            "동료 도구 판정·병합" if mergeable == "yes" else f"차단 해소({blocker.strip()})",
-            pr=pr,
-            detail=f"tests {tests}, mergeable={mergeable}",
-        )
-        if resolved_title
-        else ""
-    )
-    return {"ok": True, "path": str(path), "line": line, "title": resolved_title, "user_line": user_line}
+    try:
+        recorded = json.loads(_card_record(checkout, card).read_text(encoding="utf-8"))
+        recorded = recorded if isinstance(recorded, dict) else {}
+    except (OSError, ValueError):
+        recorded = {}
+    if title:
+        recorded = {key: value for key, value in recorded.items() if key not in ("title_ko", "title_en")}
+    summary = summary_record({**recorded, "card": card, "title": title or recorded.get("title") or resolved_title,
+                              "state": "REVIEW" if mergeable == "yes" else "BLOCKED", "pr": pr}, checkout)
+    path.write_text(f"{heading}\n\n{line}\nSUMMARY_JSON {json.dumps(summary, ensure_ascii=False)}\n", encoding="utf-8")
+    return {"ok": True, "path": str(path), "line": line, "title": resolved_title,
+            "user_line": summary["user_summary"], "agent_summary": summary["agent_summary"]}
 
 
 def _checkouts(project) -> list[Path]:
@@ -393,21 +394,18 @@ def collect_results(project) -> list[dict[str, Any]]:
                 pr_val = parts[1][3:].strip() if len(parts) > 1 and parts[1].startswith("PR ") else ""
                 merge_val = parts[2][10:].strip() if len(parts) > 2 and parts[2].startswith("MERGEABLE ") else "yes"
                 tests_val = parts[3][6:].strip() if len(parts) > 3 and parts[3].startswith("tests ") else ""
-                user_line = (
-                    format_status_line(
-                        path.stem,
-                        resolved_title,
-                        "REVIEW" if merge_val == "yes" else "BLOCKED",
-                        "동료 도구 판정·병합" if merge_val == "yes" else "차단 해소",
-                        pr=pr_val,
-                        detail=f"tests {tests_val}, mergeable={merge_val}" if tests_val else f"mergeable={merge_val}",
-                    )
-                    if resolved_title
-                    else ""
-                )
+                stored = next((s[len("SUMMARY_JSON "):] for s in lines_all if s.startswith("SUMMARY_JSON ")), "{}")
+                try:
+                    recorded = json.loads(stored)
+                    recorded = recorded if isinstance(recorded, dict) else {}
+                except ValueError:
+                    recorded = {}
+                summary = summary_record({**recorded, "card": path.stem, "title": recorded.get("display_title") or resolved_title, "pr": pr_val,
+                                          "state": "REVIEW" if merge_val == "yes" else "BLOCKED"}, checkout)
                 newest[path.stem] = (
                     stamp,
-                    {"card": path.stem, "title": resolved_title, "line": line, "user_line": user_line, "path": str(path)},
+                    {"card": path.stem, "title": resolved_title, "line": line, "user_line": summary["user_summary"],
+                     "agent_summary": summary["agent_summary"], "path": str(path)},
                 )
     return [row for _, row in sorted(newest.values(), key=lambda item: item[1]["card"])]
 
@@ -649,12 +647,23 @@ def done_report(project, card, what, pr_url, head, runtime=None, user_action=Non
     action = _one_line("user_action", user_action) if user_action else None
     if _done_arg_problems(pr_url, head, runtime):
         raise ValueError("; ".join(_done_arg_problems(pr_url, head, runtime)))
-    installed = f"런타임 {runtime}" if runtime else "런타임 설치가 필요 없는 변경"
-    last = f"- **남은 일**: {action}" if action else "- 다음: 없음(새 세션부터 적용)"
-    card_label = f"{core_title}({card})" if core_title else f"{name} {card} 작업"
+    summary = summary_fields({"card": card, "title": title or core_title, "action": what, "state": "DONE"})
+    installed = f"런타임 {runtime} / Runtime" if runtime else "런타임 설치가 필요 없는 변경 / No runtime install"
+    last = f"- **남은 일**: {action}" if action else "- 다음: 없음 / Next: none"
+    card_label = f"{clean_core_title(summary['title_ko'])}({card})"
+    if not core_title:
+        card_label = f"{name} · {card_label}"
     pr_no = pr_url.rsplit("/", 1)[1]  # U271: a short link label instead of a bare 70-character url
-    return "\n".join((f"**결과**: {card_label} 완료 — {what}",
-                      f"- 근거: [PR #{pr_no}]({pr_url}) 병합 {head[:7]} · {installed}", last))
+    evidence = f"- 근거: [PR #{pr_no}]({pr_url}) 병합 / merged {head[:7]} · {installed} · Evidence"
+    if action and " / " not in action:
+        evidence += " · Remaining action translation not recorded"
+    for field_limit in (100, 72, 48, 24):
+        first = (f"**결과**: {card_label} 완료 — {compact_text(summary['action_ko'], field_limit)} / "
+                 f"{compact_text(summary['action_en'], field_limit)} · {compact_text(summary['title_en'], field_limit)}")
+        report = "\n".join((first, evidence, last))
+        if len(report) <= REPORT_MAX_CHARS:
+            return report
+    raise ValueError("REPORT_OVER_CHARS: required evidence and human action cannot fit the compact report")
 
 
 def _head_ok(view, head) -> bool:

@@ -24,6 +24,7 @@ REVIEW_DOC = ROOT / "docs" / "51_u54-s2-caller-input-review.md"
 # same function, so the audit marks it GUARDED and it is not a CALLER_INPUT site.
 # U213 added coord/day_brief.py (fixed read-only git log of the newest merge, reviewed as FIXED_PLAN).
 # U277 added a third coord/deliver.py site (git config remote.origin.url); U277-C1 removed that remote read again.
+# U301 added version_gate.py (read-only git merge-base/diff/log/show/ls-files, reviewed as FIXED_PLAN).
 REVIEWED = {
     "v7_harness/adapters/claude_worker.py": 1,
     "v7_harness/adapters/lane_worker.py": 1,
@@ -37,6 +38,7 @@ REVIEWED = {
     "v7_harness/coord/next_card.py": 1,
     "v7_harness/coord/notify.py": 1,
     "v7_harness/coord/presence.py": 1,
+    "v7_harness/coord/session_fabric.py": 1,
     "v7_harness/coord/stop_gate.py": 2,
     "v7_harness/coord/thrift.py": 1,
     "v7_harness/deploy_pc.py": 2,
@@ -49,6 +51,7 @@ REVIEWED = {
     "v7_harness/proof_receipt.py": 1,
     "v7_harness/review.py": 2,
     "v7_harness/rsi_release.py": 1,
+    "v7_harness/version_gate.py": 1,
 }
 VERDICTS = ("DATA_ARG", "FIXED_PLAN", "OPERATOR_COMMAND")
 
@@ -64,7 +67,7 @@ class CallerInputReviewTest(unittest.TestCase):
                 if ln.startswith("| `") and any(f"| {v} |" in ln for v in VERDICTS)]
         per_file = Counter("v7_harness/" + ln.split("`")[1].rsplit(":", 1)[0] for ln in rows)
         self.assertEqual(REVIEWED, dict(per_file))
-        self.assertEqual({"DATA_ARG": 11, "FIXED_PLAN": 18, "OPERATOR_COMMAND": 3},
+        self.assertEqual({"DATA_ARG": 11, "FIXED_PLAN": 20, "OPERATOR_COMMAND": 3},
                          dict(Counter(v for ln in rows for v in VERDICTS if f"| {v} |" in ln)))
 
     def test_no_command_injection_verdict_and_no_gap(self):
