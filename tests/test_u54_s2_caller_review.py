@@ -38,6 +38,7 @@ REVIEWED = {
     "v7_harness/coord/next_card.py": 1,
     "v7_harness/coord/notify.py": 1,
     "v7_harness/coord/presence.py": 1,
+    "v7_harness/coord/session_fabric.py": 1,
     "v7_harness/coord/stop_gate.py": 2,
     "v7_harness/coord/thrift.py": 1,
     "v7_harness/deploy_pc.py": 2,
@@ -66,7 +67,7 @@ class CallerInputReviewTest(unittest.TestCase):
                 if ln.startswith("| `") and any(f"| {v} |" in ln for v in VERDICTS)]
         per_file = Counter("v7_harness/" + ln.split("`")[1].rsplit(":", 1)[0] for ln in rows)
         self.assertEqual(REVIEWED, dict(per_file))
-        self.assertEqual({"DATA_ARG": 11, "FIXED_PLAN": 19, "OPERATOR_COMMAND": 3},
+        self.assertEqual({"DATA_ARG": 11, "FIXED_PLAN": 20, "OPERATOR_COMMAND": 3},
                          dict(Counter(v for ln in rows for v in VERDICTS if f"| {v} |" in ln)))
 
     def test_no_command_injection_verdict_and_no_gap(self):

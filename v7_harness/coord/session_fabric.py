@@ -72,6 +72,12 @@ EXCLUDE = (".work/wt/", ".coord/fabric/")  # the fabric's own roots never enter 
 _TERMINAL = {"completed": "COMPLETED", "failed": "FAILED", "interrupted": "INTERRUPTED"}
 
 
+_HEX64 = "[0-9a-f]{64}"  # schema v1.1 sha256 / lease id / key pattern
+
+
+_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"  # card_uuid format uuid, str(uuid4()) form
+
+
 class FabricRefusal(Exception):
     def __init__(self, code: str, detail: str = "", evidence: dict | None = None):
         super().__init__(f"{code}: {detail}" if detail else code)
@@ -159,10 +165,10 @@ def prepare(project, card, tool, parent, *, source_head, reviewed_ref, max_token
     try:
         slot = ports.lock.acquire_slot(tool, lease["lease_id"])
         before = ports.git.parent_snapshot(project, EXCLUDE)
-        workspace["parent_snapshot"] = before
+        manifest = ports.git.head_manifest(project, source_head)  # measured before any worktree effect
+        workspace.update(parent_snapshot=before, source_manifest_sha256=manifest)
         ports.git.add_worktree(project, path, branch, source_head)
-        state, manifest = ports.git.worktree_state(path), ports.git.head_manifest(project, source_head)
-        workspace["source_manifest_sha256"] = manifest
+        state = ports.git.worktree_state(path)
         after = ports.git.parent_snapshot(project, EXCLUDE)
         if state["head"] != source_head or not state["clean"] or state["manifest"] != manifest:
             raise FabricRefusal("WORKSPACE_UNCLEAN", str(path))
@@ -170,7 +176,7 @@ def prepare(project, card, tool, parent, *, source_head, reviewed_ref, max_token
             raise FabricRefusal("PARENT_SNAPSHOT_CHANGED", str(path))
         record = build_record(**fields)
         ports.store.write_record(record)
-    except FabricRefusal:  # known pre-native failure: durable FAILED record, then free capacity; worktree stays
+    except FabricRefusal:  # known pre-native failure: durable FAILED record once fields are measured, then free capacity
         _record_failure(ports, fields)
         ports.lock.drop_fresh_lease(card, tool, slot)
         raise
@@ -259,7 +265,8 @@ class Git:
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
 
     def rev_parse(self, project, ref):
-        out = self._run(project, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
+        """--end-of-options: a caller ref that starts with '-' is read as a revision, never as a git option"""
+        out = self._run(project, "rev-parse", "--verify", "--quiet", "--end-of-options", ref + "^{commit}")
         sha = out.stdout.decode("ascii", "replace").strip()
         if out.returncode or not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise FabricRefusal("SOURCE_DIRTY_OR_STALE", f"unknown ref {ref}")
@@ -328,18 +335,14 @@ class Store:
             return None
         except ValueError:
             raise FabricRefusal("CORRUPT_RECORD", f"{card}__{tool} is not JSON")
-        kinds = {"schema": str, "card": str, "card_uuid": str, "tool": str, "state": str, "permissions": str,
-                 "rev": int, "parent": dict, "workspace": dict, "idempotency": dict, "native": dict,
-                 "visibility": dict, "caps": dict, "lease": dict, "turns": list}
-        if not isinstance(data, dict) or any(type(data.get(k)) is not t for k, t in kinds.items()) \
-                or data["schema"] != SCHEMA or data["card"] != card or data["tool"] != tool or data["rev"] < 0:
+        if not _V11(data) or data["card"] != card or data["tool"] != tool:
             raise FabricRefusal("CORRUPT_RECORD", f"{card}__{tool} is not a schema v1.1 record for this card and tool")
         return data
 
     def write_record(self, record):
         """tmp + fsync + os.replace under the record lock; rev 0 only creates, rev n needs stored rev n-1."""
-        if _redact_all(record) != record:
-            raise FabricRefusal("CORRUPT_RECORD", "secret-shaped text in a record field is refused, never rewritten")
+        if not _V11(record) or _redact_all(record) != record:
+            raise FabricRefusal("CORRUPT_RECORD", "not a schema v1.1 record, or secret-shaped text (refused, never rewritten)")
         path = self._path(record["card"], record["tool"])
         path.parent.mkdir(parents=True, exist_ok=True)
         data = json.dumps(record, allow_nan=False, sort_keys=True).encode("utf-8")
@@ -522,3 +525,92 @@ def _record_failure(ports, fields):
         ports.store.write_record(record)
     except FabricRefusal:
         pass
+
+
+def _text(minimum=0, pattern=None, maximum=None):
+    """schema v1.1 string: a str of minimum..maximum chars that fully matches pattern when one is given"""
+    return lambda v: (isinstance(v, str) and len(v) >= minimum and (maximum is None or len(v) <= maximum)
+                      and (pattern is None or re.fullmatch(pattern, v) is not None))
+
+
+def _number(low=None, exclusive=False):
+    """schema v1.1 number: int or float but never bool, finite, and at or above (or above) low when given"""
+    return lambda v: (type(v) in (int, float) and math.isfinite(v)
+                      and (low is None or (v > low if exclusive else v >= low)))
+
+
+def _integer(low):
+    """schema v1.1 integer with a minimum: bool is not an integer here"""
+    return lambda v: type(v) is int and v >= low
+
+
+def _enum(*values):
+    """schema v1.1 enum/const: equal value of the same type, so True never matches 1"""
+    return lambda v: any(type(v) is type(x) and v == x for x in values)
+
+
+def _nullable(check):
+    return lambda v: v is None or check(v)
+
+
+def _closed(fields, optional=()):
+    """schema v1.1 object, additionalProperties false: no unknown key, every non-optional key, each value valid"""
+    return lambda v: (isinstance(v, dict) and set(v) <= set(fields) and set(fields) - set(optional) <= set(v)
+                      and all(fields[k](v[k]) for k in v))
+
+
+def _v11_workspace():
+    """schema v1.1 parent, workspace and idempotency (card_session_v1_1.schema.json 882e9e77)"""
+    lanes = ("IMPL_CODE", "VERIFY_AUDIT", "ARCH_DESIGN", "MERGE_RELEASE", "RECOVERY_OPS")
+    handoff = lambda v: v is None or (isinstance(v, dict) and {"from_desk", "to_desk", "at", "receipt"} <= set(v))
+    snapshot = _closed({k: _text(pattern=_HEX64) for k in ("staged", "unstaged", "untracked", "combined")})
+    return {"parent": _closed({"desk_id": _text(1), "desk_tool": _enum(*TOOLS), "project_root": _text(),
+                               "owner": _text(), "lane": _enum(*lanes), "handoff": handoff}, optional=("handoff",)),
+            "workspace": _closed({"path": _text(), "branch": _text(pattern=r"[a-z]+/U[0-9]{2,4}[-a-z0-9]*"),
+                                  "source_head": _text(pattern="[0-9a-f]{40}"),
+                                  "source_manifest_sha256": _text(pattern=_HEX64),
+                                  "cleanup": _enum("MANUAL_DRY_RUN_ONLY"), "reviewed_ref": _text(1),
+                                  "parent_snapshot": snapshot}),
+            # the schema text leaves idempotency open; it is closed here as fail-closed (Codex probe idempotency_extra_key)
+            "idempotency": _closed({"open_key": _text(pattern=_HEX64), "journal": _text()})}
+
+
+def _v11_native():
+    """schema v1.1 native, visibility, caps and lease"""
+    probe = _closed({"state": _enum("OBSERVED", "UNKNOWN", "UNSUPPORTED"), "evidence": _nullable(_text()),
+                     "probe_kind": _enum("live", "fake", None), "probed_wall": _nullable(_number())})
+    return {"native": _closed({"kind": _enum(*NATIVE_KIND.values()), "native_id": _nullable(_text()),
+                               "cli_id": _nullable(_text()), "desktop_id": _nullable(_text()),
+                               "id_mapping": _enum("SAME", "MAPPED_OBSERVED", "UNMAPPED")}),
+            "visibility": _closed({"native_sidebar": probe, "native_nesting": probe}),
+            "caps": _closed({"max_tokens": _integer(1), "max_wall_s": _number(0, exclusive=True)}),
+            "lease": _closed({"lease_id": _text(pattern=_HEX64), "owner_pid": _integer(1), "owner_host": _text(1),
+                              "acquired_wall": _number()})}
+
+
+def _v11_turns_result():
+    """schema v1.1 turns[] items and result (with its judgment)"""
+    turn = _closed({"turn_key": _text(pattern=_HEX64), "native_turn_id": _nullable(_text()),
+                    "status": _enum("SENT", "COMPLETED", "FAILED", "INTERRUPTED", "EFFECT_UNKNOWN"),
+                    "terminal_event": _nullable(_text()), "started_at": _number(), "ended_at": _nullable(_number()),
+                    "tokens": _nullable(_integer(0)), "error": _nullable(_text(maximum=ERROR_MAX))})
+    judgment = _closed({"judge_tool": _enum(*TOOLS), "verdict": _enum("PASS", "REVISE", "FAIL"),
+                        "evidence": _text(1), "judged_at": _number()})
+    result = _closed({"result_id": _text(pattern=_HEX64), "author_tool": _enum(*TOOLS), "receipt_id": _text(1),
+                      "status": _enum("QUEUED", "DELIVERED", "READ", "ACKED"), "status_at": _number(),
+                      "delivered_to": _text(1), "judgment": _nullable(judgment)})
+    return {"turns": lambda v: isinstance(v, list) and all(turn(t) for t in v), "result": _nullable(result)}
+
+
+def _v11_record():
+    """the whole schema v1.1 record; every required key, no unknown key at any level"""
+    states = ("PREPARED", "STARTING", "RUNNING", "WAITING", "COMPLETED", "FAILED", "EFFECT_UNKNOWN")
+    return _closed({"schema": _enum(SCHEMA), "card": _text(pattern=_CARD.pattern), "card_uuid": _text(pattern=_UUID),
+                    "tool": _enum(*TOOLS), "adapter": _text(), "adapter_version": _text(1), "state": _enum(*states),
+                    "permissions": _enum(*PERMISSIONS), "created_at": _number(), "updated_at": _number(),
+                    "rev": _integer(0), **_v11_workspace(), **_v11_native(), **_v11_turns_result()})
+
+
+def _V11(record):
+    """read_record and write_record both refuse anything this rejects; the checks are rebuilt per call (cheap)"""
+    return _v11_record()(record)
