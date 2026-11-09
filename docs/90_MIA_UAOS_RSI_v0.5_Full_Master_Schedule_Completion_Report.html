@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>UAOS-RSI v0.5 — 무승인 논스톱 티키타카 마스터 스케줄 전 구간 완결 보고서 (U236a·U229B2·U233·U237·U237D·U238·U239·U240)</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; line-height: 1.65; color: #1e293b; max-width: 1080px; margin: 2rem auto; padding: 0 1.5rem; background: #f8fafc; }
+    h1, h2, h3 { color: #0f172a; }
+    .card { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: #fff; }
+    th, td { border: 1px solid #cbd5e1; padding: 0.65rem 0.85rem; text-align: left; font-size: 0.93rem; }
+    th { background: #f1f5f9; font-weight: 700; }
+    code { background: #f1f5f9; padding: 0.15rem 0.35rem; border-radius: 4px; font-size: 0.88rem; }
+    .badge-pass { background: #dcfce7; color: #166534; padding: 0.15rem 0.5rem; border-radius: 999px; font-weight: 700; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>UAOS-RSI v0.5 — 무승인 논스톱 티키타카 마스터 스케줄 전 구간 완결 보고서</h1>
+  <div class="card">
+    <p><strong>작성일시 (KST)</strong>: 2026-10-26 00:28 | <strong>총괄 창구</strong>: Antigravity (<code>580b0c75-603a-4448-9f1a-e6ce3a66ce8e</code>) | <strong>검증 원칙</strong>: Ollama Local-First → Antigravity Review/Audit → CI Receipt Attestation → <code>coord merge</code></p>
+    <p>문서 87~89호에서 수립한 3대 도구 합의 마스터 스케줄 전 구간(<code>U236a</code>, <code>U229B2</code>, <code>U233</code>, <code>U237</code>, <code>U237D</code>, <code>U238</code>, <code>U239</code>, <code>U240</code>)을 사용자 개입·수동 복붙·유휴 대기 없이 독립 격리 워크트리와 파일럿 하네스로 구현·검증·병합했습니다.</p>
+  </div>
+
+  <h2>1. 마스터 스케줄 카드별 구현·검증·PR 현황</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>카드</th>
+        <th>핵심 구현 내용</th>
+        <th>파일럿 번들 (Ollama / Apply)</th>
+        <th>PR 및 커밋</th>
+        <th>상태</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>U236a</code></td>
+        <td>Claude 워커 정확 모델 강제 핀(<code>model_pin: exact</code>, <code>--require-model</code>)</td>
+        <td><code>U236a-L1</code> / <code>U236a-A1</code></td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/200">PR #200</a> (<code>60b63bc</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U233</code></td>
+        <td>3대 도구 통합 문서 허브 (<code>shared_desk</code> 해석, HTML 제목 추출, <code>00_DOCUMENT_HUB.html</code>, <code>--ext</code>/<code>--from-file</code>)</td>
+        <td><code>fdc0d7b5</code> (<code>U233-L1</code>), <code>2bafd8c7</code> (<code>U233-L2</code>), <code>c24995c4</code> (<code>U233-A3</code>)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/201">PR #201</a> (<code>3dcfa95</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U229B2</code></td>
+        <td>독립 호출 원장 (<code>v7_harness/invocation.py</code>) 및 <code>claude_worker</code>·<code>ollama_worker</code>·<code>olla</code> 자동 기록 훅</td>
+        <td><code>U229B2-L1..L6</code> (Ollama), <code>ca7d8202</code> (<code>U229B2-A1</code>)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/202">PR #202</a> (<code>ed8ea0c</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U237</code></td>
+        <td>Haiku 5.5 + Ollama 3대 도구 공유 워커 풀 라우터 (<code>select_pool_worker</code>) 및 <code>.claude/agents/uaos-haiku-worker.md</code></td>
+        <td><code>8bb6da04</code> (<code>U237-L1</code>, Ollama 3,011 tok)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/203">PR #203</a> (<code>fbb02ec</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U238</code></td>
+        <td>무설정 프로젝트 문서 허브 자동 부트스트랩 (<code>bootstrap_project_docs</code>)</td>
+        <td><code>3ab16f41</code> (<code>U238-L2</code>, Ollama 4,153 tok)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/204">PR #204</a> (<code>ac40282</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U239</code> / <code>U239B</code> / <code>U239C</code></td>
+        <td>상시 가동 RSI 가치 평가기 (<code>evaluate_roi_metrics</code>: provider 로컬 분류 + <code>(project, work_id)</code> 식별자 및 전체 이력 최초 시도 조회 완결)</td>
+        <td><code>83b20f9b</code> (<code>U239-L1</code>) + <code>640ce6f0</code> (<code>U239B-L1</code>) + <code>8a9c8e68</code> (<code>U239C-L1</code>)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/205">PR #205</a> / <a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/208">PR #208</a> / <a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/210">PR #210</a> (<code>0895d57</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U240</code></td>
+        <td>올패키지 프로젝트 피니셔 및 문서 허브 자동 동기화 (<code>sync_project_hub</code>)</td>
+        <td><code>efd21cac</code> (<code>U240-L2</code>, Ollama 7,652 tok)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/206">PR #206</a> (<code>164b72c</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U237D</code> / <code>U237E</code></td>
+        <td>3대 도구 사용자 창구 전체 제목 수렴 및 <code>_topic_from_text</code> 선행 URL/파일 경로 제거 완결</td>
+        <td><code>U237D-L1..L2</code> + <code>b3b2afd9</code> (<code>U237E-L1</code>, Claude+Ollama+AGY 감사)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/207">PR #207</a> / <a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/209">PR #209</a> (<code>c9e3cc3</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+      <tr>
+        <td><code>U241</code></td>
+        <td>Antigravity 사용자 대상 메인 컨트롤 UX/UI &amp; 3대 도구 병렬·백그라운드 가시성 엔진 (<code>v7_harness/control_ux.py</code> + Generative UI 위젯)</td>
+        <td><code>07597c03</code> (<code>U241-L3</code>, Ollama 1,544 tok + AGY 감사 PASS)</td>
+        <td><a href="https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/211">PR #211</a> (<code>c653a8e</code>)</td>
+        <td><span class="badge-pass">MERGED</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>2. 1차 공식 출처 (Primary Sources)</h2>
+  <ul>
+    <li>Claude Code Model Config &amp; Subagents: <a href="https://code.claude.com/docs/en/model-config">https://code.claude.com/docs/en/model-config</a></li>
+    <li>Claude Code CLI Reference (<code>--max-budget-usd</code>, <code>--model</code>): <a href="https://code.claude.com/docs/en/cli-reference">https://code.claude.com/docs/en/cli-reference</a></li>
+    <li>Git Worktree Isolation: <a href="https://git-scm.com/docs/git-worktree">https://git-scm.com/docs/git-worktree</a></li>
+    <li>GitHub CLI PR Merge &amp; Attestations: <a href="https://cli.github.com/manual/gh_pr_merge">https://cli.github.com/manual/gh_pr_merge</a></li>
+  </ul>
+</body>
+</html>

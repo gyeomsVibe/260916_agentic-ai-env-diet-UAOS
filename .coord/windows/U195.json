@@ -1,0 +1,15 @@
+{
+  "card": "U195",
+  "title": "[U195] Explicit automatic dependency candidates",
+  "tools": {
+    "claude": {
+      "id": "47da92e5-d423-43a8-93d0-afb30e0f9862",
+      "opened_at": 1792069893.9154015
+    },
+    "antigravity": {
+      "id": "c6fa52c5-c08f-4a3d-8402-e3c4006b756d",
+      "opened_at": 1792079868.3052964,
+      "last_input_tokens": 24239
+    }
+  }
+}

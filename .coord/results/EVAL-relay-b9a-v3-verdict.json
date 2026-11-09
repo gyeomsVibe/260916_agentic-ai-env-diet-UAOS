@@ -1,0 +1,16 @@
+{
+  "reason": "Seven measured runs exceeded frozen300k; no further paid EVAL retry before a new fixed bounded qualification contract",
+  "current_priority": "Finish U229 title, logging, source release and evidence-only RSI",
+  "cap": "300k including cache reads; unchanged",
+  "prerequisites": [
+    "Offline inspection proves exact worker context and inherited safety contract",
+    "No settings isolation that removes mandatory safety gates",
+    "Bounded tree containment and timeout proof",
+    "Independent contract review and measured cap admission before any provider call"
+  ],
+  "preserved_idea": "Worker context isolation is a future candidate, not an adopted route",
+  "relay": "relay_b9a08b54bd4c11f1adc2c1fb16f52ffc",
+  "new_provider_calls_authorized": 0,
+  "conductor_verdict": "NO_GO_FOR_EXECUTION_NOW",
+  "proposal": "EVAL-COMMON-WORKER-v3"
+}

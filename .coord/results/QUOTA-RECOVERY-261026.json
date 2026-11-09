@@ -1,0 +1,18 @@
+{
+  "receiver_bound_letter": "relay_875ca612cf40bbdd916d5926800ed026",
+  "release": "HELD",
+  "receiver_bound_ack_blocked": 1,
+  "root_tests": 50,
+  "rsi_dispositions": 29,
+  "latest_source_fix": "APPLIED and accepted",
+  "peer_skipped": 7,
+  "pending_review_queue": ".coord/results/HISTORICAL-RETURN-REVIEW-QUEUE-261026.json",
+  "peer_exact_stage_tests": 2636,
+  "historical_pending_exact_review": 23,
+  "runtime": "0.3.0-fe627cf17102",
+  "historical_letters_read": 41,
+  "request": "Process quota-missed messages",
+  "historical_disposed_or_superseded": 18,
+  "watch_wakes_session": false,
+  "watch_pid": 23028
+}

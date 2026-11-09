@@ -1,0 +1,79 @@
+{
+  "schema": "u241-codex-current-v1",
+  "updated_at": "2026-10-26T03:25:42.3708253+09:00",
+  "owner": "codex",
+  "verdict": "REWORK",
+  "release_hold": true,
+  "supersedes": [
+    "U241-CODEX-METADATA-REWORK-261026.json",
+    "U241-PR211-EXACT-HEAD-REWORK-261026.json",
+    "U241-REWORK-DELIVERY-261026.json"
+  ],
+  "B": {
+    "frozen_tests": 4,
+    "builtin_tests": 3,
+    "head": "ea9d4cb96f77f78ee037bf0abdb4fbe973939ae2",
+    "frozen_subtest_failures": 4,
+    "fixed": [
+      "TTL expiration",
+      "canonical owner_tool"
+    ],
+    "builtin_exit": 0,
+    "remaining": "tool and worker visibility",
+    "frozen_exit": 1
+  },
+  "C": {
+    "builtin_tests": 3,
+    "frozen_exit": 1,
+    "frozen_tests": 4,
+    "wrong_cwd_builtin_attempt": {
+      "reason": "test module absent in coordinator checkout; corrected exact-source run passed",
+      "exit": 1
+    },
+    "frozen_subtest_failures": 2,
+    "builtin_exit": 0,
+    "merge": "dff0423e46b6dcafe80a438211d317f4818e2155",
+    "remaining": [
+      "ollama and haiku absent from rendered HTML",
+      "shared project schedule resolves locally: linked checkout 0 vs canonical 76 phases",
+      "on_prompt writes docs under live foreign QUIET_LOCK; reproduced in temporary directory"
+    ],
+    "head": "f2290dc03db26e95c9fe7e1d0166999476bc8582"
+  },
+  "gate": {
+    "sha256": "0FD586CEAD78FA519FE54EA426AD1210E0931F600DF4553EB797AE7B5AA1B7EC",
+    "path": "C:\\Users\\Kimyoongyeom\\.codex\\worktrees\\b5bf\\260916_agentic-ai-env-diet\\.work\\u241-state-owner-negative.py",
+    "must_remain_unchanged": true,
+    "must_be_in_manual": true
+  },
+  "next_contract": [
+    "retain fixed original gate plus builtin tests",
+    "render actual worker metadata",
+    "resolve shared canonical project for snapshot and output",
+    "guard source writes during valid QUIET_LOCK and validate native declared desk before automatic rendering",
+    "one owner; no parallel patches or runtime installation until exact-head independent verdict"
+  ],
+  "runtime": {
+    "user_window_matches_reviewed_0895": true,
+    "version": "0.3.0-fe627cf17102",
+    "C_hotpath_installed": false,
+    "runtime_not_modified_by_this_review": true
+  },
+  "evidence": [
+    ".work/u241b-frozen-gate.log",
+    ".work/u241c-frozen-gate.log",
+    ".work/u241b-shared-root-probe.json",
+    ".work/u241c-hook-probe.py"
+  ],
+  "local_formatting_draft": {
+    "reason": "polarity error: INCLUDE frozen gate became EXCLUDE",
+    "accepted": false,
+    "retry": 0,
+    "tokens": null
+  },
+  "backlog": {
+    "inbox_items": 352,
+    "unrelated_items_not_acked": true,
+    "rsi_reviews": 52
+  }
+}

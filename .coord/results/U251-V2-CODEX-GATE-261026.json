@@ -1,0 +1,45 @@
+{
+  "card": "U251",
+  "revision": "v2",
+  "judge": "codex",
+  "candidate_sha256": "0BB57A1B157C12DF5D66531D81BE45B8DE1C5EE86117069D3D636A374D08C63E",
+  "verdict": "PASS_FOCUSED_PENDING_FULL_REGRESSION",
+  "supersedes_focused_rework": ".coord/results/U251-CODEX-VERDICT-261026.json",
+  "independent_tests": 75,
+  "independent_skipped": 1,
+  "commands": [
+    {
+      "command": "python -B -m unittest tests.test_u13_isolation tests.test_u14_adapters",
+      "exit": 0,
+      "skipped": 1,
+      "ran": 64,
+      "seconds": 41.225
+    },
+    {
+      "command": "python -B -m unittest tests.test_b28_watch_hole tests.test_u15_stream_isolation",
+      "exit": 0,
+      "ran": 11,
+      "seconds": 0.375
+    }
+  ],
+  "frozen_test_sha256": "215866F4704CA5EB6C4D473EE7E304CAE379DCC8B0423DFB12DA0710800B6FF1",
+  "new_gate": ".work/desk_261026_2/u251_judge/fresh_metadata_gate.py",
+  "new_gate_sha256": "5A8EAA5F0361C2290CF86AFE4B0AF4C972BD935F1C9E6D1CD59A74987E92987B",
+  "new_gate_exit": 0,
+  "new_gate_result": ".work/desk_261026_2/u251_judge/fresh-metadata-v2-result.json",
+  "fresh_type_check_regression_fixed": true,
+  "native_windows_link_fixture": "UNAVAILABLE_WINERROR1314",
+  "independent_5k_frozen_cpu_gate": "PASS_WITHIN30",
+  "reported4_531s_cpu": "PEER_MEASUREMENT_NOT_REMEASURED_CONTROLLED_COMPARISON",
+  "full_regression": "DISPATCHED_TO_ISOLATED_VERIFIER_NOT_COMPLETED",
+  "full_regression_owner": "u251_full_regression",
+  "full_regression_allowed_path": ".work/desk_261026_2/u251_judge/full_regression/",
+  "full_gate": "2636 testIDs exact union/disjoint across3 isolated module shards; no skips beyond original; all shard exit0; frozen bytes exact",
+  "full_regression_cap_seconds": 600,
+  "source_promotion_approved": false,
+  "runtime_approved": false,
+  "global_protocol_approved": false,
+  "prior_serial_full_exit": -1,
+  "prior_serial_full_timeout_seconds": 600,
+  "paid_provider_calls": 0
+}

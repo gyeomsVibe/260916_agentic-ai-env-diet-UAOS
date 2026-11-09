@@ -1,0 +1,37 @@
+{
+  "wakes": [
+    "wake_b79bf441b1050125027ffbb5",
+    "wake_1a8524b4deb2222f78fbcfe6"
+  ],
+  "delta": "U241-L2 newly blocked; second wake repeats same step twice, no new step",
+  "L2": {
+    "state": "FAILED",
+    "error": "SOURCE_DIVERGED",
+    "promotion": "BLOCKED",
+    "acceptance_exit": null,
+    "source_changed_path": ".coord/results/U241.md",
+    "usage": {
+      "input_tokens": 1544,
+      "output_tokens": 433
+    }
+  },
+  "cause": "Auxiliary result artifact was written inside watched source during pilot execution; not an acceptance failure",
+  "L3": {
+    "latest_observed_state": "SUCCEEDED",
+    "promotion": "DRY_RUN_PASSED",
+    "bundle": "07597c03c8e5e0a76f7556003b96ae2ae09286d15a703bbb5a073bf2c36b4125",
+    "acceptance_exit": 0,
+    "changed_files": [
+      "v7_harness/control_ux.py"
+    ],
+    "usage": {
+      "input_tokens": 1544,
+      "output_tokens": 433
+    },
+    "approval": "No Codex promotion or full UI verdict in this disposition"
+  },
+  "action": "Preserve actual writer; no duplicate retry or reconcile during live next run. Auxiliary notes belong in .work/notes, publish .coord/results only after source watch ends. Prior control-UX preflight remains required.",
+  "preflight": ".coord/results/PARALLEL-OWNERSHIP-PREFLIGHT-261026.json",
+  "runtime": "0.3.0-f4723bc9dd46",
+  "historical_backlog": "Preserved, not batch-completed"
+}

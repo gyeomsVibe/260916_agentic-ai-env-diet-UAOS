@@ -1,0 +1,10 @@
+# U234 initial evidence — implementation not yet accepted
+
+- Trigger `relay_daa07cf4aca458bf065981c783f01bf8` read and ACKed. Root independently confirmed missing consensus writer and volatile full-phase digest in the installed reader; the earlier title feature did not implement the complete suffix workflow.
+- MIA reframe and alternatives published in `.coord/tasks/U229-C-title-consensus-contract.md`; canonical card U234 created through `uaos card new`. Earlier descriptive U229-C was rejected by the CLI without writes; never treat it as a registered card.
+- Design choice awaiting independent review: dedicated transactional consensus store; ordered phase ID/title digest; do not rewrite shared master. Preserve valid legacy reader behavior, native title adapter bounds and genuine three-tool vote provenance.
+- Root-owned five-case test file SHA256 `50f6e3dd5203f74c9d645dfb802a66e5a70e2546ff429dfb5c4cb93280dbaf29`. Correctly executed from isolated B2 source: 5 errors due to absent `title_consensus`, exit1. Baseline package-path log confirms the tested source. No acceptance assertion relaxed.
+- Full contract delivered to Claude `d65030f99f870a79bd2809f16ae4ea05` and Antigravity `c08db5277bab2774352c389e83d65568`. Card-ID/import-path clarification delivered as `d47d4108`/`3dd0fccf`. These are queued/published, not receiver ACK or proof of implementation.
+- Claude owns a new isolated source and normal pilot records. Antigravity owns non-author design/gate review before implementation and later source verification. Codex owns fixed acceptance and final installation judgment. No old B1/B2 source edits, policy deployment or fabricated production votes.
+- Current installed runtime remains cbd2208ef625; suffix repair is NOT installed or complete. Existing zero-model watcher remains active; native app wake remains UNKNOWN.
+- Official sources consulted before the new design: https://docs.python.org/3/library/sqlite3.html and https://docs.python.org/3/library/os.html#os.replace. Real three-process barrier test is required; documentation is not runtime evidence.

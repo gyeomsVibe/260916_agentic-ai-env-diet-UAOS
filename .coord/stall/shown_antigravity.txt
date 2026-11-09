@@ -1,0 +1,1 @@
+WAIT IS FAILURE (U166): letter:codex:relay_cfec0fe445ea8eafd75d2b1a792d52cf waited 6 min on codex and no ACTIVE tool can take it: log BLOCKED and take the next card

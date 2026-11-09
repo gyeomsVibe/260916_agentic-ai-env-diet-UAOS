@@ -1,0 +1,18 @@
+{
+  "card": "U239B",
+  "observed_runtime": "0.3.0-714ba1019f28",
+  "installed_at": "2026-10-26T00:56:15",
+  "source": "D:/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.work/wt_u239_rsi_eval",
+  "source_branch": "agy/u239b-rsi-counterexamples",
+  "installed_independent_gate": {
+    "tests": 2,
+    "failures": 2,
+    "exit": 1,
+    "log": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u239b-installed-714-negative.log"
+  },
+  "recovery": "No live installer and exact-pointer guard checked; backup then rollback to f472 exit0; 714 directory and all source preserved",
+  "backup": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/backup_20261026_u239b_hold/runtime-current-714ba101.json",
+  "current_runtime": "0.3.0-f4723bc9dd46",
+  "delivery_reroute": "Claude SESSION_IN_USE, durable letter unACKed; rerouted to actual source owner Antigravity with full negative-gate evidence and explicit freeze; no further source execution requested",
+  "prior_wake_handling": "wake_f203 and wake508 dispositions ACKed; semantic holds remain open"
+}

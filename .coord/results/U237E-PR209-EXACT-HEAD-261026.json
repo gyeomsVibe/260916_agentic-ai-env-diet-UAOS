@@ -1,0 +1,16 @@
+{
+  "relay": "relay_8b1fb2180a0a7e06a2d809b41f053204",
+  "verdict": "PASS_SOURCE_MERGED_RUNTIME_HELD",
+  "pr": 209,
+  "head": "c9e3cc37d2a8bbd818e4386ca830de729c7de844",
+  "live_state": "MERGED",
+  "merge": "515e3558cd96aee96ae0a53916ee2e61a784b8f6",
+  "ci": "SUCCESS at exact head",
+  "source_identity": "Current source SHA256 equals approved b3b2afd9 promotion; git diff against exact commit exits0",
+  "code_scope": "Only _topic_from_text URL/path stripping order; 5 additions2 deletions",
+  "independent_prior_gate": "79 regression+3 pinned negative tests exit0, followed by3 promoted-source tests exit0; no new source changes, no redundant full rerun",
+  "card_audit": "ok:true missing:[]",
+  "audit": "relay_faa28a3c293fe0f9b8132545dcbaa7d5 checked for actual topic-fix scope",
+  "runtime": "Keep0.3.0-f4723bc9dd46; no install while U239/U239B cumulative gate remains",
+  "next": "U239C exact-head independent negative gate and source review before cumulative runtime release"
+}

@@ -1,0 +1,245 @@
+[
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 2885 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 2885 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_1701b688b2fc401a780d6e24",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 212 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 212 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_44a637be0bbed7b7a94822c0",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U196-REROUTE-BINDING",
+      "delta": "OWNER WAKE (U205): U196-REROUTE-BINDING is READY with its dependencies DONE and untouched 31 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U196-REROUTE-BINDING is READY with its dependencies DONE and untouched 31 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_54cbe4f4233aed45cb5c254a",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 30 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 30 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_57fc7d4456f6612ec31b8e5e",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 3521 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 3521 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_64254732deb71aa1303ce2d0",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 1032 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 1032 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_6873987d7bd0283901280835",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 2372 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 2372 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_8d7176b834d6b847639c924d",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 2012 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 2012 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_a676a30b683068853d371d85",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 3812 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 3812 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_b6be3ea056003e72347a2401",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "card": "U221-U222-INTEGRATION",
+      "delta": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 1998 min; you own it: take it now or hand it off by coord deliver",
+      "recipient": "codex",
+      "requested_target": "codex",
+      "wake_class": "ACTIONABLE",
+      "wake_reason": "OWNER WAKE (U205): U221-U222-INTEGRATION is REWORK with its dependencies DONE and untouched 1998 min; you own it: take it now or hand it off by coord deliver"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "owner_wake_f708be43144c9c9d095021e7",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "delta": "NEXT card U203-D4 for codex (wake 1/3): uaos coord next --tool codex --claim --session <id>",
+      "requested_target": "codex",
+      "transition_key": "699de4efe3ee42c6ed4b14ad701d00c3844d10d28c2c9747dea8a9498b47ccd0",
+      "wake_class": "ACTIONABLE"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "transition_699de4efe3ee42c6ed4b14ad_1",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "delta": "NEXT card U196-REROUTE-BINDING for codex (wake 1/3): uaos coord next --tool codex --claim --session <id>",
+      "requested_target": "codex",
+      "transition_key": "b921515c421682ab4fd4dfa4a70bf017a062d0ad335b02320cdcb9f29eef5561",
+      "wake_class": "ACTIONABLE"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "transition_b921515c421682ab4fd4dfa4_1",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "delta": "NEXT card U196-REROUTE-BINDING for codex (wake 2/3): uaos coord next --tool codex --claim --session <id>",
+      "requested_target": "codex",
+      "transition_key": "b921515c421682ab4fd4dfa4a70bf017a062d0ad335b02320cdcb9f29eef5561",
+      "wake_class": "ACTIONABLE"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "transition_b921515c421682ab4fd4dfa4_2",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "delta": "NEXT card U196-REROUTE-BINDING for codex (wake 3/3): uaos coord next --tool codex --claim --session <id>",
+      "requested_target": "codex",
+      "transition_key": "b921515c421682ab4fd4dfa4a70bf017a062d0ad335b02320cdcb9f29eef5561",
+      "wake_class": "ACTIONABLE"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "transition_b921515c421682ab4fd4dfa4_3",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "delta": "U196-REROUTE-BINDING unclaimed by codex after 3 wakes",
+      "is_p1": true,
+      "kind": "BLOCKED",
+      "requested_target": "codex",
+      "step": "U196-REROUTE-BINDING",
+      "wake_class": "ACTIONABLE"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "transition_p1_b921515c421682ab4fd4dfa4",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "delta": "CONDUCTOR_UNKNOWN (codex=UNKNOWN|claude=UNKNOWN|antigravity=UNKNOWN): refresh with coord presence",
+      "requested_target": "codex",
+      "transition_key": "df9c01efecc0d5153c372b7b13ff05795b5d884f5c06170e49d2c3f04f338323",
+      "wake_class": "ACTIONABLE"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "transition_unknown_df9c01efecc0d5153c372b7b_codex",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  },
+  {
+    "payload": {
+      "actor": "sentinel",
+      "delta": "CONDUCTOR_UNKNOWN (codex=LIMITED|claude=ABSENT|antigravity=UNKNOWN): refresh with coord presence",
+      "requested_target": "codex",
+      "transition_key": "e032f950429d4e3dd79f74f72c1abd96d06fe85dc891fa5868c8973ff63b097b",
+      "wake_class": "ACTIONABLE"
+    },
+    "evidence": "Current schedule: U196 binding/U203-D4 scoped accepted; U221-U222 Q1-Q3 remains independent review; Codex presence ACTIVE",
+    "id": "transition_unknown_e032f950429d4e3dd79f74f7_codex",
+    "promotion_allowed": false,
+    "disposition": "OLD_WAKE_CONSOLIDATED"
+  }
+]

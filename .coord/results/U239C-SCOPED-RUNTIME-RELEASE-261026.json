@@ -1,0 +1,46 @@
+{
+  "relay": "relay_7d78ea421e615eb484c597acba4490a6",
+  "verdict": "PASS_SCOPED_CORE_SOURCE_AND_RUNTIME",
+  "pr210": {
+    "head": "ca1382fff5532da9d721bf99503519afb0006857",
+    "state": "MERGED",
+    "merge": "0895d571667864c01587ede1c9c925f18b53e723",
+    "ci": "SUCCESS",
+    "card_audit": "ok:true missing:[]",
+    "independent_unit_tests": 20,
+    "independent_external_metric_tests": 2,
+    "exit": 0
+  },
+  "combined_release": {
+    "source_commit": "0895d571667864c01587ede1c9c925f18b53e723",
+    "includes_topic_fix": "c9e3cc37d2a8bbd818e4386ca830de729c7de844 ancestor verified",
+    "includes_metric_fix": "ca1382fff5532da9d721bf99503519afb0006857 ancestor verified",
+    "excludes_U241": "c653a8e not ancestor; control_ux.py absent",
+    "regression_tests": 192,
+    "regression_exit": 0,
+    "elapsed_s": 32.586,
+    "log": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u239c-release-regression.log",
+    "external_topic_tests": 3,
+    "external_metric_tests": 2,
+    "external_exit": 0,
+    "runtime": "0.3.0-8c3d23b61641",
+    "install_exit": 0,
+    "postinstall_external_tests": 5,
+    "postinstall_exit": 0
+  },
+  "verification": {
+    "runtime": "0.3.0-8c3d23b61641",
+    "source_commit": "0895d571667864c01587ede1c9c925f18b53e723",
+    "checked_files": 135,
+    "mismatches": [],
+    "U241_excluded": true
+  },
+  "prior_runtime": "0.3.0-7d8451bec772 installed by another actor during preparation; reviewed135 core files matched, extra unreviewed control_ux.py present",
+  "UI_hold": "Two installed7d counterexamples: expired ACTIVE reported ACTIVE; canonical owner_tool not rendered. UI module omitted from this exact core release; all source and7d directory preserved",
+  "clears_prior_holds": "U239/U239B/U237D/U240 old defects superseded ONLY for pinned reviewed0895 core payload; not permission to install arbitrary latest main",
+  "remaining_hold": "U241 control UI separately unapproved; requires effective TTL/shared-root/canonical-owner gates",
+  "backup": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/backup_20261026_u239c_release",
+  "artifact_policy": "Maintained JSON release receipt; .work archives/source copies disposable/regenerable",
+  "notification_errors": "First Claude pre-install notice rejected UNSTRUCTURED_VERDICT; subsequent factual status notice retries without verdict text",
+  "quality_limit": "No real paid-model availability, quota saving, physical desktop title visibility or overall UAOS completion claimed"
+}

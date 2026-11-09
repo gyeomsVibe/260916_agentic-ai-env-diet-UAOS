@@ -1,0 +1,25 @@
+# U202 maintained contract: ordered replay after session recovery
+
+Owner: Codex. Execution checkout: `.work/u201`, branch `codex/u202-session-replay` (U201 name was already allocated by Claude; no shared files overlap).
+
+MIA 0 evidence: https://www.rabbitmq.com/docs/reliability distinguishes publisher acceptance from consumer processing and requires idempotent recovery; https://www.sqlite.org/atomiccommit.html describes crash-safe commit. Local receipt: desk_delta.py defaults new sessions to one hour, then advances its presentation cursor although a letter may remain unprocessed in mailbox/inbox. Showing a wake is not processing a message.
+
+MIA 1/2 frame/gate: after session restart, show the oldest explicitly addressed unprocessed message regardless of age or previous presentation cursor. Keep showing the same head until the existing explicit coord ack records its completed disposition. Reading/showing must not execute, ACK, dispatch, or consume the message. Agent processes the full stored message before ACK; old messages remain data, not renewed approval.
+
+MIA 3 alternatives: (A) widen first-look time: cheap but loses shown-yet-unprocessed messages; reject. (B) durable inbox as processing authority plus ordered, repeated head on existing zero-model hook: small, reversible, selected. (C) bulk native reinjection: creates paid wakes, cross-session duplicates and ordering races; reject.
+
+MIA 4 architecture: use existing immutable inbox and ack records, existing validated desk identity and card-window binding. No new queue, global cursor or timestamp claiming processing. Order is durable inbox filesystem mtime_ns then message ID (legacy messages have no reliable producer timestamp); this is stored-arrival order, not claimed cross-machine causality. ACKed messages excluded even if stale duplicate inbox file exists. A genuine oldest message can require manual agent disposition, never automatic deletion.
+
+MIA 5/6 scope: only v7_harness/coord/desk_delta.py and new tests/test_u202_session_replay.py. Existing tests, caps, evaluators, permissions and dispatch routes unchanged. Ordinary summaries retain their behavior. Replay suppresses other replay-eligible letters from the ordinary summary until the head has an explicit disposition. Fail closed if receiver is unbound, wrong session, malformed card, or unknown target. For generic desk traffic require desk_identity PROJECT_BOUND and exact session. For card traffic require window_for exact session. Existing AGY UNBOUND_EXISTS remains unsupported for generic traffic; card-bound AGY works.
+
+MIA 7 route: local maps/draft attempted; unavailable calls retained as failures. Mechanical apply slices at most 20 changed lines through linted pilot contracts, Codex independent frozen tests, non-author Antigravity review. No remote implementation escalation.
+
+MIA 8: inspect clean checkout, back up source per slice, acquire QUIET_LOCK before pilot, no shared PLAN writes during pilot.
+
+MIA 9/10 fixed gate: python -m unittest tests.test_u202_session_replay; then existing desk-delta/wake/desk-sync tests, full suite, non-author review, PR CI, installed-runtime smoke. Tests cover all three tools, stale messages, reverse lexical order, cursor restart, no ACK on display, ack advances one head, wrong receiver/session/card, unknown binding, duplicate ACK file, overflow. Crash before output/flush never consumes a message, and post-output wake ACK never counts as completed processing. No autonomous native app restart is claimed. Rollback: previous installed runtime is preserved; restore reviewed source/runtime through normal installer.
+
+## MIA replan 1: independent REVISE and measured hook cost
+
+Claude relay_7c463f2e identified urgent traffic starvation. Normal recovery remains FIFO, but P1 (`kind=P1` or `p1_alert is True`) and explicit boolean verdict requests are an exception: they remain visible alongside the normal recovery head regardless of age/cursor. A recovery head is context, never a Stop gate or an execution lock. Agent may record DONE, SUPERSEDED, BLOCKED or REWORK disposition with evidence through coord log, then explicitly coord ack that individual message; no deletion or age-only bulk ACK. A bounded read-only triage manifest lists ID/target/card/age/body hash for inspection. Unknown or retired destinations stay on disk, not guessed or rebound. New verified native desk identity may receive generic traffic; card messages require their current exact card window. Original fixed tests remain byte-identical; add separate urgency/cost tests.
+
+Measured first live scan: 148 eligible letters, 37.634 seconds because native desk validation repeated per letter. Cache the validated identity only within one prepare invocation, never across sessions or hook invocations. Add machine-checked call-count acceptance. Legacy mailbox has no authenticated arrival timestamp inside its payload; retain explicit filesystem arrival order plus ID, acknowledge copy/restore may reset that order, and never interpret untrusted claimed payload timestamps as authoritative chronology.

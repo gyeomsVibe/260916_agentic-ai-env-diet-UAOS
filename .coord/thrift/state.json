@@ -1,0 +1,29 @@
+{
+  "schema": "uaos-thrift-v1",
+  "sequence": 1,
+  "tools": {
+    "antigravity": {
+      "acceptance": "",
+      "current_card": "",
+      "event": "HANDOFF",
+      "generated_at": "2026-10-03T09:25:48.805811+00:00",
+      "input_fingerprint": "4a58ad89f01e2dd5b8feec19d84f9c71a60afb625b0409d824f0e7291d983a4f",
+      "next_action": "",
+      "packet_path": null,
+      "packet_sha256": null,
+      "policy": "RESEARCH_RESERVE",
+      "remaining_percent": 100.0,
+      "reset_at": null,
+      "schema": "uaos-thrift-v1",
+      "sequence": 1,
+      "state": "AMPLE",
+      "stop_condition": "",
+      "target": "antigravity",
+      "thresholds": {
+        "handoff": 7.0,
+        "thrift": 20.0
+      },
+      "tool": "antigravity"
+    }
+  }
+}

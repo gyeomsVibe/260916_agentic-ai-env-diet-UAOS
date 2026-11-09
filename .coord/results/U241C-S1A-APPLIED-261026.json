@@ -1,0 +1,22 @@
+{
+  "work_id": "U241C-S1A",
+  "bundle_id": "852b4b149662daf256b4fdbf3891d49071c9b507c89cbc9ff2c71ce9413be662",
+  "state": "APPLIED",
+  "judge_and_approver": "codex",
+  "source_promotion_owner": "codex for this official approval step; Claude resumes candidate implementation afterward",
+  "approval_command": "python ~/.uaos/uaos.py pilot run --task U241C-S1A --source . --worker apply --manual .coord/tasks/U241C-S1A-manual.md --work-dir .work/u241c_s1a/d1 --approve 852b4b149662daf256b4fdbf3891d49071c9b507c89cbc9ff2c71ce9413be662 --coord-actor codex",
+  "command_exit": 0,
+  "source_sha256": "6A534E341D6249641BAAED125D43B4F2EBFFC96F8D33C18E83C567798F68A3F9",
+  "post_apply_tests": 9,
+  "post_apply_exit": 0,
+  "diff_check_exit": 0,
+  "source_paths_changed": [
+    "v7_harness/control_ux.py"
+  ],
+  "worker_model_calls": 0,
+  "worker_tokens": 0,
+  "backup": "D:/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.claude/worktrees/gallant-carson-220acd/.work/backup_20261026_s1a_judge/control_ux.py",
+  "warning": "RELATED_TESTS_NOT_IN_ACCEPTANCE printed for original/native suites; original suite covered by post-apply9; native/full aggregate still deliberately pending",
+  "next": "Claude cuts S2 from6A with bounded local worker and Codex judgment; only Codex executes judge-gated promotions",
+  "runtime_approval": false
+}

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>[MIA Stage 0-10] REA (Reverse Engineer Anything) 전수분석 및 UAOS-RSI 업그레이드 마스터 스케줄</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #131b33;
+    --panel2: #192342;
+    --border: #2a3968;
+    --text: #e8eefc;
+    --muted: #9fb0d9;
+    --accent: #5eead4;
+    --accent2: #60a5fa;
+    --warn: #fbbf24;
+    --ok: #34d399;
+    --bad: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px;
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .container { max-width: 1280px; margin: 0 auto; }
+  header {
+    background: linear-gradient(135deg, #152244 0%, #0f172a 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-bottom: 22px;
+  }
+  h1 { margin: 0 0 8px 0; font-size: 24px; color: #fff; }
+  h2 { margin: 0 0 14px 0; font-size: 19px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { margin: 14px 0 8px 0; font-size: 16px; color: var(--accent2); }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-right: 6px;
+  }
+  .b-ok { background: rgba(52,211,153,0.18); color: var(--ok); border: 1px solid var(--ok); }
+  .b-info { background: rgba(96,165,250,0.18); color: var(--accent2); border: 1px solid var(--accent2); }
+  .b-warn { background: rgba(251,191,36,0.18); color: var(--warn); border: 1px solid var(--warn); }
+  .b-bad { background: rgba(248,113,113,0.18); color: var(--bad); border: 1px solid var(--bad); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .kpi { font-size: 26px; font-weight: 800; color: #fff; margin: 4px 0; }
+  .kpi-sub { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13.5px; }
+  th, td { border: 1px solid var(--border); padding: 10px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); color: var(--accent); font-weight: 700; }
+  tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: rgba(0,0,0,0.35);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--accent);
+  }
+  .rule-box {
+    background: rgba(94, 234, 212, 0.08);
+    border-left: 4px solid var(--accent);
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin: 12px 0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <span class="badge b-ok">MIA Strategic 11-Stage (Stage 0~10)</span>
+      <span class="badge b-info">GitHub morluto/rea v6.8.0 (★383,914)</span>
+      <span class="badge b-warn">UAOS-RSI v0.5.1 Master Schedule (U245~U248)</span>
+    </div>
+    <h1>REA (Reverse Engineer Anything) 전수분석 참조자료 및 UAOS-RSI 업그레이드 마스터 스케줄</h1>
+    <p style="margin:6px 0 0 0; color:var(--muted);">
+      작성: Antigravity (<code>[261026-1] 메인컨트롤UX·3도구병렬</code>) · 협의: Codex (Conductor) &amp; Claude Code (Implementer)<br>
+      1차 출처 필수 링크:
+      <a href="https://zdnet.co.kr/view/?no=20261019165618" target="_blank">[ZDNet Korea 기사 (2026-10-19)]</a> ·
+      <a href="https://github.com/morluto/rea" target="_blank">[GitHub: morluto/rea (HEAD 1173c0a9)]</a> ·
+      <a href="https://rea.tools/" target="_blank">[rea.tools 공식 사이트]</a> ·
+      <a href="https://github.com/N0zoM1z0/dx-ball" target="_blank">[DX-Ball 3,205케이스 재현 저장소]</a> ·
+      <a href="https://github.com/N0zoM1z0/th04" target="_blank">[TH04 재현 저장소]</a>
+    </p>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <div class="kpi-sub">morluto/rea 전체 트리 엔트리</div>
+      <div class="kpi">6,781개 <span style="font-size:15px;color:var(--accent);">(6,324 Files)</span></div>
+      <div class="kpi-sub">총 용량 85,771,681 Bytes (85.77 MB) · Commit <code>1173c0a9dc</code></div>
+    </div>
+    <div class="card">
+      <div class="kpi-sub">코어 소스 &amp; 테스트 스위트</div>
+      <div class="kpi">3,079 src / 1,970 tests</div>
+      <div class="kpi-sub"><code>domain</code> 1,012 · <code>application</code> 522 · <code>contracts</code> 131 · <code>server</code> 135</div>
+    </div>
+    <div class="card">
+      <div class="kpi-sub">MCP 도구 &amp; 역공학 브리지</div>
+      <div class="kpi">50+ 핵심 MCP 도구 / 35 Bridges</div>
+      <div class="kpi-sub">Ghidra · Hopper · IDA · JADX · Cutter · Electron ASAR · SQLite WAL</div>
+    </div>
+    <div class="card">
+      <div class="kpi-sub">DX-Ball 오라클 차등 검증 실증</div>
+      <div class="kpi">3,205 / 3,205 PASS</div>
+      <div class="kpi-sub">원본 x86 사운드 패닝 함수 63바이트 100% 바이트 일치 재현</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>1. Stage 0: ZDNet 기사와 GitHub (morluto/rea) 1차 출처 전수 해부</h2>
+    <p>
+      <strong>ZDNet Korea 기사 (<a href="https://zdnet.co.kr/view/?no=20261019165618" target="_blank">만드는 법 몰라도 AI가 프로그램 재현…'REA' 뭐길래</a>)</strong>와
+      <strong>공식 GitHub 저장소 (<a href="https://github.com/morluto/rea" target="_blank">morluto/rea</a>, v6.8.0)</strong>를 대조 분석한 결과,
+      REA의 본질은 "새로운 디컴파일러"가 아니라 <strong>기존 검증된 정적/동적 분석 엔진(Ghidra, IDA, Hopper, JADX, Electron ASAR, SQLite, HAR)과 AI 에이전트(Claude Code, Codex, Antigravity)를 인식론적 증거 원장(<code>evidence_id</code>, <code>record_unknown</code>)으로 연결하는 로컬 MCP/CLI 오케스트레이션 하네스</strong>입니다.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>계층 / 디렉터리</th>
+          <th>파일 수</th>
+          <th>핵심 구성 파일 (GitHub 실측)</th>
+          <th>역할 및 아키텍처 불변식</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>src/domain/</code> &amp; <code>src/contracts/</code></td>
+          <td>1,143개</td>
+          <td><code>analysisViewToolContracts.ts</code>, <code>compactInputSchema.ts</code>, <code>functionWorkflowToolContracts.ts</code></td>
+          <td>도메인 시맨틱과 MCP JSON 스키마(<code>compact</code> 기본 프로필로 에이전트 스키마 토큰 절약). 사실 등급을 <strong>Observed / Derived / Inferred / Unknown</strong> 4단계로 엄격 분리.</td>
+        </tr>
+        <tr>
+          <td><code>src/application/</code> &amp; <code>src/server/</code></td>
+          <td>657개</td>
+          <td><code>inspect_analysis_view</code>, <code>verify_reconstruction</code>, <code>build_reconstruction_obligation_ledger</code></td>
+          <td>Summary-First 조회: 1차 호출은 요약과 <code>parent_evidence_id</code>만 반환하고, 2차 호출에서 필요한 섹션/심볼/페이지만 슬라이싱 제공.</td>
+        </tr>
+        <tr>
+          <td><code>bridge/</code> &amp; <code>scripts/</code></td>
+          <td>533개</td>
+          <td><code>ReaGhidraBridge.java</code>(247KB), <code>hopper_bridge.py</code>(58KB), <code>electron-active-hook.cjs</code>(1,329줄)</td>
+          <td>Ghidra 임시(ephemeral) DB 및 IDA 읽기 전용 연결로 원본 바이너리 불변 보장. Electron 메인/렌더러 IPC 및 퓨즈(<code>inspect_electron_fuses</code>) 추적.</td>
+        </tr>
+        <tr>
+          <td><code>.agents/skills/</code></td>
+          <td>16개</td>
+          <td><code>reverse-engineer-anything/SKILL.md</code>(v49), <code>rea-analysis-optimization/SKILL.md</code></td>
+          <td>일반 소스 저장소에는 REA 호출을 건너뛰는 가드레일과 에이전트 토큰 → 분석 시간 → CPU/메모리 순의 최적화 규율 내장.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>2. Stage 1~4: UAOS-RSI 적용 타당성·유효성·구현 가치 평가 및 큰계획 (Macro Plan)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>평가 축</th>
+          <th>판정</th>
+          <th>실측 근거 및 UAOS-RSI 시너지</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>타당성 (Feasibility)</strong></td>
+          <td><span class="badge b-ok">GO (높음)</span></td>
+          <td>REA의 핵심 설계(단방향 의존성, Summary-First 토큰 절약, <code>record_unknown</code> 원장, <code>finalization_ms</code> 프로세스 감독)가 UAOS-RSI의 <strong>Token-Thrift 및 증거 관문(Evidence Gate)</strong> 철학과 100% 동형(Isomorphic) 구조임.</td>
+        </tr>
+        <tr>
+          <td><strong>유효성 (Validity)</strong></td>
+          <td><span class="badge b-ok">GO (높음)</span></td>
+          <td>전체 MCP 도구(100+개)를 유료 에이전트에 상시 노출하면 스키마 토큰이 낭비되므로, <strong>코어 패턴 4종은 <code>v7_harness</code>에 Python으로 직접 내재화</strong>하고 <code>rea-agents</code> CLI는 <code>.work/rea/</code> 격리 정적 분석 시에만 온디맨드 호출하는 하이브리드 구조가 가장 유효함.</td>
+        </tr>
+        <tr>
+          <td><strong>구현 가치 (Value)</strong></td>
+          <td><span class="badge b-ok">GO (극고)</span></td>
+          <td>① 3대 도구(Antigravity, Claude, Codex) 로컬 DB·Electron IPC 변경을 0토큰 정적 감지, ② 외부 라이브러리(<code>.work/library</code> 등)에서 계약 매뉴얼(<code>pilot manual</code>)과 재현 의무 원장(<code>obligation_ledger</code>)을 자동 생성, ③ 대용량 분석 시 입력 토큰 70%+ 절감.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>3. Stage 5~8: UAOS-RSI 업그레이드 세부구현계획 및 3도구 마스터 스케줄 (U245 ~ U248)</h2>
+    <p>현재 실행 중인 <code>U241C</code>(메인 컨트롤 UX 슬라이스 S1~S4) 및 <code>U242</code> 직후 논스톱으로 이어지는 마스터 스케줄입니다.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>단계 ID</th>
+          <th>단계명</th>
+          <th>소유자 (Owner)</th>
+          <th>판정자 (Judge)</th>
+          <th>허용 파일 (Allowed Files)</th>
+          <th>고정 인수 게이트 (Acceptance Gate)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>U245</strong></td>
+          <td>1차 출처 필수 인용 게이트 및 인식론적 증거 원장(<code>evidence_id</code> / <code>unknown</code>)</td>
+          <td><code>claude</code> (Haiku/Ollama)</td>
+          <td><code>codex</code> (감사: <code>antigravity</code>)</td>
+          <td><code>v7_harness/evidence_ledger.py</code>, <code>tests/test_u245_evidence_citation_gate.py</code></td>
+          <td><code>python -m unittest tests.test_u245_evidence_citation_gate</code><br>(기사·GitHub 1차 출처 링크 누락 보고서 자동 <code>FAILED</code> 반려 및 4등급 사실 분류 검증)</td>
+        </tr>
+        <tr>
+          <td><strong>U246</strong></td>
+          <td>Summary-First 분석 뷰 프로젝터 (<code>inspect_analysis_view</code> 슬라이싱)</td>
+          <td><code>claude</code> (Ollama 초안)</td>
+          <td><code>antigravity</code> / <code>codex</code></td>
+          <td><code>v7_harness/analysis_view.py</code>, <code>tests/test_u246_analysis_view.py</code></td>
+          <td><code>python -m unittest tests.test_u246_analysis_view</code><br>(<code>parent_evidence_id</code> 기반 <code>offset/limit/fields</code> 페이지네이션 및 토큰 절약 검증)</td>
+        </tr>
+        <tr>
+          <td><strong>U247</strong></td>
+          <td>온디맨드 정적 REA 브리지 &amp; Contract Spec 자동 생성기</td>
+          <td><code>antigravity</code> / <code>claude</code></td>
+          <td><code>codex</code></td>
+          <td><code>v7_harness/rea_bridge.py</code>, <code>tests/test_u247_rea_static_bridge.py</code></td>
+          <td><code>python -m unittest tests.test_u247_rea_static_bridge</code><br>(<code>STATIC_ONLY</code> 샌드박스 가드, ASAR/SQLite/심볼 추출 → <code>pilot manual</code> 계약 변환)</td>
+        </tr>
+        <tr>
+          <td><strong>U248</strong></td>
+          <td>프로세스 패밀리 <code>finalization_ms</code> 감독 및 유한 명세 재현 검증(<code>verify_reconstruction</code>)</td>
+          <td><code>claude</code></td>
+          <td><code>codex</code> (감사: <code>antigravity</code>)</td>
+          <td><code>v7_harness/process_supervisor.py</code>, <code>tests/test_u248_process_finalization.py</code></td>
+          <td><code>python -m unittest tests.test_u248_process_finalization</code><br>(타임아웃 시 1차 종료 신호 후 <code>finalization_ms</code> 유예 및 <code>obligation_ledger</code> 대조 검증)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>4. Stage 9~10: UAOS-RSI 운영규칙 영구 고정 확인</h2>
+    <div class="rule-box">
+      <strong>[영구 고정 규칙 — AGENTS.md / CLAUDE.md / GEMINI.md / .coord/PROJECT_MANUAL.md 전수 반영 완료]</strong><br>
+      "보고에는 기사, 깃허브 저장소 링크를 포함한 관련 근거데이터를 필수요소로 한다(사용자 지정, 2026-10-20 영구 고정). 1차 출처 링크가 없는 기획·보고·제안은 FAILED(반려) 처리한다."
+    </div>
+  </div>
+</div>
+</body>
+</html>
