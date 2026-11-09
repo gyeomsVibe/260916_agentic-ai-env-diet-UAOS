@@ -620,3 +620,20 @@ def _v11_record():
 def _V11(record):
     """read_record and write_record both refuse anything this rejects; the checks are rebuilt per call (cheap)"""
     return _v11_record()(record)
+
+
+def tree(project, desk_id, *, ports):
+    """Stored card sessions under one parent desk, read-only: never probes, never mutates rev (amendment V2)."""
+    if not isinstance(desk_id, str) or not _DESK.fullmatch(desk_id):
+        return []
+    store, rows = Store(project), []  # the named project's store; ports is kept for the pinned signature (D3)
+    for path in sorted((store.root / "records").glob("*__*.json")):
+        card, _, tool = path.stem.rpartition("__")
+        record = store.read_record(card, tool)  # a corrupt record refuses (CORRUPT_RECORD), never skipped
+        if record is None or record["parent"]["desk_id"] != desk_id:
+            continue
+        seen = {record["visibility"][k]["state"] for k in ("native_sidebar", "native_nesting")}
+        rows.append({"card": card, "tool": tool, "card_uuid": record["card_uuid"], "state": record["state"],
+                     "native_id": record["native"]["native_id"], "rev": record["rev"],
+                     "native_visibility": seen.pop() if len(seen) == 1 else "UNKNOWN"})
+    return rows
