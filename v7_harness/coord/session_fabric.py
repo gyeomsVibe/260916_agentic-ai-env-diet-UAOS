@@ -637,3 +637,11 @@ def tree(project, desk_id, *, ports):
                      "native_id": record["native"]["native_id"], "rev": record["rev"],
                      "native_visibility": seen.pop() if len(seen) == 1 else "UNKNOWN"})
     return rows
+
+
+def record_visibility(record, probe, *, ports):
+    """Offline visibility remains unknown; injected probes never establish trust."""
+    rec = _load(record, ports, ("STARTING", "RUNNING", "WAITING", "COMPLETED", "FAILED", "EFFECT_UNKNOWN"))
+    visibility = {key: {"state": "UNKNOWN", "evidence": None, "probe_kind": None, "probed_wall": None}
+                  for key in ("native_sidebar", "native_nesting")}
+    return _save(rec, ports, visibility=visibility)
