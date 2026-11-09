@@ -303,16 +303,29 @@ def antigravity_quota(home: Path, now: float) -> dict[str, Any] | None:
         win = FIVE_HOUR_MIN if (reset_ts is not None and reset_ts - (updated or now) <= 6 * 3600) else SEVEN_DAY_MIN
         fact = window_fact(round((1.0 - p["remaining_fraction"]) * 100.0, 4), p["reset_time"], win, updated, now,
                            "cockpit_quota_cache")
-        pool_list.append({"models": sorted(p["models"]), **(fact or {})})
+        sorted_models = sorted(p["models"])
+        is_flash_pool = any("flash" in str(m).lower() for m in sorted_models)
+        pool_label = "gemini-3.5-flash-lite" if is_flash_pool else "Gemini 4 Argon"
+        pool_list.append({"models": sorted_models, "pool_label": pool_label, **(fact or {})})
     # unknown (reset unobserved) pools sort first: the scarcest known-or-unknown pool is shown before a full one
     pool_list.sort(key=lambda f: -1.0 if f.get("remaining_pct") is None else f["remaining_pct"])
-    sel_name = (selected_entry or {}).get("displayName")
-    sel_pool = next((p for p in pool_list if sel_name and sel_name in p["models"]), None)
+    raw_sel_name = (selected_entry or {}).get("displayName")
+    if raw_sel_name and "flash" not in str(raw_sel_name).lower():
+        sel_name = raw_sel_name
+        sel_effort = THINKING_WORDS.get((selected_entry or {}).get("thinkingLevel"), None)
+        sel_pool = next((p for p in pool_list if sel_name in p["models"]), None)
+    else:
+        sel_name = "Gemini 4 Argon"
+        sel_effort = "high"
+        sel_pool = next(
+            (p for p in pool_list if not any("flash" in str(m).lower() for m in p["models"])),
+            pool_list[-1] if pool_list else None,
+        )
     return {
         "source": "cockpit_tools_quota_cache",
         "pools": pool_list,
         "selected_model": sel_name or selected,
-        "selected_effort": THINKING_WORDS.get((selected_entry or {}).get("thinkingLevel"), None),
+        "selected_effort": sel_effort,
         "selected_pool": sel_pool,
         "observed_at": _iso(updated),
     }
@@ -574,8 +587,13 @@ def measured_accounts(home: Path, now: float, events: list[dict[str, Any]] | Non
         family = {n.split()[0] for n in names if " " in n}
         helper_pool = next((p for p in pools if p is not None
                             and any(str(m).split(" ")[0] in family for m in p.get("models") or [])), None)
+    if isinstance(helper_pool, dict) and "pool_label" not in helper_pool:
+        helper_pool["pool_label"] = "gemini-3.5-flash-lite"
     out["antigravity"]["helper_pool"] = helper_pool
-    out["antigravity"]["helpers"] = designated_helper_view("antigravity")
+    out["antigravity"]["helper_calibration"] = calibrate(
+        helper_pool, by_eng("antigravity"), now, cockpit_history(home, "Gemini 3.5 Flash Lite")
+    )
+    out["antigravity"]["helpers"] = designated_helper_view("antigravity", mix.get("antigravity", []))
     return out
 
 
@@ -595,9 +613,17 @@ def apply_measured_quota(engines: dict[str, dict[str, Any]], measured: dict[str,
     Haiku runs on Claude's subscription, so it reads Claude's measured windows. Ollama stays local and unlimited.
     """
     tiers = policy.get("subscription_tiers") or {}
-    for eng in ("codex", "claude", "antigravity", "haiku"):
+    parent_map = {
+        "codex": "codex",
+        "claude": "claude",
+        "antigravity": "antigravity",
+        "haiku": "claude",
+        "luna": "codex",
+        "flash": "antigravity",
+    }
+    for eng, parent in parent_map.items():
         info = engines.get(eng)
-        m = measured.get("claude" if eng == "haiku" else eng) or {}
+        m = measured.get(parent) or {}
         if info is None or not isinstance(m, dict):
             continue
         sub = info.setdefault("subscription_plan", {})
@@ -606,6 +632,12 @@ def apply_measured_quota(engines: dict[str, dict[str, Any]], measured: dict[str,
             if m.get("helper_pool"):
                 sub["helper_quota"] = m["helper_pool"]
             cal5, cal7 = m.get("calibration"), None
+        elif eng == "flash":
+            hp = m.get("helper_pool")
+            w5, w7 = hp, None
+            if hp:
+                sub["helper_quota"] = hp
+            cal5, cal7 = m.get("helper_calibration") if hp else None, None
         else:
             w5, w7 = m.get("five_hour"), m.get("seven_day")
             cal5, cal7 = m.get("calibration_5h"), m.get("calibration_7d")
@@ -659,10 +691,23 @@ def apply_measured_quota(engines: dict[str, dict[str, Any]], measured: dict[str,
         if str(info.get("presence_state") or "").upper() in ("", "UNKNOWN") and (w5 or w7):
             info["presence_state"] = "LIMITED" if left <= 0 else "IDLE"
             info["presence_basis"] = "measured quota (heartbeat expired)"
+        if eng in ("luna", "haiku", "flash"):
+            # Account quota is budget evidence, never a native helper heartbeat.
+            info["presence_state"] = "LIMITED" if (w5 or w7) and left <= 0 else "UNKNOWN"
+            if (w5 or w7) and left <= 0:
+                info["predictive_exhaustion"] = {"burn_rate_tok_per_hr": None, "predicted_tta_min": 0,
+                    "exhaustion_risk": "IMMINENT_EXHAUSTION", "preemptive_handoff_recommended": True}
+                sub["predictive_exhaustion"] = info["predictive_exhaustion"]
         helpers = m.get("helpers") or []
         if eng == "haiku":
             hk = [h for h in helpers if "haiku" in h.get("model", "")]
             model, effort, helpers = (hk[0]["model"] if hk else "claude-haiku-5-5"), m.get("effort"), []
+        elif eng == "luna":
+            ln = [h for h in helpers if "luna" in h.get("model", "")]
+            model, effort, helpers = (ln[0]["model"] if ln else "gpt-6-luna"), (m.get("effort") or "low"), []
+        elif eng == "flash":
+            fl = [h for h in helpers if "flash" in h.get("model", "")]
+            model, effort, helpers = (fl[0]["model"] if fl else "gemini-3.5-flash-lite"), "low", []
         else:
             model, effort = m.get("model"), m.get("effort")
         info["measured"] = {

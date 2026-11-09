@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0f19">
+<title>UAOS Mobile HUD</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+body { background: #0b0f19; color: #f1f5f9; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: 100vh; }
+.header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; }
+.header h1 { font-size: 1.15rem; font-weight: 700; color: #38bdf8; letter-spacing: -0.5px; }
+.badge { font-size: 0.72rem; padding: 3px 8px; border-radius: 9999px; background: #064e3b; color: #34d399; font-weight: 600; }
+.phase-card { background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; padding: 12px 14px; }
+.phase-title { font-size: 0.8rem; color: #94a3b8; margin-bottom: 4px; }
+.phase-name { font-size: 0.95rem; font-weight: 600; color: #e2e8f0; }
+.tools-grid { display: flex; flex-direction: column; gap: 10px; }
+.tool-card { background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.tool-header { display: flex; justify-content: space-between; align-items: center; }
+.tool-name { font-size: 0.92rem; font-weight: 700; color: #f8fafc; }
+.tool-val { font-size: 0.92rem; font-weight: 700; }
+.fuel-track { width: 100%; height: 7px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+.fuel-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+.tool-meta { display: flex; justify-content: space-between; font-size: 0.72rem; color: #64748b; }
+.footer { text-align: center; font-size: 0.7rem; color: #475569; margin-top: auto; padding-top: 10px; }
+.guide-box { background: #1e293b; border-radius: 10px; padding: 12px 14px; font-size: 0.78rem; color: #cbd5e1; line-height: 1.5; }
+.guide-box b { color: #38bdf8; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>⚡ UAOS COCKPIT</h1>
+  <span class="badge" id="status-badge">실시간 연동됨</span>
+</div>
+
+<div class="phase-card">
+  <div class="phase-title">📌 활성 작업 (Active Phase)</div>
+  <div class="phase-name" id="phase-name">로딩 중...</div>
+</div>
+
+<div class="tools-grid" id="tools-container"></div>
+
+<div class="guide-box">
+  📱 <b>바탕화면 위젯 설치 방법</b><br>
+  하단 우측 점 3개(<b>︙</b>) ➔ <b>'현재 페이지 추가'</b> ➔ <b>'홈 화면'</b>을 누르면 스마트폰 바탕화면에 즉시 위젯 아이콘이 생성됩니다.
+</div>
+
+<div class="footer" id="last-updated">실시간 동기화 중...</div>
+
+<script>
+let lastData = {"ok": true, "updated_at": "2026-11-04T09:26:07.599901+00:00", "tools": {"codex": {"name": "Codex", "presence": "LIMITED", "tier": "LIMITED_UNTIL_RESET", "short_plan": "Plus $20 (Astra)", "remaining_pct": 0.0, "helper_remaining_pct": null, "fuel_color": "#ef4444", "progress_bar": "░░░░░░░░", "resets_at_5h": "2026-11-01T18:16:46Z", "resets_at_7d": "2026-11-04T13:03:09Z", "usable_tokens": 0}, "claude": {"name": "Claude", "presence": "ACTIVE", "tier": "HEALTHY", "short_plan": "Claude Sub (5:3:2)", "remaining_pct": null, "helper_remaining_pct": null, "fuel_color": "#888888", "progress_bar": "░░░░░░░░", "resets_at_5h": null, "resets_at_7d": null, "usable_tokens": 10588535}, "antigravity": {"name": "Antigravity", "presence": "ACTIVE", "tier": "THROTTLE_TO_LOCAL", "short_plan": "AI Ultra 5x (Argon)", "remaining_pct": 76.9, "helper_remaining_pct": 23.1, "fuel_color": "#10b981", "progress_bar": "██████░░", "resets_at_5h": "2026-11-08T05:51:11Z", "resets_at_7d": null, "usable_tokens": 166660581}, "haiku": {"name": "Haiku", "presence": "ACTIVE", "tier": "HEALTHY", "short_plan": "Haiku 5.5 (30% 분담)", "remaining_pct": null, "helper_remaining_pct": null, "fuel_color": "#888888", "progress_bar": "░░░░░░░░", "resets_at_5h": null, "resets_at_7d": null, "usable_tokens": 6000000}, "ollama": {"name": "Ollama", "presence": "ACTIVE", "tier": "UNLIMITED_LOCAL", "short_plan": "로컬 0원 (50% 분담)", "remaining_pct": null, "helper_remaining_pct": null, "fuel_color": "#888888", "progress_bar": "░░░░░░░░", "resets_at_5h": null, "resets_at_7d": null, "usable_tokens": null}}, "active_phase": {"id": "U304-D", "title": "대기 중"}};
+
+function renderData(data) {
+  if (!data || !data.ok) return;
+  document.getElementById('phase-name').innerText = data.active_phase.id + ': ' + data.active_phase.title;
+
+  const container = document.getElementById('tools-container');
+  container.innerHTML = '';
+
+  const order = ['codex', 'claude', 'antigravity', 'haiku', 'ollama'];
+  for (const k of order) {
+    const t = data.tools[k];
+    if (!t) continue;
+
+    const card = document.createElement('div');
+    card.className = 'tool-card';
+
+    const pct = t.remaining_pct;
+    const displayVal = pct != null ? Math.round(pct) + '%' : (t.presence === 'LIMITED' ? '0% (소진)' : '정상');
+    const barWidth = pct != null ? Math.max(0, Math.min(100, pct)) : (t.presence === 'LIMITED' ? 0 : 100);
+
+    card.innerHTML = `
+      <div class="tool-header">
+        <span class="tool-name">${t.name} <span style="font-weight:400;font-size:0.75rem;color:#64748b">(${t.short_plan})</span></span>
+        <span class="tool-val" style="color:${t.fuel_color}">${displayVal}</span>
+      </div>
+      <div class="fuel-track">
+        <div class="fuel-fill" style="width:${barWidth}%; background:${t.fuel_color}"></div>
+      </div>
+      <div class="tool-meta">
+        <span>상태: ${t.presence} · ${t.tier}</span>
+        <span>${t.usable_tokens ? Number(t.usable_tokens).toLocaleString() + ' tok' : (t.helper_remaining_pct ? '보조 ' + Math.round(t.helper_remaining_pct) + '%' : '')}</span>
+      </div>
+    `;
+    container.appendChild(card);
+  }
+
+  const d = new Date(data.updated_at);
+  document.getElementById('last-updated').innerText = '실시간 동기화됨: ' + d.toLocaleTimeString('ko-KR');
+}
+
+renderData(lastData);
+
+async function refreshHUD() {
+  try {
+    const res = await fetch('/api/status.json?t=' + Date.now());
+    const data = await res.json();
+    if (data && data.ok) {
+      renderData(data);
+      document.getElementById('status-badge').innerText = '실시간 연동됨';
+      document.getElementById('status-badge').style.background = '#064e3b';
+      document.getElementById('status-badge').style.color = '#34d399';
+    }
+  } catch (err) {
+    // keep rendering lastData
+  }
+}
+setInterval(refreshHUD, 2000);
+</script>
+</body>
+</html>

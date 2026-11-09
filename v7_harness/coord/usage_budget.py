@@ -243,7 +243,7 @@ def pace(window: dict[str, Any] | None, history: list[dict[str, Any]], now: floa
                 "observed_at": window.get("observed_at"), "age_s": window.get("age_s"), "stale": True,
                 "state": "RESET_UNOBSERVED", "sustainable_pct_per_h": None, "burn_pct_per_h": None,
                 "burn_basis": "reset_unobserved", "headroom": None, "exhaust_in_h": None}
-    used = float(window.get("used_pct") or 0.0)
+    used = 0.0 if window.get("reset_elapsed") else float(window.get("used_pct") or 0.0)
     remaining = max(0.0, 100.0 - used)
     reset_ts = _epoch(window.get("resets_at"))
     win_h = float(window.get("window_min") or 300) / 60.0

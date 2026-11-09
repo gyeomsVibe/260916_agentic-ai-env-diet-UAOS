@@ -16,6 +16,7 @@ import os
 import re
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -47,6 +48,24 @@ class StreamBusy(RuntimeError):
 
 _LOCAL_LOCK = threading.Lock()
 LOCK_TIMEOUT_S = 10.0
+_LOCAL_LOCKS = weakref.WeakValueDictionary()
+
+
+@contextmanager
+def _local_exclusive(path: Path, timeout_s: float):
+    # U311: unrelated resources must not queue behind one process-wide mutex.
+    key = os.path.normcase(os.path.realpath(path))
+    with _LOCAL_LOCK:
+        lock = _LOCAL_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _LOCAL_LOCKS[key] = lock
+    if not lock.acquire(timeout=max(0.0, timeout_s)):
+        raise StreamBusy("STREAM_LOCK_TIMEOUT")
+    try:
+        yield
+    finally:
+        lock.release()
 
 if os.name == "nt":
     import msvcrt
@@ -89,7 +108,7 @@ def _exclusive(lock_path: Path):
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + LOCK_TIMEOUT_S
-    with _LOCAL_LOCK:
+    with _local_exclusive(lock_path, deadline - time.monotonic()):
         fd = None
         try:
             while True:

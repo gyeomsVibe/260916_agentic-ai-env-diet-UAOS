@@ -1334,8 +1334,13 @@ def ensure_independent_flagman_daemon(
     if sys.platform == "win32":
         creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 
+    # Windows venv python.exe is a redirector: its Popen PID is not the daemon's os.getpid().
+    # This stdlib-only child imports the reviewed runtime explicitly, so use the real interpreter.
+    base_executable = getattr(sys, "_base_executable", None)
+    executable = (base_executable if sys.platform == "win32" and isinstance(base_executable, str)
+                  and base_executable and Path(base_executable).is_file() else sys.executable)
     proc = subprocess.Popen(
-        [sys.executable, "-c", loop_code],
+        [executable, "-c", loop_code],
         cwd=str(root),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
