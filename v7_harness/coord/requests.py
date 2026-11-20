@@ -547,7 +547,8 @@ def _letter_reply(path: Path) -> tuple[str, str, str] | None:
         verdict = str(payload.get("verdict") or payload.get("outcome") or "").upper()
         if isinstance(rep, str) and rep:
             outcome = payload.get("verdict") or payload.get("outcome")
-            result = (rep, actor, outcome if isinstance(outcome, str) and outcome else "REPLIED")
+            if isinstance(outcome, str) and outcome.strip():
+                result = (rep, actor, outcome.strip())
         elif verdict in VERDICT_OUTCOMES:
             text = f"{payload.get('message') or ''} {payload.get('delta') or ''}".lower()
             keys = [f"head:{s[:12]}" for s in re.findall(r"\b[0-9a-f]{12,40}\b", text)]

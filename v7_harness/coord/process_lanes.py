@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -316,52 +317,310 @@ def _resolve_codex_lane_thread(project: Path, candidate_thread_id: str) -> str:
     return ""
 
 
+_CLAUDE_SESSION_LOCKS_GUARD = threading.Lock()
+_CLAUDE_SESSION_LOCKS: dict[tuple[str, str], threading.RLock] = {}
+
+
+@contextmanager
+def _claude_lane_session_lock(desk: Path, lane_id: str, timeout_s: float = 10.0):
+    """Thread + cross-process lock for `claude-lane-<lid>.json` (distinct from `_lane_lock` to avoid nesting deadlock)."""
+    lid = validate_lane_id(lane_id)
+    key = (os.path.normcase(str(desk.resolve())), lid)
+    with _CLAUDE_SESSION_LOCKS_GUARD:
+        tlock = _CLAUDE_SESSION_LOCKS.setdefault(key, threading.RLock())
+    delivery_dir = desk / ".coord" / "mailbox" / "delivery"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = delivery_dir / f"claude-lane-{lid}.session.lock"
+    with tlock:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            deadline = time.monotonic() + max(0.05, timeout_s)
+            while not _try_lock(fd):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"CLAUDE_SESSION_LOCK_TIMEOUT:{lid}")
+                time.sleep(0.01)
+            try:
+                yield
+            finally:
+                try:
+                    _unlock(fd)
+                except OSError:
+                    pass
+        finally:
+            os.close(fd)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any], error_prefix: str) -> None:
+    """Atomically write JSON with Windows replace retries; remove temp file on failure."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    last_exc: Exception | None = None
+    for _ in range(20):
+        try:
+            os.replace(tmp, path)
+            last_exc = None
+            break
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(0.01)
+    if last_exc is not None:
+        tmp.unlink(missing_ok=True)
+        raise PermissionError(f"{error_prefix}:{path}") from last_exc
+
+
+class ClaudeLaneStateError(OSError):
+    """Fail-closed error raised when Claude lane session state or rotation intent is missing, corrupt, or mismatched."""
+
+
+def _validate_claude_lane_state(loaded: Any, path: Path) -> dict[str, Any]:
+    if not isinstance(loaded, dict):
+        raise ClaudeLaneStateError(f"CLAUDE_SESSION_STATE_CORRUPT:{path}")
+    sid = loaded.get("session_id")
+    gen = loaded.get("generation")
+    ready = loaded.get("ready")
+    if not isinstance(sid, str) or not sid:
+        raise ClaudeLaneStateError(f"CLAUDE_SESSION_STATE_CORRUPT:{path}")
+    try:
+        uuid.UUID(sid)
+    except ValueError as exc:
+        raise ClaudeLaneStateError(f"CLAUDE_SESSION_STATE_CORRUPT:{path}") from exc
+    if isinstance(gen, bool) or not isinstance(gen, int) or gen < 0:
+        raise ClaudeLaneStateError(f"CLAUDE_SESSION_STATE_CORRUPT:{path}")
+    if not isinstance(ready, bool):
+        raise ClaudeLaneStateError(f"CLAUDE_SESSION_STATE_CORRUPT:{path}")
+    return dict(loaded)
+
+
+def _load_claude_lane_state(session_file: Path, *, require_existing: bool) -> dict[str, Any] | None:
+    if not session_file.exists():
+        if require_existing:
+            raise ClaudeLaneStateError(f"CLAUDE_SESSION_STATE_MISSING:{session_file}")
+        return None
+    try:
+        loaded = json.loads(session_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ClaudeLaneStateError(f"CLAUDE_SESSION_STATE_CORRUPT:{session_file}") from exc
+    return _validate_claude_lane_state(loaded, session_file)
+
+
+def _validate_rotation_intent(loaded: Any, path: Path, lane_id: str) -> dict[str, Any]:
+    if not isinstance(loaded, dict) or loaded.get("schema") != "u333-lane-rotation-intent-v1":
+        raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}")
+    if loaded.get("lane_id") != lane_id:
+        raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}")
+    old_sid = loaded.get("old_session_id")
+    new_sid = loaded.get("new_session_id")
+    old_gen = loaded.get("old_generation")
+    new_gen = loaded.get("new_generation")
+    receipt_name = loaded.get("receipt_name")
+    rotated_at = loaded.get("rotated_at")
+    intent_id = loaded.get("intent_id")
+    for s in (old_sid, new_sid):
+        if not isinstance(s, str) or not s:
+            raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}")
+        try:
+            uuid.UUID(s)
+        except ValueError as exc:
+            raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}") from exc
+    if old_sid == new_sid:
+        raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}")
+    if (
+        isinstance(old_gen, bool)
+        or isinstance(new_gen, bool)
+        or not isinstance(old_gen, int)
+        or not isinstance(new_gen, int)
+        or old_gen < 0
+        or new_gen != old_gen + 1
+    ):
+        raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}")
+    if (
+        not isinstance(receipt_name, str)
+        or not receipt_name.endswith(".json")
+        or "/" in receipt_name
+        or "\\" in receipt_name
+        or ".." in receipt_name
+    ):
+        raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}")
+    if not isinstance(rotated_at, str) or not rotated_at or not isinstance(intent_id, str) or not intent_id:
+        raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{path}")
+    return dict(loaded)
+
+
+def _rotation_receipt_payload(lane_id: str, intent: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "u333-lane-rotation-v1",
+        "status": "COMMITTED",
+        "intent_id": intent["intent_id"],
+        "lane_id": lane_id,
+        "old_session_id": intent["old_session_id"],
+        "old_generation": intent["old_generation"],
+        "new_session_id": intent["new_session_id"],
+        "new_generation": intent["new_generation"],
+        "rotated_at": intent["rotated_at"],
+        "timestamp_ns": time.time_ns(),
+    }
+
+
+def _reconcile_claude_lane_rotation_intent(delivery_dir: Path, lid: str, session_file: Path) -> None:
+    """Reconcile any unfinished two-phase Claude lane rotation under lock before reading or mutating state."""
+    intent_path = delivery_dir / f"claude-lane-{lid}.rotation.intent.json"
+    if not intent_path.exists():
+        return
+    try:
+        raw_intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_CORRUPT:{intent_path}") from exc
+    intent = _validate_rotation_intent(raw_intent, intent_path, lid)
+    state = _load_claude_lane_state(session_file, require_existing=True)
+    assert state is not None
+    if state["session_id"] == intent["old_session_id"] and state["generation"] == intent["old_generation"]:
+        # Write 1 (session_file commit) did not land; former session remains authoritative with zero receipt.
+        intent_path.unlink(missing_ok=True)
+        return
+    if state["session_id"] == intent["new_session_id"] and state["generation"] == intent["new_generation"]:
+        # Write 1 committed new session, Write 2 (receipt) was interrupted; roll forward idempotently.
+        rot_path = delivery_dir / "attempts" / intent["receipt_name"]
+        if not rot_path.is_file():
+            _atomic_write_json(
+                rot_path,
+                _rotation_receipt_payload(lid, intent),
+                "CLAUDE_ROTATION_RECEIPT_FAILED",
+            )
+        intent_path.unlink(missing_ok=True)
+        return
+    raise ClaudeLaneStateError(f"CLAUDE_ROTATION_INTENT_MISMATCH:{intent_path}")
+
+
 def ensure_claude_lane_session(project: Path, lane_id: str, *, rotate: bool = False) -> tuple[str, Path, bool]:
     """Provision or reuse an isolated Claude session file for `lane_id`.
 
     Returns `(session_id, session_file_path, resume_flag)`.
-    If `rotate=True` (e.g., when a session ID collides with 'already in use'), increments generation
-    and mints a fresh non-colliding UUID for this lane without affecting any other lane.
+    If `rotate=True`, executes recoverable intent -> state-commit -> receipt-commit rotation under lock so a fault
+    at Write 1 leaves the former session authoritative with zero rotation receipt and a fault at Write 2 rolls
+    forward deterministically on the next call. Missing/corrupt active state fails closed.
     """
     lid = validate_lane_id(lane_id)
     desk = Path(shared_desk(project)).resolve()
     delivery_dir = desk / ".coord" / "mailbox" / "delivery"
     delivery_dir.mkdir(parents=True, exist_ok=True)
     session_file = delivery_dir / f"claude-lane-{lid}.json"
+    intent_path = delivery_dir / f"claude-lane-{lid}.rotation.intent.json"
 
-    state: dict[str, Any] = {}
-    if session_file.is_file():
-        try:
-            loaded = json.loads(session_file.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                state = loaded
-        except (OSError, ValueError):
-            state = {}
+    with _claude_lane_session_lock(desk, lid):
+        _reconcile_claude_lane_rotation_intent(delivery_dir, lid, session_file)
+        state = _load_claude_lane_state(session_file, require_existing=False)
+        if state is None:
+            session_id = str(uuid.uuid4())
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            initial_state: dict[str, Any] = {
+                "lane_id": lid,
+                "session_id": session_id,
+                "generation": 1 if rotate else 0,
+                "ready": False,
+                "updated_at": now_iso,
+            }
+            _atomic_write_json(session_file, initial_state, "CLAUDE_SESSION_WRITE_FAILED")
+            return session_id, session_file, False
 
-    generation = int(state.get("generation") or 0)
-    session_id = str(state.get("session_id") or "")
-    ready = bool(state.get("ready"))
+        prev_gen = int(state["generation"])
+        prev_sid = str(state["session_id"])
+        ready = bool(state["ready"])
+        if not rotate:
+            return prev_sid, session_file, ready
 
-    if rotate or not session_id:
-        if rotate:
-            generation += 1
-        session_id = deterministic_lane_session_uuid(desk, lid, "claude", generation=generation)
-        ready = False
-        new_state = {
+        generation = prev_gen + 1
+        session_id = str(uuid.uuid4())
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        intent_id = uuid.uuid4().hex[:12]
+        receipt_name = f"claude-lane-{lid}_rotation_g{prev_gen}_{intent_id}.json"
+        intent_payload = {
+            "schema": "u333-lane-rotation-intent-v1",
+            "intent_id": intent_id,
+            "lane_id": lid,
+            "old_session_id": prev_sid,
+            "old_generation": prev_gen,
+            "new_session_id": session_id,
+            "new_generation": generation,
+            "receipt_name": receipt_name,
+            "rotated_at": now_iso,
+        }
+        new_state: dict[str, Any] = {
             "lane_id": lid,
             "session_id": session_id,
             "generation": generation,
             "ready": False,
+            "updated_at": now_iso,
+            "prior_in_flight": {
+                "session_id": prev_sid,
+                "generation": prev_gen,
+                "rotated_at": now_iso,
+            },
+        }
+        _atomic_write_json(intent_path, intent_payload, "CLAUDE_ROTATION_INTENT_WRITE_FAILED")
+        try:
+            _atomic_write_json(session_file, new_state, "CLAUDE_SESSION_WRITE_FAILED")
+        except OSError:
+            # Write 1 failed before commit: former session remains authoritative; clear uncommitted intent.
+            try:
+                intent_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        _atomic_write_json(
+            delivery_dir / "attempts" / receipt_name,
+            _rotation_receipt_payload(lid, intent_payload),
+            "CLAUDE_ROTATION_RECEIPT_FAILED",
+        )
+        intent_path.unlink(missing_ok=True)
+        return session_id, session_file, False
+
+
+def mark_claude_lane_session_ready(project: Path, lane_id: str, session_id: str) -> tuple[bool, Path | None]:
+    """Compare-and-set `ready=True` for `session_id` only if the lane has not rotated away from it.
+
+    Reconciles any interrupted rotation intent under lock first and fails closed on missing or corrupt active state.
+    A late completion of an older session never marks a rotated generation `ready=True` or overwrites its state;
+    instead it writes a distinct durable stale-completion receipt under `attempts/` and returns `(False, receipt_path)`.
+    """
+    lid = validate_lane_id(lane_id)
+    desk = Path(shared_desk(project)).resolve()
+    delivery_dir = desk / ".coord" / "mailbox" / "delivery"
+    session_file = delivery_dir / f"claude-lane-{lid}.json"
+
+    with _claude_lane_session_lock(desk, lid):
+        _reconcile_claude_lane_rotation_intent(delivery_dir, lid, session_file)
+        prev_state = _load_claude_lane_state(session_file, require_existing=True)
+        assert prev_state is not None
+
+        current_sid = str(prev_state["session_id"])
+        if current_sid != session_id:
+            stale_path = delivery_dir / "attempts" / f"claude-lane-{lid}_stale_completion_{uuid.uuid4().hex[:8]}.json"
+            _atomic_write_json(
+                stale_path,
+                {
+                    "schema": "u333-lane-stale-completion-v1",
+                    "lane_id": lid,
+                    "completed_session_id": session_id,
+                    "active_session_id": current_sid,
+                    "active_generation": int(prev_state["generation"]),
+                    "active_ready": bool(prev_state["ready"]),
+                    "action": "IGNORED_STALE_COMPLETION",
+                    "timestamp_ns": time.time_ns(),
+                },
+                "CLAUDE_STALE_RECEIPT_FAILED",
+            )
+            return False, stale_path
+
+        updated = {
+            **prev_state,
+            "lane_id": lid,
+            "session_id": session_id,
+            "ready": True,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        tmp = session_file.with_name(f"{session_file.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
-        tmp.write_text(json.dumps(new_state, sort_keys=True) + "\n", encoding="utf-8")
-        try:
-            os.replace(tmp, session_file)
-        except OSError:
-            tmp.unlink(missing_ok=True)
-
-    return session_id, session_file, ready
+        _atomic_write_json(session_file, updated, "CLAUDE_SESSION_WRITE_FAILED")
+        return True, None
 
 
 def open_or_reuse_lane_window(
