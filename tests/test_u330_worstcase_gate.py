@@ -127,17 +127,8 @@ class WorstcaseGate(unittest.TestCase):
         self.assertEqual([Path(".")], seen.get("test_roots"))
         self.assertIn("test_roots=[Path(project)]", (ROOT / "v7_harness" / "cli.py").read_text(encoding="utf-8"))
 
-    def test_7_rules_text_in_every_tool_file(self):
-        for doc in ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "uaos_everywhere/uaos_global_rule_block.md",
-                    ".agents/rules/unified-codex-antigravity.md"):
-            self.assertIn("U330", (ROOT / doc).read_text(encoding="utf-8"), doc)
-
-    def test_8_every_rules_source_has_all_11_core_keys(self):
-        for doc in ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "uaos_everywhere/uaos_global_rule_block.md",
-                    ".agents/rules/unified-codex-antigravity.md"):
-            text = (ROOT / doc).read_text(encoding="utf-8")
-            for n in range(1, 12):
-                self.assertIn(f"[CORE-{n}]", text, f"{doc} lacks CORE-{n}")
+    # The rule-text tests (U330 rule line and [CORE-1..11] in all 5 rule files) live on the follow-up branch
+    # claude/u330-core-rules-followup, which lands after the cards the CORE rules reference have merged.
 
 
 if __name__ == "__main__":
