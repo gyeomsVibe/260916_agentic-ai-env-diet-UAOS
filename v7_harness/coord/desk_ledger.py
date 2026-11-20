@@ -79,7 +79,10 @@ def append_directive(project: Path, raw: bytes | str, *, tool: str, kind: str = 
             os.fsync(handle.fileno())
         entry = {"seq": seq, "d_id": d_id, "tool": tool, "kind": kind, "event_id": event_id, "sha256": hashlib.sha256(data).hexdigest(),
                  "bytes": len(data), "at": time.time() if now is None else now, "gist": " ".join(text.split())[:GIST_CHARS], "text": text}
-        with open(folder / LEDGER, "ab") as handle:
+        ledger = folder / LEDGER
+        with open(ledger, "ab") as handle:
+            if ledger.stat().st_size and ledger.read_bytes()[-1:] != b"\n":
+                handle.write(b"\n")  # a torn last line must not swallow this entry: start it on its own line
             handle.write((json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8"))
             handle.flush()
             os.fsync(handle.fileno())
@@ -142,19 +145,23 @@ def inject(project: Path, tool: str, *, limit: int = INJECT_MAX_LINES, auto_ack:
         return []
     lines = [f"STOP {r['d_id']} ({r['tool']}): halt now, all open cards signal STOP" for r in rows if r["kind"] == "stop"]
     # conflicts are judged against the recent window, not only the unseen rows: the earlier one may already be acked
-    lines += conflicts(read_since(project, max(0, rows[0]["seq"] - 1 - 20)))[:2]
+    # conflicts are judged against the recent window (the earlier one may already be acked), but only pairs whose
+    # later entry is still unseen are shown, so an old conflict is never re-announced on every call
+    fresh = [c for c in conflicts(read_since(project, max(0, rows[0]["seq"] - 1 - 20)))
+             if int(c.split()[1].split("(")[0][2:]) > cursor]
+    lines += fresh[:2]
+    limit = max(1, int(limit))  # a zero or negative limit would slice from the end and miscount; at least one gist per call
     shown = [r for r in rows if r["kind"] == "directive"]
+    cut = len(shown) > limit
     for r in shown[:limit]:
         lines.append(f"{r['d_id']} [{r['tool']}] {r['gist']} -> .coord/directives/{r['d_id']}.md")
-    if len(shown) > limit:
-        lines.append(f"+{len(shown) - limit} more directives, see .coord/directives/{LEDGER} (cursor {cursor} -> {rows[-1]['seq']})")
+    # P1-4: a truncated burst must not skip the unseen tail; the cursor stops at the last directive actually shown
+    # (stop rows are always shown), so the next call continues with the "+N more" part.
+    new_cursor = rows[-1]["seq"]
+    if cut:
+        last_shown = shown[limit - 1]["seq"]
+        new_cursor = max([last_shown, *(r["seq"] for r in rows if r["kind"] == "stop" and r["seq"] <= last_shown)])
+        lines.append(f"+{len(shown) - limit} more directives, see .coord/directives/{LEDGER} (cursor {cursor} -> {new_cursor})")
     if auto_ack:
-        # P1-4: a truncated burst must not skip the unseen tail; the cursor stops at the last directive actually shown
-        # (stop rows are always shown), so the next call continues with the "+N more" part.
-        if len(shown) > limit:
-            last_shown = shown[limit - 1]["seq"] if limit > 0 else cursor
-            stops = [r["seq"] for r in rows if r["kind"] == "stop" and r["seq"] <= last_shown]
-            ack(project, tool, max([last_shown, *stops]) if limit > 0 else cursor)
-        else:
-            ack(project, tool, rows[-1]["seq"])
+        ack(project, tool, new_cursor)
     return lines

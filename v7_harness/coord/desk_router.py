@@ -728,12 +728,12 @@ def compute_signals(cards: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any
         if start == goal:
             return True
         seen.add(start)
-        return any(d not in seen and reaches(d, goal, seen) for d in cards.get(start, {}).get("depends_on", []) if cards.get(d, {}).get("status") != "DONE")
+        return any(d not in seen and reaches(d, goal, seen) for d in (cards.get(start, {}).get("depends_on") or []) if cards.get(d, {}).get("status") != "DONE")
 
     out: dict[str, dict[str, Any]] = {}
     for cid, card in open_.items():
         waits: list[str] = []
-        for dep in card.get("depends_on", []):
+        for dep in (card.get("depends_on") or []):
             if cards.get(dep, {}).get("status") == "DONE":
                 continue
             cyclic = reaches(dep, cid, set())

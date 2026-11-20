@@ -424,6 +424,34 @@ class SharedLedgerTests(unittest.TestCase):
         self.assertTrue(third[0].startswith("D-0011") and dl.cursor_of(self.project, "codex") == 12, third)
         self.assertEqual(len(first), 6)
 
+    def test_torn_last_ledger_line_does_not_swallow_the_next_entry(self):
+        from v7_harness.coord import desk_ledger as dl
+        dl.append_directive(self.project, "첫 지시", tool="claude")
+        with open(self.project / ".coord/directives" / dl.LEDGER, "ab") as handle:
+            handle.write(b'{"seq": 2, "d_id": "D-00')  # crash mid-line: no trailing newline
+        entry = dl.append_directive(self.project, "다음 지시", tool="codex")
+        self.assertEqual([r["text"] for r in dl.read_since(self.project, 0)], ["첫 지시", "다음 지시"])
+        self.assertEqual(entry["seq"], 2)
+
+    def test_nonpositive_limit_and_old_conflicts_and_cursor_report(self):
+        from v7_harness.coord import desk_ledger as dl
+        dl.append_directive(self.project, "v7_harness/coord/stall.py 를 5분으로 고쳐라", tool="claude", now=1000.0)
+        dl.append_directive(self.project, "v7_harness/coord/stall.py 는 10초로 고쳐라", tool="codex", now=1004.0)
+        self.assertTrue(any(l.startswith("CONFLICT") for l in dl.inject(self.project, "antigravity")))
+        dl.append_directive(self.project, "전혀 다른 새 지시 하나", tool="claude", now=5000.0)
+        again = dl.inject(self.project, "antigravity")
+        self.assertFalse(any(l.startswith("CONFLICT") for l in again), again)  # the old conflict is not re-announced
+        for n in range(4):
+            dl.append_directive(self.project, f"추가 지시 {n}", tool="claude", now=6000.0 + n * 100)
+        lines = dl.inject(self.project, "antigravity", limit=-3)  # clamped to 1, never slices from the end
+        self.assertEqual(len([l for l in lines if l.startswith("D-")]), 1)
+        self.assertIn(f"cursor 3 -> {dl.cursor_of(self.project, 'antigravity')}", lines[-1])  # reports the real new cursor
+        self.assertEqual(dl.cursor_of(self.project, "antigravity"), 4)
+
+    def test_signals_tolerate_null_depends_on(self):
+        sig = dr.compute_signals({"U1": {"id": "U1", "status": "RUNNING", "tool": "claude", "files": [], "depends_on": None}})
+        self.assertEqual(sig["U1"]["signal"], "GO")
+
     def test_conflicting_directives_at_two_desks_later_seq_wins(self):
         from v7_harness.coord import desk_ledger as dl
         dl.append_directive(self.project, "v7_harness/coord/stall.py 를 5분으로 고쳐라", tool="claude", now=1000.0)
