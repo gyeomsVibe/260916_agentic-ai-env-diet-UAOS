@@ -685,6 +685,10 @@ def advance(project: Path, *, opener: Callable[..., dict[str, Any]] | None = Non
             _write_json(folder / REGISTRY, registry)
     started: list[str] = []
     for cid, card in claimed:
+        with _Lock(folder / ".registry.lock"):  # a stop committed after this card was pre-claimed cancels it: never launch it
+            live = _read_json(folder / REGISTRY, {"cards": {}}).get("cards", {}).get(cid)
+        if live is None or live.get("status") != "LAUNCHING":
+            continue
         try:
             res = opener(project, cid, card["tool"], card.get("title", cid), project / card["manual"])
         except Exception as error:

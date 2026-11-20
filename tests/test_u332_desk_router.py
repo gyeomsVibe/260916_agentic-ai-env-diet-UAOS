@@ -327,6 +327,24 @@ class DeskRouterTests(unittest.TestCase):
         self.assertEqual(seen["status_during"], "LAUNCHING")
         self.assertEqual(_registry(self.project)["U2"]["status"], "STOPPED")  # the stop is not overwritten by RUNNING
 
+    def test_stop_cancels_every_preclaimed_successor(self):
+        _seed(self.project, {"U1": {"id": "U1", "status": "DONE", "tool": "claude", "files": []},
+                             "U2": {"id": "U2", "status": "WAITING", "tool": "claude", "files": ["a.py"], "depends_on": ["U1"],
+                                    "manual": ".coord/directives/manuals/U2.md"},
+                             "U3": {"id": "U3", "status": "WAITING", "tool": "codex", "files": ["b.py"], "depends_on": ["U1"],
+                                    "manual": ".coord/directives/manuals/U3.md"}})
+        opened = []
+
+        def opener(project, cid, tool, title, manual_path):
+            opened.append(cid)
+            dr.propagate_stop(self.project, "D-0099")  # the stop lands while the first successor launches
+            return {"opened": True}
+
+        dr.advance(self.project, opener=opener)
+        self.assertEqual(len(opened), 1, opened)  # the second pre-claimed successor is cancelled, not launched
+        cards = _registry(self.project)
+        self.assertEqual({cards["U2"]["status"], cards["U3"]["status"]}, {"STOPPED"})
+
     def test_stale_router_is_fenced_after_handoff(self):
         meta = dr.capture(self.project, "v7_harness/coord/a_mod.py 에 함수를 추가", source_tool="claude")
         dr.claim(self.project, meta["d_id"], "codex")
