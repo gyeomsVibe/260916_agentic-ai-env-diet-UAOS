@@ -46,6 +46,10 @@ VERDICT_OUTCOMES = ("PASS", "REVISE", "FAIL")
 DELIVERIES = ("DISPATCHED", "QUEUED")
 REQUEST_TTL_S = 7 * 24 * 3600.0  # the weekly limit window; expiry is not an answer
 WAKE_LEASE_S = 1800.0  # one cache lifetime
+# WATCH-REPLAY rev4: a flushed-but-unacked wake may be re-delivered once per expired claim window, at most this many
+# wake generations in total (1 first wake + 2 recoveries). Bounds a never-acking consumer to 3 wakes over >= 2 lease
+# windows (>= 1 h) instead of the receipt's replay on every re-arm, while an unread pipe still recovers twice.
+WAKE_MAX_GENERATIONS = 3
 RECONCILE_WINDOW_S = 600.0  # two dispatch timeouts (DISPATCH_TIMEOUT_S = 300 s)
 SKEW_S = 300.0  # clock skew tolerance for hints; exact answers are never time-filtered
 LOCK_WAIT_S = 10.0
@@ -694,6 +698,27 @@ def _reclaimable(row: dict[str, Any], moment: float, started_at: float | None) -
     return started_at > claimed
 
 
+def _generation(row: dict[str, Any]) -> int:
+    value = row.get("wake_generation")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 1 if row.get("claimed_at") is not None else 0  # rows written before rev4 count their one claim
+    return value
+
+
+def replay_due(row: dict[str, Any], moment: float) -> bool:
+    """WATCH-REPLAY rev4: a surfaced, unacked WAKE_PENDING wake may be re-delivered only after its claim window
+    (the waker lease) ended and while generations remain. Pure read, so a watcher can skip a row without a write."""
+    if row.get("state") != WAKE_PENDING or not row.get("surfaced_at"):
+        return False
+    if _generation(row) >= WAKE_MAX_GENERATIONS:
+        return False
+    waker = row.get("waker")
+    lease = waker.get("lease_until") if isinstance(waker, dict) else None
+    if not isinstance(lease, (int, float)) or isinstance(lease, bool):
+        return True  # no claim window recorded: treat as ended
+    return lease <= moment
+
+
 def claim_wake(project: Path, request_id: str, *, session: str, now: float | None = None,
                started_at: float | None = None) -> bool:
     """CAS ANSWER_OBSERVED -> WAKE_PENDING for one watcher. True only for the claimant that moved the record."""
@@ -704,14 +729,44 @@ def claim_wake(project: Path, request_id: str, *, session: str, now: float | Non
         # A bound request wakes only its requester session; a blank or passive watcher may not claim it (Codex A8).
         if wanted and session != wanted:
             return None
-        if cur.get("state") == ANSWER_OBSERVED or (cur.get("state") == WAKE_PENDING
-                                                   and _reclaimable(cur, moment, started_at)):
+        # WATCH-REPLAY rev4: surfaced_at only proves the producer flushed (an unread pipe also flushes), so a surfaced
+        # claim is not closed: it is held for its claim window, then replay_due() lets one later watcher re-deliver it
+        # as a new generation. Only the requester's ack/cancel closes it. An unsurfaced claim keeps the U277 rules.
+        state = cur.get("state")
+        if state == ANSWER_OBSERVED or (state == WAKE_PENDING and (
+                replay_due(cur, moment) if cur.get("surfaced_at") else _reclaimable(cur, moment, started_at))):
             pid = os.getpid()
-            cur.update(state=WAKE_PENDING, claimed_at=moment, waker={
+            cur.pop("surfaced_at", None)
+            cur.update(state=WAKE_PENDING, claimed_at=moment, wake_generation=_generation(cur) + 1, waker={
                 "pid": pid, "process_created": _process_created(pid), "session": session or "",
                 "lease_until": moment + WAKE_LEASE_S})
             return cur
         return None
+
+    try:
+        _row, changed = _mutate(project, request_id, fn)
+    except RequestError:
+        return False
+    return changed
+
+
+def mark_surfaced(project: Path, request_id: str, *, pid: int | None = None, generation: int | None = None,
+                  now: float | None = None) -> bool:
+    """WATCH-REPLAY: producer receipt, written by the CLI after the wake line was flushed. Idempotent; WAKE_PENDING
+    only; with `pid`/`generation` only the claimant of that claim generation may write it (a foreign or later
+    reclaimed waker cannot). It holds replay until the claim window ends; it does not settle the request (rev4)."""
+    moment = _now(now)
+
+    def fn(cur: dict[str, Any]) -> dict[str, Any] | None:
+        if cur.get("state") != WAKE_PENDING or cur.get("surfaced_at"):
+            return None
+        waker = cur.get("waker")
+        if pid is not None and not (isinstance(waker, dict) and waker.get("pid") == pid):
+            return None
+        if generation is not None and _generation(cur) != generation:
+            return None
+        cur["surfaced_at"] = moment
+        return cur
 
     try:
         _row, changed = _mutate(project, request_id, fn)

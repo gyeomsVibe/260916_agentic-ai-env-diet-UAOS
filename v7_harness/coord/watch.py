@@ -527,11 +527,15 @@ def _request_wake(project: Path, tools: tuple[str, ...], session: str | None, no
         for row in requests.answered(project):
             if row.get("requester") not in tools:
                 continue
+            if row.get("surfaced_at") and not requests.replay_due(row, now):
+                continue  # WATCH-REPLAY rev4: flushed wake inside its claim window (or out of generations): no write
             request_id = str(row["request_id"])
             if requests.claim_wake(project, request_id, session=session or "", now=now, started_at=started_at):
+                claimed = requests.get(project, request_id) or {}
                 return {"reason": "REQUEST_ANSWERED", "id": request_id, "request_id": request_id,
                         "outcome": row.get("outcome", ""), "event_id": row.get("answer_ref", ""),
-                        "requested_target": row.get("requester")}
+                        "requested_target": row.get("requester"),
+                        "wake_generation": claimed.get("wake_generation")}
         for item in transitions:
             if item.get("type") != "HINT" or item.get("requester") not in tools:
                 continue

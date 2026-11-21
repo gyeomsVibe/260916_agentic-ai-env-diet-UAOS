@@ -2368,7 +2368,16 @@ def cmd_coord_watch(args: argparse.Namespace) -> int:
     if found is None:
         print(json.dumps({"ok": False, "reason": "TIMEOUT", "targets": args.target}, ensure_ascii=False))
         return 3
-    print(json.dumps({"ok": True, "reason": "NEW_LETTER", **found}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "reason": "NEW_LETTER", **found}, ensure_ascii=False), flush=True)
+    if found.get("reason") == "REQUEST_ANSWERED":
+        # WATCH-REPLAY rev4: the producer receipt. Only after the wake line was written and flushed is replay held for
+        # the claim window; a broken pipe above raises first, leaving the claim reclaimable. A flush is not a read, so
+        # the request stays open for bounded recovery until the requester's `coord ack`. Fenced to this generation.
+        from .coord import requests as _requests
+
+        generation = found.get("wake_generation")
+        _requests.mark_surfaced(Path(args.project), str(found["request_id"]), pid=os.getpid(),
+                                generation=generation if isinstance(generation, int) else None)
     return 0
 
 
@@ -2840,10 +2849,23 @@ def cmd_coord_ack(args: argparse.Namespace) -> int:
         consumer = (os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
                     or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("ANTIGRAVITY_SESSION_ID")
                     or consumer)
+    # WATCH-REPLAY: the exact consumer confirmation. When the caller IS the session the verdict request is bound to,
+    # the ack also settles the request in the registry (surfaced_at only proves the producer flushed). The caller's
+    # own resolved identity is passed, never the stored owner, so a peer cannot impersonate it. A mailbox letter with
+    # the same relay id is still acked below, so a recipient's ack is never hijacked.
+    from .coord import requests as _requests
+
+    settled = ""
+    row = _requests.get(Path(args.project), args.message_id) if str(args.message_id).startswith("relay_") else None
+    if row is not None and row.get("requester_session") and str(row["requester_session"]) == str(consumer):
+        try:
+            settled = _requests.ack(Path(args.project), args.message_id, str(consumer))
+        except _requests.RequestError:
+            settled = ""  # not answered yet or refused: the mailbox ack below still runs
     claim = box.claim(args.message_id, consumer_id=consumer)
     if claim is None:
-        already = (box.ack_dir / f"{args.message_id}.json").is_file()
-        print(json.dumps({"ok": already, "id": args.message_id,
+        already = (box.ack_dir / f"{args.message_id}.json").is_file() or bool(settled)
+        print(json.dumps({"ok": already, "id": args.message_id, "request": settled or None,
                           "error": None if already else "NOT_IN_INBOX"}, ensure_ascii=False))
         return 0 if already else 1
     try:
