@@ -1357,6 +1357,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_lanes.add_argument("--max-workers", type=int, default=5)
     p_coord_lanes.set_defaults(func=cmd_coord_lanes)
 
+    # U335: automatic user-desk handoff (detect new desk -> manifest -> single conductor -> notify every card window)
+    p_coord_dh = p_coord_subs.add_parser("desk-handoff", help="U335: hand the conductor role to a newly registered user desk")
+    p_coord_dh.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_dh.add_argument("--action", choices=["detect", "run", "check", "ack", "status"], default="detect")
+    p_coord_dh.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
+    p_coord_dh.add_argument("--desk", default="", help="check: the desk asking to dispatch; ack: n/a")
+    p_coord_dh.add_argument("--handoff-id", default="")
+    p_coord_dh.add_argument("--card", default="")
+    p_coord_dh.add_argument("--signal", default="reply")
+    p_coord_dh.set_defaults(func=cmd_coord_desk_handoff)
+
     # U130: one card template (four stage slots with default workers) and an audit of the card's Ollama/Antigravity use.
     p_card = subparsers.add_parser("card", help="U130 default card pipeline: new, claim, skip, audit")
     p_card_subs = p_card.add_subparsers(dest="card_subcommand", required=True)
@@ -3192,7 +3203,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "route-directive", "sentinel", "inbox", "ack", "archive", "window", "lanes"})
+_DESK_COMMANDS = frozenset({"presence", "watch", "route", "route-directive", "sentinel", "inbox", "ack", "archive", "window", "lanes", "desk-handoff"})
 
 
 def cmd_coord_library(args: argparse.Namespace) -> int:
@@ -3245,6 +3256,40 @@ def cmd_coord_library(args: argparse.Namespace) -> int:
     except LibraryStoreError as exc:
         print(json.dumps({"ok": False, "code": exc.code, "error": str(exc)}, ensure_ascii=False))
         return 2
+
+
+def cmd_coord_desk_handoff(args: argparse.Namespace) -> int:
+    """U335: detect | run | check | ack | status for the automatic user-desk handoff (zero paid tokens)."""
+    from .coord import desk_handoff as dh
+
+    project = Path(args.project)
+    if args.action == "detect":
+        res = dh.detect_new_desk(project, args.tool)
+    elif args.action == "check":
+        res = dh.check_dispatch(project, args.tool, args.desk)
+    elif args.action == "ack":
+        res = dh.record_ack(project, args.handoff_id, args.card, args.tool, args.signal)
+    elif args.action == "status":
+        try:
+            res = {"conductor": dh.conductor(project, args.tool)}
+            if args.handoff_id:
+                res.update(dh.ack_summary(project, args.handoff_id))
+        except ValueError as error:  # a corrupt record is reported, never a traceback
+            res = {"ok": False, "reason": str(error).split()[0]}
+    else:
+        from .coord import deliver as deliver_mod
+
+        def send_letter(session: dict, text: str) -> bool:
+            result = deliver_mod.deliver(project, message=text, actor=args.tool, target=session["tool"],
+                                         card=session["card"])
+            # `delivered` is True only for an already-ACKED letter; a fresh dispatch reports DISPATCHED / PUBLISHED / QUEUED_*.
+            return bool(result.delivered or result.reason in ("DISPATCHED", "PUBLISHED") or str(result.reason).startswith("QUEUED"))
+
+        res = dh.run_handoff(project, args.tool, send_letter=send_letter)
+        # Claude card sessions are reached by the conductor's session messaging (an app tool, not a shell call):
+        # the notice stays NO_TRANSPORT in the ledger and the caller sends it from the handoff manifest.
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    return 0 if res.get("ok", True) else 1
 
 
 def cmd_coord_lanes(args: argparse.Namespace) -> int:
