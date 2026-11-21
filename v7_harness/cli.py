@@ -1495,6 +1495,13 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Compatibility only; file labels are never treated as authentication")
     p_rsi_retention.set_defaults(func=cmd_rsi_retention)
 
+    p_rsi_selftest = p_rsi_subs.add_parser("selftest", help="Zero-token RSI canary self-test (U349/U357)")
+    p_rsi_selftest.add_argument("--project", default=".")
+    p_rsi_selftest.add_argument("--home", default=None)
+    p_rsi_selftest.add_argument("--baseline", default=None)
+    p_rsi_selftest.add_argument("--json", action="store_true")
+    p_rsi_selftest.set_defaults(func=cmd_rsi_selftest)
+
     return parser
 
 
@@ -3115,6 +3122,19 @@ def cmd_rsi_retention(args: argparse.Namespace) -> int:
     out["work_report"] = work_dir_report(project, now=now)
     _print_json(out)
     return 0
+
+
+def cmd_rsi_selftest(args: argparse.Namespace) -> int:
+    from . import rsi_selftest
+
+    argv = ["--project", str(args.project)]
+    if args.home:
+        argv += ["--home", str(args.home)]
+    if args.baseline:
+        argv += ["--baseline", str(args.baseline)]
+    if args.json:
+        argv.append("--json")
+    return rsi_selftest.main(argv)
 
 
 def cmd_rsi_prepare(args: argparse.Namespace) -> int:

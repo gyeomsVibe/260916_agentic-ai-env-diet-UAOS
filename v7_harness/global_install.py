@@ -266,7 +266,9 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
     launcher = uaos_dir / "uaos.py"
     state = _load_json(uaos_dir / STATE_FILE)[0] or {}
     changes: list[Change] = []
-    block = None if uninstall else rule_block(python, launcher, portable=portable)
+    # U357: render from the repo argument; the module constants point at REPO_ROOT, which an installed runtime lacks.
+    rule_source = Path(repo) / "uaos_everywhere" / "uaos_global_rule_block.md"
+    block = None if uninstall else rule_block(python, launcher, source=rule_source, portable=portable)
     shell_note = ("the Python or home path has spaces: the command is quoted, which bash and cmd run but a PowerShell "
                   "hook shell does not (it needs `& ` in front)") if needs_quotes(python, launcher) and not uninstall else ""
 
@@ -310,7 +312,8 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                                       "global-rules canon owns this generated file"))
             else:
                 tool_block = None if uninstall else rule_block(
-                    python, launcher, portable=portable, adapter=ADAPTER_SOURCE[tool]
+                    python, launcher, source=rule_source, portable=portable,
+                    adapter=Path(repo) / "uaos_everywhere" / "adapters" / f"{tool}.md"
                 )
                 changes.append(_text_change(f"{tool} rules", path, current_rules,
                                             _with_block(current_rules, tool_block),
