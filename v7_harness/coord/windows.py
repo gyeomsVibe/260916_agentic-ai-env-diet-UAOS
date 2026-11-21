@@ -46,6 +46,8 @@ WINDOW_LOCK_TRIES = 200
 WINDOW_LOCK_SLEEP_S = 0.01
 
 _CARD_FAMILY_RE = re.compile(r"(?:^|[^A-Za-z0-9])(U\d{2,4})(?=$|[^0-9])", re.IGNORECASE)
+# U331-FF: a companion card `<ID>.<tool>` is its own topic; folding it onto `<ID>` clobbered the primary window.
+_COMPANION_CARD_RE = re.compile(r"^(U\d{2,4})\.(?:codex|claude|antigravity|agy)$", re.IGNORECASE)
 _SUBSTEP_SUFFIX_RE = re.compile(
     r"(?:[-_.](?:R\d+|L\d+|V\d+|A\d+|S\d+|STAGE\d*|FIX\d*|SLICE\d*|VERDICT|MANUAL|AUDIT|RETRY\d*|SPEC|\d{6,8}))+$",
     re.IGNORECASE,
@@ -213,6 +215,9 @@ def normalize_topic_key(card: str, message: str = "") -> str:
     if raw:
         if ".." in raw or not CARD_RE.fullmatch(raw):
             raise ValueError(f"bad card id: {card!r}")
+        companion = _COMPANION_CARD_RE.fullmatch(raw)
+        if companion:
+            return f"{companion.group(1).upper()}.{raw.rsplit('.', 1)[1].lower()}"
         match = _CARD_FAMILY_RE.search(raw)
         if match:
             return match.group(1).upper()
@@ -1289,7 +1294,7 @@ def release_window(project: Path, card: str, tool: str, *, now: float | None = N
         if require_idle and _entry_is_in_flight(entry):
             return {"released": False, "busy": True, "card": card, "tool": tool}
         ts = time.time() if now is None else now
-        extra = {k: v for k, v in entry.items() if k not in ("id", "opened_at", "state", "updated_at")}
+        extra = {k: v for k, v in entry.items() if k not in ("id", "window_id", "opened_at", "state", "updated_at")}
         if reason:
             extra["release_reason"] = reason
             extra["released_reason"] = reason
