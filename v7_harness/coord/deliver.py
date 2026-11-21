@@ -173,6 +173,12 @@ def _project_mailbox(project: Path) -> Mailbox:
     return Mailbox(root)
 
 
+def _is_companion_card(card: str) -> bool:
+    """U331-FF: `<ID>.<tool>` companion cards own one conversation; a failed send must not move them to another card."""
+    from v7_harness.coord.windows import _COMPANION_CARD_RE
+    return bool(card and _COMPANION_CARD_RE.fullmatch(card))
+
+
 def _deliver_to_codex(
     message: str,
     thread: str,
@@ -299,9 +305,12 @@ def _deliver_to_claude_locked(
     resume = False
     window_cwd = ""
     if lane and project_dir and not session:
-        from v7_harness.coord.process_lanes import ensure_claude_lane_session
+        from v7_harness.coord.process_lanes import ClaudeLaneStateError, ensure_claude_lane_session
 
-        session_id, session_path, resume = ensure_claude_lane_session(project_dir, lane)
+        try:
+            session_id, session_path, resume = ensure_claude_lane_session(project_dir, lane)
+        except ClaudeLaneStateError as exc:
+            return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
     elif session:  # U115: a card window is an existing session; the default delivery session file is left alone
         from v7_harness.coord.windows import claude_session
 
@@ -359,7 +368,8 @@ def _deliver_to_claude_locked(
             cp = execute(run_argv, **kwargs)
         except (subprocess.TimeoutExpired, OSError) as exc:
             if attempt == 0:
-                if session_path and resume:
+                is_lane_session = bool(lane and session_path and session_path.name.startswith("claude-lane-"))
+                if session_path and resume and not is_lane_session:
                     session_path.unlink(missing_ok=True)
                 return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), "")
             break
@@ -368,14 +378,19 @@ def _deliver_to_claude_locked(
         stderr = getattr(cp, "stderr", "") or ""
         if attempt == 1:
             argv_list = retry_argv
-            if rc == 0 and resume:
+            is_lane_session = bool(lane and session_path and session_path.name.startswith("claude-lane-"))
+            if rc == 0 and resume and not is_lane_session:
                 session_path = None
             break
         if rc != 0 and "already in use" in (stderr + " " + stdout).lower() and session_id:
             failover_from_id = session_id
             if lane and project_dir and not session:
-                from v7_harness.coord.process_lanes import ensure_claude_lane_session
-                fresh_id, session_path, _ = ensure_claude_lane_session(project_dir, lane, rotate=True)
+                from v7_harness.coord.process_lanes import ClaudeLaneStateError, ensure_claude_lane_session
+
+                try:
+                    fresh_id, session_path, _ = ensure_claude_lane_session(project_dir, lane, rotate=True)
+                except ClaudeLaneStateError as exc:
+                    return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), stderr[:500])
             else:
                 fresh_id = str(uuid.uuid4())
             retry_argv = [
@@ -387,7 +402,8 @@ def _deliver_to_claude_locked(
         break
 
     if rc != 0:
-        if session_path and (resume or "already in use" in stderr.lower()):
+        is_lane_session = bool(lane and session_path and session_path.name.startswith("claude-lane-"))
+        if session_path and not is_lane_session and (resume or "already in use" in stderr.lower()):
             session_path.unlink(missing_ok=True)
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:rc={rc}", tuple(argv_list), stderr[:500])
 
@@ -402,18 +418,26 @@ def _deliver_to_claude_locked(
         result_text = stdout[:500]
 
     if session_path and session_id:
-        prev_state: dict[str, Any] = {}
-        if session_path.is_file():
+        if lane and project_dir and session_path.name.startswith("claude-lane-"):
+            from v7_harness.coord.process_lanes import ClaudeLaneStateError, mark_claude_lane_session_ready
+
             try:
-                loaded_s = json.loads(session_path.read_text(encoding="utf-8"))
-                if isinstance(loaded_s, dict):
-                    prev_state = loaded_s
-            except (OSError, ValueError):
-                prev_state = {}
-        temporary = session_path.with_suffix(f".tmp-{uuid.uuid4().hex}")
-        temporary.write_text(json.dumps({**prev_state, "session_id": session_id, "ready": True}, sort_keys=True) + "\n",
-                             encoding="utf-8")
-        os.replace(temporary, session_path)
+                mark_claude_lane_session_ready(project_dir, lane, session_id)
+            except ClaudeLaneStateError as exc:
+                return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), result_text[:500])
+        else:
+            prev_state: dict[str, Any] = {}
+            if session_path.is_file():
+                try:
+                    loaded_s = json.loads(session_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded_s, dict):
+                        prev_state = loaded_s
+                except (OSError, ValueError):
+                    prev_state = {}
+            temporary = session_path.with_suffix(f".tmp-{uuid.uuid4().hex}")
+            temporary.write_text(json.dumps({**prev_state, "session_id": session_id, "ready": True}, sort_keys=True) + "\n",
+                                 encoding="utf-8")
+            os.replace(temporary, session_path)
     elif failover_from_id and session and project_dir and session_id:
         # U279 (P2-3 fix + P2-1 hardening): when a card window UUID was "already in use" and failed over to `session_id`,
         # durably persist the fresh `window_id` / `failover_id` into `.coord/windows/<topic>.json` and `.coord/windows.json`.
@@ -999,6 +1023,17 @@ def _codex_thread(desk: Path, thread: str) -> tuple[str, dict[str, str], str]:
     return "", {}, "NO_VERIFIED_THREAD"
 
 
+def _release_stale_card_window(desk: Path, card: str, window: str, why: str = "") -> None:
+    """Release the Codex window entry (of the card or its topic) that still names `window`; never raises."""
+    try:
+        from v7_harness.coord.windows import release_window, window_entry_for_topic
+        resolved, entry = window_entry_for_topic(desk, card or "", "codex")
+        if entry and str(entry.get("id")) == window:
+            release_window(desk, resolved, "codex", reason=f"STALE_CARD_WINDOW:{why}")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _verify_thread(desk: Path, root: Path, thread: str) -> str:
     """U134-R F1 strict identity: a UUID whose rollout names itself and a cwd inside this project."""
     if not UUID_RE.fullmatch(thread):
@@ -1348,6 +1383,8 @@ def _deliver_unlocked(
     lane: str = "",
     identity_digest: str | None = None,
     wants_turn: bool | None = None,
+    window_fallback: dict[str, str] | None = None,
+    agy_card: str = "",
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -1452,7 +1489,16 @@ def _deliver_unlocked(
             if target == "codex":
                 if window:  # U115: the card's own Codex thread replaces the default thread
                     thread = window
-                chosen_thread, fallback, status = _codex_thread(desk, thread)
+                if card and window:
+                    # U331-F: a card's window is never swapped for a guessed thread; a bad one fails closed here
+                    # (the verified-desk swap, if any, already happened before the envelope was built).
+                    bad_status = _verify_thread(desk, _codex_sessions(), window)
+                    chosen_thread, fallback, status = ((window, {}, "DISPATCH") if bad_status == "DISPATCH"
+                                                       else ("", {}, bad_status))
+                    if status == "DISPATCH" and window_fallback:
+                        fallback = dict(window_fallback)
+                else:
+                    chosen_thread, fallback, status = _codex_thread(desk, thread)
                 if status != "DISPATCH":
                     result = DeliverResult(False, "codex", status, (), "")
                 else:
@@ -1461,7 +1507,8 @@ def _deliver_unlocked(
                     # Rule 6: retry once on rc != 0 with newest verified thread other than failed one
                     # U147-D: a letter to the designated user desk is never re-sent to a guessed relay window.
                     if not result.delivered and result.reason.startswith("DELIVERY_FAILED:rc=") \
-                            and chosen_thread != read_user_desk(desk, "codex"):
+                            and chosen_thread != read_user_desk(desk, "codex") \
+                            and not _is_companion_card(card):  # U331-FF: never re-send a companion to a guessed window
                         alt_thread = _newest_verified_thread(desk, _codex_sessions(), exclude_threads={chosen_thread})
                         if alt_thread:
                             fallback = {"given": chosen_thread, "used": alt_thread, "why": "send_failed"}
@@ -1676,6 +1723,10 @@ def _deliver_impl(
     # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = thread or None
+    companion_route = False  # U331-A: set only when the card branch below chose the window
+    window_fallback: dict[str, str] = {}  # U331-F: card window swapped for the verified desk before publishing
+    agy_card = ""  # U331-A: the companion card whose window the headless Antigravity turn must resume (not the primary)
+    window_card = card  # U331-FF: the card whose window lease/failover record the turn uses
     if lane and not window:
         from v7_harness.coord.process_lanes import (
             _resolve_codex_lane_thread,
@@ -1695,7 +1746,17 @@ def _deliver_impl(
         if target == "codex":
             codex_lane_tid = _resolve_codex_lane_thread(desk, candidate_wid or "")
             if not codex_lane_tid:
-                queued_for, target, window = "codex", None, None
+                # U333 (RC-1): unbound lane mail (`not card and not thread`) may fall back ONLY to an
+                # explicitly designated Codex desk (`user_desk_state == "OK"`) verified as DISPATCH; never
+                # bootstrap `_newest_verified_thread()` and never silently reroute bound card/session mail.
+                if not card and not thread:
+                    desk_state, designated = user_desk_state(desk, "codex")
+                    if desk_state == "OK" and designated and _verify_thread(desk, _codex_sessions(), designated) == "DISPATCH":
+                        window = designated
+                    else:
+                        queued_for, target, window = "codex", None, None
+                else:
+                    queued_for, target, window = "codex", None, None
             else:
                 window = codex_lane_tid
         else:
@@ -1703,11 +1764,24 @@ def _deliver_impl(
     elif card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
-    token = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
-    if token:
+        companion_route = True
+        if target == "codex" and window:
+            # U331-F (Codex P1, relay_5a9158db): resolve a bad card window BEFORE the envelope is built, so the
+            # published letter, its digest and the dispatch all name the same (verified desk) recipient.
+            _bad = _verify_thread(desk, _codex_sessions(), window)
+            if _bad != "DISPATCH":
+                companion_route = False  # never open a companion window over a bad card window
+                _desk_thread = read_user_desk(desk, "codex")
+                if _desk_thread and _verify_thread(desk, _codex_sessions(), _desk_thread) == "DISPATCH":
+                    _release_stale_card_window(desk, card, window, _bad)
+                    window_fallback = {"given": window, "used": _desk_thread, "why": f"card_window_{_bad}"}
+                    window = _desk_thread
+                # else: keep the entry and the window; the dispatch below fails closed (never a guessed thread)
+    verdict_tag = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
+    if verdict_tag:
         # U188 (Codex design verdict relay_61456b14): text never becomes authoritative and NOTICE never wakes, so the
         # contradiction fails visibly before any publish; the sender resends with the structured field.
-        diag = (f"UNSTRUCTURED_VERDICT: the first line reads as verdict {token!r} but carries no wake field; resend "
+        diag = (f"UNSTRUCTURED_VERDICT: the first line reads as verdict {verdict_tag!r} but carries no wake field; resend "
                 "with --verdict <PASS|REVISE|FAIL|APPROVE|PIVOT|REWORK> (or --wake-class ACTIONABLE --delta), or "
                 "mark a status echo ACK_ONLY")
         return DeliverResult(False, target or "mailbox_only", "UNSTRUCTURED_VERDICT", (), diag, message_id, digest)
@@ -1732,6 +1806,24 @@ def _deliver_impl(
         cls, diag = classify(_payload(actor, message, digest, requested_target, card, window, **explicit))
         if cls == "INVALID":
             return DeliverResult(False, target or "mailbox_only", "INVALID_INTENT", (), diag, message_id, digest)
+    if (card and companion_route and target in ("codex", "antigravity") and not audit
+            and os.environ.get("UAOS_COMPANION_WINDOWS", "1") != "0"
+            and explicit.get("wake_class") not in ("NOTICE", "ACK_ONLY")
+            and explicit.get("verdict_requested") is not False
+            and not _declines_turn(message, explicit)):  # Codex REVISE: a body-only `ACK_ONLY:` marker launches nothing
+        # U331-A: only a letter that passed validation and is a real collaboration letter (never an explicit NOTICE,
+        # ACK_ONLY, verdict_requested=False, or a refused/invalid intent: those launch nothing) opens or reuses the
+        # receiver's companion window
+        # `<card>.<tool>` and goes there. No nav record, a QUEUED companion (3-cap) or a refused launch keep the old route.
+        from v7_harness.coord import card_nav
+        companion = card_nav.ensure_companion_window(desk, card, target, actor, runner=runner)
+        if companion.get("window"):
+            window = companion["window"]
+            window_card = str(companion.get("companion") or card)  # U331-FF: leases/failover live on <ID>.<tool>
+            if target == "antigravity":
+                agy_card = str(companion.get("companion") or "")
+            digest = _digest(actor, message, card, window, requested_target, id_fields)
+            message_id = "relay_" + digest[:32]
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     if _track is not None:
@@ -1780,14 +1872,14 @@ def _deliver_impl(
             if not agy_wait and runner is None:
                 # U296 (B11): the CLI returns right after PUBLISHED; the answer arrives later as a normal letter.
                 # An injected runner (tests) stays synchronous: a detached process cannot call it.
-                started = dispatch_detached(desk, message_id=message_id, actor=actor, message=message, card=card,
+                started = dispatch_detached(desk, message_id=message_id, actor=actor, message=message, card=agy_card or card,
                                             audit=audit)
                 if started:
                     return DeliverResult(False, "antigravity", "PUBLISHED", (),
                                          f"AGY_DETACHED answer arrives as a letter (id {message_id})", message_id, digest)
             # U199: a verdict request is the commit-gate audit; its answer is never held back by the daily cap
             row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run,
-                           card=card, audit=audit)
+                           card=agy_card or card, audit=audit)
             detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
             unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
@@ -1827,8 +1919,9 @@ def _deliver_impl(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", lane=lane, identity_digest=digest,
-                                 wants_turn=wants_turn or wake_requested)
+                                 card=window_card, window=window or "", lane=lane, identity_digest=digest,
+                                 wants_turn=wants_turn or wake_requested, window_fallback=window_fallback,
+                                 agy_card=agy_card)
     finally:
         _release_guard(guard, owner)
 

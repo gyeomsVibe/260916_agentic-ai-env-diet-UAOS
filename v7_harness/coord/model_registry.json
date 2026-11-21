@@ -1,0 +1,138 @@
+{
+  "schema": "uaos-model-registry-v1",
+  "why": "U327: model ids, roles, thinking levels and rollout state live here, not in .py files, so a model release is a data edit. Day-0 content reproduces the U304-B lineup that was hard-coded in helper_thinking_router.py.",
+  "source_allowlist": ["anthropic.com", "claude.com", "openai.com", "google.dev", "ollama.com"],
+  "source_allowlist_why": "Vendor domains by host suffix (https only). claude.com is added beside anthropic.com because Anthropic's current docs live at platform.claude.com (found by the Stage 0 search).",
+  "field_notes": "released_at: ISO date or null (null = release date not verified; set it from the vendor page when known). relative_cost: seed multiple of the cheapest paid helper (=1; Ollama=0) used to weight token use so a primary/helper mix does not skew capacity; replace by the measured price table. status: active|deprecated (deprecated is skipped with no code change).",
+  "calculator_model_pin": {
+    "why": "Day-0 equality: the Ollama calculator stays qwen2.5-coder:7b (U304-B). It is also an ordinary entry below, so a better local model can be rolled in by lifecycle."
+  },
+  "task_profiles": {
+    "architecture": {
+      "weights": {"reasoning": 0.6, "accuracy": 0.3, "cost": 0.1},
+      "thinking": "High",
+      "prefer_local": false,
+      "why": "Architecture / hard reasoning: a wrong design costs more than tokens, so reasoning .6 accuracy .3 cost .1 (U327 order from 윤겸스)."
+    },
+    "bulk_summary": {
+      "weights": {"speed": 0.5, "cost": 0.4, "accuracy": 0.1},
+      "thinking": "Low",
+      "prefer_local": true,
+      "why": "Bulk summary / extraction is mechanical: speed .5 cost .4 accuracy .1, and Ollama is preferred because it costs 0 paid tokens (token-thrift default)."
+    },
+    "code_gen": {
+      "weights": {"coding": 0.7, "context": 0.3},
+      "thinking": "Medium",
+      "prefer_local": false,
+      "why": "Code generation / debugging: coding .7 context .3 (U327 order)."
+    },
+    "realtime": {
+      "weights": {"latency": 0.6, "stability": 0.3, "cost": 0.1},
+      "thinking": "Low",
+      "prefer_local": false,
+      "why": "Real-time work is judged by latency .6 stability .3 cost .1 (U327 order)."
+    }
+  },
+  "nature_aliases": {
+    "ARCH_DESIGN": "architecture",
+    "VERIFY_AUDIT": "architecture",
+    "IMPL_CODE": "code_gen",
+    "MERGE_RELEASE": "realtime",
+    "RECOVERY_OPS": "realtime",
+    "design": "architecture",
+    "reasoning": "architecture",
+    "summary": "bulk_summary",
+    "extraction": "bulk_summary",
+    "code": "code_gen",
+    "debug": "code_gen",
+    "latency": "realtime"
+  },
+  "seat_profiles": {
+    "primary": "architecture",
+    "helper": "code_gen",
+    "calculator": "bulk_summary",
+    "why": "Which profile ranks the candidates for each lineup seat when helper_thinking_router builds its day-0-compatible lineup."
+  },
+  "rollout_policy": {
+    "steps_pct": [5, 20, 50, 100],
+    "shadow_traffic_pct": 5,
+    "min_samples": 20,
+    "error_spike_abs": 0.05,
+    "timeout_rate_max": 0.05,
+    "quality_drop_abs": 0.02,
+    "quality_gain_rel": 0.10,
+    "pressure_used_pct": 70.0,
+    "bootstrap_card_cap_tokens": 12000,
+    "bootstrap_why": "A fresh tool has no quota receipt yet, so failing closed would stop it from ever getting one. BOOTSTRAP admits paid work only while health and auth are OK, no receipt exists, and the card's relative_cost-weighted usage stays under this cap (12,000 = the one helper preflight cap already used by U271/U304-B).",
+    "why": "Shadow ~5% then canary 5->20->50->100. Promote when quality >= old and cost <= old, or quality >= old +10%. Roll back when errors exceed old by 5 points, timeouts exceed 5%, or quality falls 2 points below old. 20 samples is the smallest set where one failure is 5%, the spike threshold. 70% matches the existing high_pressure cut in helper_thinking_router."
+  },
+  "models": [
+    {
+      "tool": "codex", "model_id": "gpt-6.1-sol", "released_at": null, "relative_cost": 8,"display": "GPT-6.1 Sol",
+      "roles": ["primary"], "thinking_levels": ["Low", "Medium", "High"], "thinking_param_name": "reasoning_effort",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": true,
+      "capabilities": {"reasoning": 0.90, "accuracy": 0.90, "cost": 0.40, "speed": 0.60, "coding": 0.92, "context": 0.85, "latency": 0.60, "stability": 0.90},
+      "source_url": "https://developers.openai.com/api/docs/guides/reasoning",
+      "why": "Codex main model (~/.codex/config.toml, 1,481 calls in 7 days, docs/107). Capability scores are seeds to be replaced by the usage ledger."
+    },
+    {
+      "tool": "codex", "model_id": "gpt-6-luna", "released_at": null, "relative_cost": 1,"display": "GPT-6 Luna",
+      "roles": ["helper"], "thinking_levels": ["Low", "Medium", "High"], "thinking_param_name": "reasoning_effort",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": true,
+      "helper_telemetry_lane": "luna", "helper_subagent": "uaos-luna-worker",
+      "capabilities": {"reasoning": 0.60, "accuracy": 0.70, "cost": 0.90, "speed": 0.85, "coding": 0.75, "context": 0.70, "latency": 0.85, "stability": 0.85},
+      "source_url": "https://developers.openai.com/codex/models",
+      "why": "Codex helper: 0.032 credits/call vs 0.253 for GPT-6.1 Terra on the same token mix (docs/107 table 2)."
+    },
+    {
+      "tool": "codex", "model_id": "gpt-6-astra", "released_at": null, "relative_cost": 20,"display": "GPT-6 Astra",
+      "roles": ["primary"], "keypoint_only": true, "thinking_levels": ["Low", "Medium", "High"], "thinking_param_name": "reasoning_effort",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": true,
+      "capabilities": {"reasoning": 0.98, "accuracy": 0.97, "cost": 0.05, "speed": 0.30, "coding": 0.95, "context": 0.90, "latency": 0.30, "stability": 0.90},
+      "source_url": "https://developers.openai.com/codex/models",
+      "why": "U257: Astra is reserved for CODEX_EXCLUSIVE_KEYPOINTS on the $20 Plus plan (5-45 messages per 5 h); keypoint_only keeps it out of ordinary argmax."
+    },
+    {
+      "tool": "antigravity", "model_id": "gemini-4-argon", "released_at": null, "relative_cost": 8,"display": "Gemini 4 Argon",
+      "roles": ["primary"], "thinking_levels": ["Low", "Medium", "High"], "thinking_param_name": "thinking_level",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": true,
+      "capabilities": {"reasoning": 0.88, "accuracy": 0.88, "cost": 0.45, "speed": 0.60, "coding": 0.88, "context": 0.95, "latency": 0.60, "stability": 0.85},
+      "source_url": "https://ai.google.dev/gemini-api/docs/generate-content/thinking",
+      "why": "Antigravity main model per U304-B lineup. Seed capability scores."
+    },
+    {
+      "tool": "antigravity", "model_id": "gemini-3.5-flash-lite", "released_at": null, "relative_cost": 1,"display": "Gemini 3.5 Flash-Lite",
+      "roles": ["helper"], "thinking_levels": ["Low", "Medium", "High"], "thinking_param_name": "thinking_level",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": true,
+      "helper_telemetry_lane": "flash", "helper_subagent": "uaos-flash-worker",
+      "capabilities": {"reasoning": 0.55, "accuracy": 0.68, "cost": 0.92, "speed": 0.90, "coding": 0.72, "context": 0.85, "latency": 0.90, "stability": 0.85},
+      "source_url": "https://ai.google.dev/gemini-api/docs/models",
+      "why": "Antigravity helper: SWE-Bench Pro 54.2 % / Terminal-bench 54.0 % at $0.30/$2.50 vs 3.8 Flash at $0.75/$3.75 (docs/107 table 3)."
+    },
+    {
+      "tool": "claude", "model_id": "claude-opus-5-5", "released_at": null, "relative_cost": 10,"display": "Claude Opus 5.5",
+      "roles": ["primary"], "thinking_levels": ["Low", "Medium", "High"], "thinking_param_name": "effort",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": true,
+      "capabilities": {"reasoning": 0.92, "accuracy": 0.92, "cost": 0.30, "speed": 0.50, "coding": 0.93, "context": 0.85, "latency": 0.50, "stability": 0.92},
+      "source_url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "why": "Claude Code main model per U304-B lineup. Seed capability scores."
+    },
+    {
+      "tool": "claude", "model_id": "claude-haiku-5-5", "released_at": null, "relative_cost": 1,"display": "Claude Haiku 5.5",
+      "roles": ["helper"], "thinking_levels": ["Low", "Medium", "High"], "thinking_param_name": "effort",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": true,
+      "helper_telemetry_lane": "haiku", "helper_subagent": "uaos-haiku-worker",
+      "capabilities": {"reasoning": 0.58, "accuracy": 0.70, "cost": 0.88, "speed": 0.90, "coding": 0.74, "context": 0.75, "latency": 0.90, "stability": 0.90},
+      "source_url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "why": "Claude helper (Haiku lane cap 12,000 tokens, U271). Seed capability scores."
+    },
+    {
+      "tool": "ollama", "model_id": "qwen2.5-coder:7b", "released_at": null, "relative_cost": 0,"display": "Qwen2.5-Coder 7B",
+      "roles": ["calculator"], "thinking_levels": [], "thinking_param_name": "",
+      "status": "active", "lifecycle": "active", "traffic_pct": 100, "paid": false,
+      "capabilities": {"reasoning": 0.25, "accuracy": 0.45, "cost": 1.00, "speed": 0.70, "coding": 0.55, "context": 0.35, "latency": 0.75, "stability": 0.80},
+      "source_url": "https://ollama.com/library/qwen2.5-coder",
+      "why": "Local unagentic calculator (0 paid tokens), pinned since U304-B. Seed capability scores."
+    }
+  ]
+}

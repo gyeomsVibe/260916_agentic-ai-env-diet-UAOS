@@ -1231,6 +1231,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
     p_coord_route.set_defaults(func=cmd_coord_route)
+    # U332: the user desk is a router; one verbatim directive in, cards out (v7_harness/coord/desk_router.py).
+    p_coord_rd = p_coord_subs.add_parser("route-directive", help="U332: capture a user directive verbatim, claim it, split it into cards and route them")
+    p_coord_rd.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_rd.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"], help="The desk (tool) receiving the directive")
+    src = p_coord_rd.add_mutually_exclusive_group()
+    src.add_argument("--text", default=None, help="Directive text")
+    src.add_argument("--file", default=None, help="File holding the directive bytes (default: stdin)")
+    p_coord_rd.add_argument("--event-id", default="", help="Native user-event id of the desk; the same id again is a replay, never a second launch")
+    p_coord_rd.add_argument("--ollama", action="store_true", help="Let the local Ollama draft the concretization (falls back when down)")
+    p_coord_rd.add_argument("--audit-manual", default=None, help="Only check that this card manual links its verbatim directive")
+    p_coord_rd.add_argument("--status", action="store_true", help="Print the changed-items status (max 3 lines) and exit")
+    p_coord_rd.set_defaults(func=cmd_coord_route_directive)
     p_coord_part = p_coord_subs.add_parser("participation",
                                            help="S5: decide TRIO/DUO/SOLO/HALT before dispatch; writes the snapshot")
     p_coord_part.add_argument("--project", default=".", help="Project root (default: .)")
@@ -1840,7 +1852,8 @@ def cmd_card_audit(args: argparse.Namespace) -> int:
 
     try:
         result = card_pipeline.audit(_card_desk(args), args.card, code_paths=args.code_path or (),
-                                     run_dirs=discover(Path(args.project)))
+                                     run_dirs=discover(Path(args.project)),
+                                     test_roots=[Path(args.project)])
     except ValueError as exc:
         _print_json({"ok": False, "error": str(exc)})
         return 2
@@ -2355,7 +2368,16 @@ def cmd_coord_watch(args: argparse.Namespace) -> int:
     if found is None:
         print(json.dumps({"ok": False, "reason": "TIMEOUT", "targets": args.target}, ensure_ascii=False))
         return 3
-    print(json.dumps({"ok": True, "reason": "NEW_LETTER", **found}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "reason": "NEW_LETTER", **found}, ensure_ascii=False), flush=True)
+    if found.get("reason") == "REQUEST_ANSWERED":
+        # WATCH-REPLAY rev4: the producer receipt. Only after the wake line was written and flushed is replay held for
+        # the claim window; a broken pipe above raises first, leaving the claim reclaimable. A flush is not a read, so
+        # the request stays open for bounded recovery until the requester's `coord ack`. Fenced to this generation.
+        from .coord import requests as _requests
+
+        generation = found.get("wake_generation")
+        _requests.mark_surfaced(Path(args.project), str(found["request_id"]), pid=os.getpid(),
+                                generation=generation if isinstance(generation, int) else None)
     return 0
 
 
@@ -2596,6 +2618,37 @@ def cmd_coord_route(args: argparse.Namespace) -> int:
     return 0 if not authority.startswith("BLOCKED_") else 1
 
 
+def cmd_coord_route_directive(args: argparse.Namespace) -> int:
+    """U332: exit 0 routed/quick/peer, 1 when no card could be given a paid route (quota UNKNOWN or no active tool), 2 bad input."""
+    import time
+    from .coord import desk_router, presence
+    from .coord.participation import admissions
+    from .coord.quota_sources import measured_accounts
+
+    project = Path(args.project)
+    if args.audit_manual:
+        problems = desk_router.manual_problems(project, Path(args.audit_manual).read_text(encoding="utf-8"))
+        print(json.dumps({"ok": not problems, "problems": problems}, ensure_ascii=False))
+        return 0 if not problems else 2
+    if args.status:
+        print("\n".join(desk_router.status_lines(project)) or "- no change")
+        return 0
+    raw = args.text.encode("utf-8") if args.text is not None else (Path(args.file).read_bytes() if args.file else sys.stdin.buffer.read())
+    if not raw.strip():
+        print(json.dumps({"error": "empty directive"}, ensure_ascii=False))
+        return 2
+    states = {t: presence.read(project, t)["state"] for t in presence.TOOLS}
+    try:
+        admitted = admissions(measured_accounts(Path.home(), time.time()))
+    except Exception:
+        admitted = None  # unknown quota: assign_tool treats it as no paid route
+    plan = desk_router.route_directive(project, raw, tool=args.tool, states=states, admitted=admitted,
+                                       drafter=desk_router.default_drafter if args.ollama else None, event_id=args.event_id)
+    plan.pop("concrete", None)
+    print(json.dumps(plan, ensure_ascii=False))
+    return 1 if any(c["status"] == "BLOCKED" for c in plan["cards"]) else 0
+
+
 def cmd_coord_participation(args: argparse.Namespace) -> int:
     """S5: decide TRIO/DUO/SOLO/HALT from presence + quota admission and write the desk's boot snapshot."""
     from .coord.hook_context import shared_desk
@@ -2796,10 +2849,23 @@ def cmd_coord_ack(args: argparse.Namespace) -> int:
         consumer = (os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
                     or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("ANTIGRAVITY_SESSION_ID")
                     or consumer)
+    # WATCH-REPLAY: the exact consumer confirmation. When the caller IS the session the verdict request is bound to,
+    # the ack also settles the request in the registry (surfaced_at only proves the producer flushed). The caller's
+    # own resolved identity is passed, never the stored owner, so a peer cannot impersonate it. A mailbox letter with
+    # the same relay id is still acked below, so a recipient's ack is never hijacked.
+    from .coord import requests as _requests
+
+    settled = ""
+    row = _requests.get(Path(args.project), args.message_id) if str(args.message_id).startswith("relay_") else None
+    if row is not None and row.get("requester_session") and str(row["requester_session"]) == str(consumer):
+        try:
+            settled = _requests.ack(Path(args.project), args.message_id, str(consumer))
+        except _requests.RequestError:
+            settled = ""  # not answered yet or refused: the mailbox ack below still runs
     claim = box.claim(args.message_id, consumer_id=consumer)
     if claim is None:
-        already = (box.ack_dir / f"{args.message_id}.json").is_file()
-        print(json.dumps({"ok": already, "id": args.message_id,
+        already = (box.ack_dir / f"{args.message_id}.json").is_file() or bool(settled)
+        print(json.dumps({"ok": already, "id": args.message_id, "request": settled or None,
                           "error": None if already else "NOT_IN_INBOX"}, ensure_ascii=False))
         return 0 if already else 1
     try:
@@ -3070,7 +3136,7 @@ def cmd_rsi_ship(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": 'CARD_AUDIT: name the card in the packet ("card": "U##")'})
         return 1
     audit = card_pipeline.audit(Path(shared_desk(project)), card, code_paths=packet.get("changed_files", []),
-                                run_dirs=discover(project))
+                                run_dirs=discover(project), test_roots=[Path(project)])
     if not audit["ok"]:
         _print_json({"ok": False, "error": f"CARD_AUDIT: {card} has no {', '.join(audit['missing'])} evidence",
                      "audit": audit})
@@ -3126,7 +3192,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "sentinel", "inbox", "ack", "archive", "window", "lanes"})
+_DESK_COMMANDS = frozenset({"presence", "watch", "route", "route-directive", "sentinel", "inbox", "ack", "archive", "window", "lanes"})
 
 
 def cmd_coord_library(args: argparse.Namespace) -> int:

@@ -4,6 +4,7 @@ call and an Antigravity audit or review for the card, or a verified skip row. Th
 audit, so a plan without Ollama and Antigravity no longer reaches a PR (closes U130 R1-R4)."""
 
 from __future__ import annotations
+import ast
 import datetime
 import json
 import re
@@ -66,6 +67,20 @@ Output: pilot runs {card}-L<n>
 ## Stage 4 - Verify (Debugging & Final Verification)
 Workers: fixed acceptance + full suite + debugging / vaccine test; Antigravity review (pilot review --reviewer agy); Ollama local_draft
 Gate: uaos card audit --card {card} exits 0 before the PR
+
+## Failure modes (worst case first; U330 - `uaos card audit` fails if a row or its test is missing)
+Fill every row: Detection = how it is noticed, Fallback = the pre-written action (silence = abstain), Test = a test
+file/function that proves the fallback (a placeholder such as TODO, -, <...> does not count).
+| Worst case | Detection | Fallback | Test |
+|---|---|---|---|
+| peer silent / limit exhausted | | | |
+| message flood | | | |
+| wait cycle / deadlock | | | |
+| crash mid-write | | | |
+| duplicate delivery | | | |
+| stale state | | | |
+| conductor down | | | |
+| user absent | | | |
 
 ## Contract (measurable)
 
@@ -304,6 +319,132 @@ def new_manual(desk, card, title, now: float | None = None) -> dict[str, Any]:
     return {"manual": str(manual), "created": created, "started_at": started_at(desk, card)}
 
 
+# U330: design from the coldest worst case. Every card created at or after WORSTCASE_GATE_EPOCH must carry a failure-mode
+# table in its manual. Why an epoch and not a marker: a marker line could simply be deleted by the author; the card record's
+# `started_at` is written by `card new` and is not authored. Older cards (and cards with no record at all) are grandfathered:
+# they were designed before the rule existed, and failing them would block finished work. The epoch is 2026-11-21 00:00 KST
+# so cards already in flight on 2026-11-20 are not broken by the rule that was written that day.
+WORSTCASE_GATE_EPOCH = 1795186800.0
+WORSTCASE_ROWS = (
+    ("peer silent / limit exhausted", re.compile(r"silent|limit|무응답|한도", re.IGNORECASE)),
+    ("message flood", re.compile(r"flood|폭주", re.IGNORECASE)),
+    ("wait cycle / deadlock", re.compile(r"cycle|deadlock|교착|순환", re.IGNORECASE)),
+    ("crash mid-write", re.compile(r"crash|mid-write|다운|반쯤", re.IGNORECASE)),
+    ("duplicate delivery", re.compile(r"duplicate|중복", re.IGNORECASE)),
+    ("stale state", re.compile(r"stale|오래된", re.IGNORECASE)),
+    ("conductor down", re.compile(r"conductor|지휘자", re.IGNORECASE)),
+    ("user absent", re.compile(r"user absent|absent user|사용자 부재", re.IGNORECASE)),
+)
+_PLACEHOLDER_RE = re.compile(r"^(?:|-+|todo|tbd|n/?a|none|<[^>]*>|\.+)$", re.IGNORECASE)
+
+
+def worstcase_required(desk, card) -> bool:
+    started = started_at(desk, card)
+    return started is not None and started >= WORSTCASE_GATE_EPOCH
+
+
+NA_RE = re.compile(r"^N/A\s*:\s*(.+)$", re.IGNORECASE)  # "NA:" or "N A:" is not the marker
+NA_REASON_MIN = 12  # a reason shorter than a phrase ("none", "not needed") is a placeholder in disguise
+
+
+def _defines(tree: ast.AST, names: list[str]) -> bool:
+    """True when `names` ([func] or [Class, method]) is really defined in the parsed module (not a comment or a substring)."""
+    body = getattr(tree, "body", [])
+    for i, name in enumerate(names):
+        node = next((n for n in body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                     and n.name == name), None)
+        if node is None:
+            return False
+        if i == len(names) - 1:
+            return True
+        if not isinstance(node, ast.ClassDef):
+            return False
+        body = node.body
+    return False
+
+
+def _one_ref_problem(ref: str, roots: list[Path]) -> str | None:
+    path_text, sep, name = ref.partition("::")
+    path_text = path_text.strip()
+    names = [n.strip() for n in name.split("::")] if sep else []
+    if sep and (not all(names) or len(names) > 2):
+        return f"bad test name: {ref}"
+    rel = Path(path_text)
+    if not path_text or rel.is_absolute() or ".." in rel.parts or rel.suffix != ".py":
+        return f"test path must be a relative .py file inside the repo: {ref}"
+    if rel.parts[0] != "tests" and not rel.name.startswith("test_"):
+        return f"not a test file (tests/ or test_*.py): {ref}"
+    last_err = None
+    for root in roots:  # a root that has the file but not the test (e.g. the main checkout) must not hide a root that does
+        base = Path(root).resolve()
+        candidate = (base / rel).resolve()
+        if candidate.is_file() and candidate.is_relative_to(base):
+            if not names:
+                return None
+            try:
+                tree = ast.parse(candidate.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, SyntaxError, ValueError):
+                last_err = f"test file unreadable: {ref}"
+                continue
+            if _defines(tree, names):
+                return None
+            last_err = f"test not defined in file: {ref}"
+    return last_err or f"test target not found: {ref}"
+
+
+def _test_ref_problem(cell: str, roots: Iterable[Path]) -> str | None:
+    """None when `cell` is a reasoned `N/A: <reason>` or every referenced test target exists and is really defined."""
+    na = NA_RE.match(cell)
+    if na:
+        reason = na.group(1).strip()
+        return None if len(reason) >= NA_REASON_MIN and not _PLACEHOLDER_RE.fullmatch(reason) else "N/A without a real reason"
+    refs = [r.strip().strip("`").strip() for r in re.split(r"[;,]", cell)]
+    refs = [r for r in refs if r]
+    if not refs:
+        return "no test reference"
+    roots = list(roots)
+    for ref in refs:
+        bad = _one_ref_problem(ref, roots)
+        if bad:
+            return bad
+    return None
+
+
+def worstcase_problems(text: str, test_roots: Iterable[Path] = ()) -> list[str]:
+    """Rows of the `## Failure modes` table that are missing or unfilled (detection, fallback, test all non-placeholder)."""
+    heading = re.search(r"^##\s*Failure modes\b[^\n]*$", text, re.MULTILINE | re.IGNORECASE)
+    if heading is None:
+        return ["failure-mode table missing"]
+    section = text[heading.end():]
+    following = re.search(r"^##\s", section, re.MULTILINE)
+    if following is not None:
+        section = section[:following.start()]
+    rows = []
+    for line in section.splitlines():
+        line = line.strip()
+        if line.startswith("|") and line.endswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) >= 4 and not set(cells[0]) <= set("-: "):
+                rows.append(cells)
+    roots = list(test_roots)
+    used: set[int] = set()
+    problems = []
+    for name, pattern in WORSTCASE_ROWS:
+        hit = next((r for r in rows if id(r) not in used and pattern.search(r[0])), None)
+        if hit is None:
+            problems.append(f"row missing: {name}")
+            continue
+        used.add(id(hit))  # one row cannot satisfy two worst cases
+        for label, cell in zip(("detection", "fallback", "test"), hit[1:4]):
+            if _PLACEHOLDER_RE.fullmatch(cell):
+                problems.append(f"{name}: {label} empty")
+            elif label == "test":
+                bad = _test_ref_problem(cell, roots)
+                if bad:
+                    problems.append(f"{name}: {bad}")
+    return problems
+
+
 def missing_slots(text: str) -> list[str]:
     missing = []
     for n, name in SLOTS:
@@ -538,7 +679,8 @@ def skip(desk, card, slot, reason, evidence, probe=None, agy_state=None) -> dict
     return {"ok": True, "card": card, "slot": slot, "reason": reason}
 
 
-def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] | None = None) -> dict[str, Any]:
+def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] | None = None,
+          test_roots: Iterable[Path] = ()) -> dict[str, Any]:
     card = _check(card)
     desk = Path(desk)
     mine = [r for r in _jsonl(_ledger(desk)) if str(r.get("work_id", "")).split("-")[0] == card]
@@ -593,7 +735,21 @@ def audit(desk, card, code_paths: Iterable[str] = (), run_dirs: Iterable[Path] |
         if found is not None:
             found.append(f"skip {reason}: {skip.get('evidence')}")
     missing = [slot for slot, found in (("ollama", ollama_evidence), ("agy", agy_evidence)) if not found]
-    return {"card": card, "ok": not missing, "ollama": ollama_evidence, "agy": agy_evidence, "missing": missing}
+    result: dict[str, Any] = {"card": card, "ollama": ollama_evidence, "agy": agy_evidence, "missing": missing}
+    if worstcase_required(desk, card):  # U330: no table / unfilled row / no test reference -> FAIL with the reason
+        try:
+            manual_text = (desk / ".work" / "cards" / f"{card}_manual.md").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            manual_text = ""
+        problems = worstcase_problems(manual_text, [*test_roots, desk]) if manual_text else ["manual missing: failure-mode table required"]
+        result["worstcase"] = {"ok": not problems, "problems": problems}
+        if problems:
+            missing.append("worstcase: " + "; ".join(problems))
+    else:
+        result["worstcase"] = {"ok": True, "grandfathered": True,
+                               "reason": "card created before U330 gate epoch (or no creation record)"}
+    result["ok"] = not missing
+    return result
 
 
 # U221: "done" is earned from the remote PR and the installed runtime, never from a label or a local ref.

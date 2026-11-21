@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import ingress
+from . import ingress, nowait
 from .merge_route import MERGERS
 from .presence import TOOLS
 
@@ -31,6 +31,12 @@ MAX_WAIT_S = 1800
 # U203: a ballot open for two vote windows (a vote expires after MAX_WAIT_S) without every ACTIVE tool is held
 # by an idle tool, not a deciding one; its missing vote no longer holds the reroute (Raft-style election timeout).
 QUORUM_TIMEOUT_S = 2 * MAX_WAIT_S
+# U329: silence is an abstention. A tool that is ACTIVE on the desk but whose presence signal is older than
+# FRESH_SIGNAL_S (e.g. an Antigravity auto-answer that cannot run tools, Codex marked ACTIVE yet idle 700 h) is not
+# awaited once the ballot has been open AGREEMENT_DEADLINE_S (the content-reply deadline, spec 9.4-1: one LLM turn is
+# tens of seconds to minutes). A tool with a fresh signal, or with no observation time on record, is still awaited
+# until QUORUM_TIMEOUT_S, so every earlier rule (U166, U203) holds unchanged for it.
+AGREEMENT_DEADLINE_S = nowait.REPLY_DEADLINE_S
 # Who can do each kind of step, in order of preference. merge: 윤겸스's order (merge_route.MERGERS). verdict: Codex
 # conducts, Antigravity is the independent judge when it is away. letter: any peer that can read and act on it.
 # implement: Claude is the default implementer (global rules), then Antigravity, then Codex.
@@ -260,6 +266,12 @@ def _declared(value: Any) -> float | None:
     return None
 
 
+def _silent(record: dict[str, Any] | None, now: float) -> bool:
+    """ACTIVE on the desk but no presence beat within FRESH_SIGNAL_S. Unknown observation time = not provably silent."""
+    age = nowait.signal_age(record, now)
+    return age is not None and age > nowait.FRESH_SIGNAL_S
+
+
 def route(wait: dict[str, Any], desk: dict[str, dict[str, Any]]) -> list[str]:
     """Capable ACTIVE tools other than the one waited on; a verdict never goes to its own author."""
     out = []
@@ -340,7 +352,8 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
             if age < ingress.limit(wait, record, moment, max_wait_s) or (
                     isinstance(done, dict) and done.get("since") == wait["since"]):
                 continue
-            owners = route(wait, desk)
+            # U329: a silent ACTIVE tool takes a step last, so a live one is preferred as the new owner.
+            owners = sorted(route(wait, desk), key=lambda t: _silent(desk.get(t), moment))
             entry = {"item": wait["item"], "kind": wait["kind"], "waiting_on": wait["waiting_on"],
                      "age_s": int(age), "route": owners, "author": wait["author"], "since": wait["since"]}
             if not owners:
@@ -366,8 +379,19 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
                           "present": present})
             result["stalled"].append(entry)
             timed_out = moment - float(ballot["opened"]) >= QUORUM_TIMEOUT_S
-            if schedule is not None and present and (set(present) <= set(voters) or timed_out):
+            # U329: after the agreement deadline only tools that are alive must agree; silent ones abstain.
+            # Silent means already quiet when the ballot opened AND still quiet now: a tool that was beating when the
+            # vote began is only slow, and keeps its seat until QUORUM_TIMEOUT_S (U166/U203 unchanged for it).
+            silent = [t for t in present if t not in voters and _silent(desk.get(t), moment)
+                      and _silent(desk.get(t), float(ballot["opened"]))]
+            deadline_passed = moment - float(ballot["opened"]) >= AGREEMENT_DEADLINE_S
+            quorum = set(present) <= set(voters) or (deadline_passed and bool(set(voters) & set(present)) and set(present) - set(silent) <= set(voters))
+            entry["abstained"] = silent if deadline_passed else []
+            if schedule is not None and present and (quorum or timed_out):
                 note = "U166 reroute: waiting is a failure"
+                agreed = [t for t in present if t in voters]  # a live tool that did not vote (timed_out) did not agree
+                if entry["abstained"]:  # U329: decided without the silent tools; they re-review on return
+                    note += f" (U329: {','.join(entry['abstained'])} silent = abstained; re-review)"
                 original = next((p for p in schedule.get("phases") or [] if isinstance(p, dict)
                                  and wait["item"] == f"phase:{p.get('phase_id')}"), None)
                 if original is not None:
@@ -380,18 +404,18 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
                     # cannot ack
                     original.pop("owner_session", None)
                     original.update({"state": "READY", "owner_tool": owners[0], "action": entry["action"],
-                                     "agreed_by": present, "note": note})
+                                     "agreed_by": agreed, "note": note})
                     phase_id = str(original["phase_id"])
                 else:
                     phase_id = _item_id(wait["item"])
                     schedule.setdefault("phases", []).append(
                         {"phase_id": phase_id, "state": "READY", "owner_tool": owners[0], "depends_on": [],
                          "source": wait["item"], "kind": wait["kind"], "action": entry["action"],
-                         "agreed_by": present, "note": note})
+                         "agreed_by": agreed, "note": note})
                 adopted[wait["item"]] = {"phase_id": phase_id, "owner": owners[0], "at": moment,
                                          "since": wait["since"]}
                 result["adopted"].append({"phase_id": phase_id, "source": wait["item"], "owner_tool": owners[0],
-                                          "agreed_by": present})
+                                          "agreed_by": agreed})
                 changed_schedule = True
         if changed_schedule:
             _write_json(project / SCHEDULE, schedule)

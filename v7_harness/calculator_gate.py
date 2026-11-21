@@ -266,7 +266,8 @@ def card_errors(message: str, new_paths: list[str], desk: Path, run_dirs, branch
     card = card_pipeline.card_of(message, _current_branch() if branch is None else branch)
     if card is None:
         return ["CARD_AUDIT: name the card with a `Card: U##` line (or commit on a u<digits> branch)"]
-    result = card_pipeline.audit(desk, card, code_paths=new_paths, run_dirs=run_dirs)
+    result = card_pipeline.audit(desk, card, code_paths=new_paths, run_dirs=run_dirs,
+                                 test_roots=[Path(".")])  # the committing worktree holds the new tests, not the shared desk
     return [f"CARD_AUDIT: {card} has no {slot} evidence; use it, then `uaos card claim`, or `uaos card skip --card "
             f"{card} --slot {slot}`" for slot in result["missing"]]
 
