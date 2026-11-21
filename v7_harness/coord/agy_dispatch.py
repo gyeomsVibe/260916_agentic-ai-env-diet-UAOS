@@ -43,7 +43,7 @@ REFUSED_REASONS = ("UNSTRUCTURED_VERDICT", "INVALID_INTENT")
 REPLAY_SCHEMA = "u193-agy-reply-v1"
 
 
-def _reply_tags(reply: str, text: str, actor: str, message_id: str) -> dict[str, str]:
+def _reply_tags(reply: str, text: str, actor: str, message_id: str, *, audit: bool = False) -> dict[str, str]:
     """U193: structured fields for a reply. A verdict token anywhere in the first line (live: "AUDIT PASS") is a
     verdict too, the same rule deliver() uses to refuse an untagged one (U188)."""
     found = VERDICT_RE.match(text)
@@ -55,6 +55,8 @@ def _reply_tags(reply: str, text: str, actor: str, message_id: str) -> dict[str,
         return {"wake_class": "ACTIONABLE", "verdict": token, "delta": f"verdict on {message_id}"}
     if token:
         return {"wake_class": "ACTIONABLE", "delta": f"{token} on {message_id}"}
+    if audit:
+        return {"wake_class": "ACTIONABLE", "delta": f"audit reply on {message_id}"}
     return {"wake_class": "NOTICE"}
 
 
@@ -328,7 +330,7 @@ def _dispatch_owned(project: Path, *, message_id: str, actor: str, message: str,
         return row
     if kept is not None:
         return _send_reply(project, now=now, message_id=message_id, actor=actor, envelope=kept, runner=runner,
-                           card=card, usage={}, conversation_id=None, reservation=None)
+                           card=card, usage={}, conversation_id=None, reservation=None, audit=audit)
     conversation = None
     lease_id = ""
     if card:  # U127 + U279 (P2-1): acquire window lease BEFORE `_reserve` so a lock timeout never burns a cap unit
@@ -385,7 +387,7 @@ def _dispatch_owned(project: Path, *, message_id: str, actor: str, message: str,
         _keep_reply(project, message_id, actor, message, envelope)
         return _send_reply(project, now=now, message_id=message_id, actor=actor, envelope=envelope, runner=runner,
                            card=card, usage=dict(outcome.usage), conversation_id=outcome.conversation_id,
-                           reservation=reservation, prior_conversation_id=conversation)
+                           reservation=reservation, prior_conversation_id=conversation, audit=audit)
     finally:
         if card and lease_id:
             from v7_harness.coord.windows import release_window_lease
@@ -398,14 +400,15 @@ def _dispatch_owned(project: Path, *, message_id: str, actor: str, message: str,
 
 def _send_reply(project: Path, *, now: float, message_id: str, actor: str, envelope: dict[str, Any], runner: Any,
                 card: str, usage: dict[str, Any], conversation_id: Any, reservation: str | None,
-                prior_conversation_id: str | None = None) -> dict[str, Any]:
+                prior_conversation_id: str | None = None, audit: bool = False) -> dict[str, Any]:
     """U193: mail one reply back. ACK and ANSWERED only when deliver() published it; a replay has no reservation."""
     text = envelope.get("response") if isinstance(envelope.get("response"), str) else json.dumps(envelope.get("structured_output"))
     reply = f"{AUTO_TAG} re {message_id}: {(text or '').strip()[:MAX_REPLY_CHARS]}"
     from v7_harness.coord.deliver import deliver
     from v7_harness.coord.mailbox import Mailbox
-    tags = _reply_tags(reply, (text or "").strip(), actor, message_id)
-    sent = deliver(Path(project), message=reply, actor="antigravity", target=actor, runner=runner, **tags)
+    tags = _reply_tags(reply, (text or "").strip(), actor, message_id, audit=audit)
+    sent = deliver(Path(project), message=reply, actor="antigravity", target=actor, runner=runner,
+                   **tags, **({"in_reply_to": message_id} if audit else {}))
     if sent.reason in REFUSED_REASONS:
         # U193 (relay_3cd721f8 lost 2026-10-15): never ACK or record ANSWERED for a reply that was not published.
         row = {"ts": now, "message_id": message_id, "state": "FAILED", "error": sent.reason, "usage": usage,

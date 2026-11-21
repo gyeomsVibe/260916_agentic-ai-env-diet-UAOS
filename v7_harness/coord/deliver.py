@@ -305,9 +305,12 @@ def _deliver_to_claude_locked(
     resume = False
     window_cwd = ""
     if lane and project_dir and not session:
-        from v7_harness.coord.process_lanes import ensure_claude_lane_session
+        from v7_harness.coord.process_lanes import ClaudeLaneStateError, ensure_claude_lane_session
 
-        session_id, session_path, resume = ensure_claude_lane_session(project_dir, lane)
+        try:
+            session_id, session_path, resume = ensure_claude_lane_session(project_dir, lane)
+        except ClaudeLaneStateError as exc:
+            return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", (), "")
     elif session:  # U115: a card window is an existing session; the default delivery session file is left alone
         from v7_harness.coord.windows import claude_session
 
@@ -365,7 +368,8 @@ def _deliver_to_claude_locked(
             cp = execute(run_argv, **kwargs)
         except (subprocess.TimeoutExpired, OSError) as exc:
             if attempt == 0:
-                if session_path and resume:
+                is_lane_session = bool(lane and session_path and session_path.name.startswith("claude-lane-"))
+                if session_path and resume and not is_lane_session:
                     session_path.unlink(missing_ok=True)
                 return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), "")
             break
@@ -374,14 +378,19 @@ def _deliver_to_claude_locked(
         stderr = getattr(cp, "stderr", "") or ""
         if attempt == 1:
             argv_list = retry_argv
-            if rc == 0 and resume:
+            is_lane_session = bool(lane and session_path and session_path.name.startswith("claude-lane-"))
+            if rc == 0 and resume and not is_lane_session:
                 session_path = None
             break
         if rc != 0 and "already in use" in (stderr + " " + stdout).lower() and session_id:
             failover_from_id = session_id
             if lane and project_dir and not session:
-                from v7_harness.coord.process_lanes import ensure_claude_lane_session
-                fresh_id, session_path, _ = ensure_claude_lane_session(project_dir, lane, rotate=True)
+                from v7_harness.coord.process_lanes import ClaudeLaneStateError, ensure_claude_lane_session
+
+                try:
+                    fresh_id, session_path, _ = ensure_claude_lane_session(project_dir, lane, rotate=True)
+                except ClaudeLaneStateError as exc:
+                    return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), stderr[:500])
             else:
                 fresh_id = str(uuid.uuid4())
             retry_argv = [
@@ -393,7 +402,8 @@ def _deliver_to_claude_locked(
         break
 
     if rc != 0:
-        if session_path and (resume or "already in use" in stderr.lower()):
+        is_lane_session = bool(lane and session_path and session_path.name.startswith("claude-lane-"))
+        if session_path and not is_lane_session and (resume or "already in use" in stderr.lower()):
             session_path.unlink(missing_ok=True)
         return DeliverResult(False, "claude", f"DELIVERY_FAILED:rc={rc}", tuple(argv_list), stderr[:500])
 
@@ -408,18 +418,26 @@ def _deliver_to_claude_locked(
         result_text = stdout[:500]
 
     if session_path and session_id:
-        prev_state: dict[str, Any] = {}
-        if session_path.is_file():
+        if lane and project_dir and session_path.name.startswith("claude-lane-"):
+            from v7_harness.coord.process_lanes import ClaudeLaneStateError, mark_claude_lane_session_ready
+
             try:
-                loaded_s = json.loads(session_path.read_text(encoding="utf-8"))
-                if isinstance(loaded_s, dict):
-                    prev_state = loaded_s
-            except (OSError, ValueError):
-                prev_state = {}
-        temporary = session_path.with_suffix(f".tmp-{uuid.uuid4().hex}")
-        temporary.write_text(json.dumps({**prev_state, "session_id": session_id, "ready": True}, sort_keys=True) + "\n",
-                             encoding="utf-8")
-        os.replace(temporary, session_path)
+                mark_claude_lane_session_ready(project_dir, lane, session_id)
+            except ClaudeLaneStateError as exc:
+                return DeliverResult(False, "claude", f"DELIVERY_FAILED:{exc}", tuple(argv_list), result_text[:500])
+        else:
+            prev_state: dict[str, Any] = {}
+            if session_path.is_file():
+                try:
+                    loaded_s = json.loads(session_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded_s, dict):
+                        prev_state = loaded_s
+                except (OSError, ValueError):
+                    prev_state = {}
+            temporary = session_path.with_suffix(f".tmp-{uuid.uuid4().hex}")
+            temporary.write_text(json.dumps({**prev_state, "session_id": session_id, "ready": True}, sort_keys=True) + "\n",
+                                 encoding="utf-8")
+            os.replace(temporary, session_path)
     elif failover_from_id and session and project_dir and session_id:
         # U279 (P2-3 fix + P2-1 hardening): when a card window UUID was "already in use" and failed over to `session_id`,
         # durably persist the fresh `window_id` / `failover_id` into `.coord/windows/<topic>.json` and `.coord/windows.json`.
@@ -1728,7 +1746,17 @@ def _deliver_impl(
         if target == "codex":
             codex_lane_tid = _resolve_codex_lane_thread(desk, candidate_wid or "")
             if not codex_lane_tid:
-                queued_for, target, window = "codex", None, None
+                # U333 (RC-1): unbound lane mail (`not card and not thread`) may fall back ONLY to an
+                # explicitly designated Codex desk (`user_desk_state == "OK"`) verified as DISPATCH; never
+                # bootstrap `_newest_verified_thread()` and never silently reroute bound card/session mail.
+                if not card and not thread:
+                    desk_state, designated = user_desk_state(desk, "codex")
+                    if desk_state == "OK" and designated and _verify_thread(desk, _codex_sessions(), designated) == "DISPATCH":
+                        window = designated
+                    else:
+                        queued_for, target, window = "codex", None, None
+                else:
+                    queued_for, target, window = "codex", None, None
             else:
                 window = codex_lane_tid
         else:
