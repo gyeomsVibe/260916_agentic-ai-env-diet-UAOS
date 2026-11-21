@@ -529,6 +529,8 @@ def _request_wake(project: Path, tools: tuple[str, ...], session: str | None, no
                 continue
             if row.get("surfaced_at") and not requests.replay_due(row, now):
                 continue  # WATCH-REPLAY rev4: flushed wake inside its claim window (or out of generations): no write
+            if requests.answer_consumed(project, row):
+                continue  # U355: the answer letter is already acked by its receiver; a re-wake would replay it
             request_id = str(row["request_id"])
             if requests.claim_wake(project, request_id, session=session or "", now=now, started_at=started_at):
                 claimed = requests.get(project, request_id) or {}

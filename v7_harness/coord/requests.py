@@ -398,6 +398,16 @@ def answered(project: Path) -> list[dict[str, Any]]:
     return [row for row in _rows(project) if row.get("state") in (ANSWER_OBSERVED, WAKE_PENDING)]
 
 
+def answer_consumed(project: Path, row: dict[str, Any]) -> bool:
+    """U355 (receipt 20261122T0450-claude-0001): the answer letter was already read and acked by its receiver
+    (`coord ack` moves it to mailbox/ack/, receiver-checked), so waking the requester again only re-sends a read
+    answer and costs a paid turn. Pure read; a coord-log answer (no relay_ id) or an unread letter is not consumed."""
+    ref = str(row.get("answer_ref") or "")
+    if not ref.startswith("relay_") or "/" in ref or "\\" in ref:
+        return False
+    return (_desk(project) / ".coord" / "mailbox" / "ack" / f"{ref}.json").is_file()
+
+
 def dispatched_open(project: Path) -> list[dict[str, Any]]:
     """OPEN requests whose letter was dispatched: the stall scan counts these as waits (U277 H2)."""
     return [row for row in _rows(project) if row.get("state") == OPEN and row.get("delivery") == "DISPATCHED"]
