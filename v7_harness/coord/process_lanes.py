@@ -26,7 +26,8 @@ import uuid
 
 from .hook_context import shared_desk
 from .mailbox import Mailbox
-from .presence import read as read_presence, read_all as read_all_presence
+from . import card_nav
+from .presence import PresenceRejected, read as read_presence, read_all as read_all_presence
 from .stream import _try_lock, _unlock
 
 TOOLS = ("codex", "claude", "antigravity")
@@ -1369,6 +1370,14 @@ def open_or_reuse_card_parallel_windows(
                 "opened_at": entry.get("opened_at"),
             }
         card_results[card] = {"card": card, "lane_id": lid, "tools": per_tool}
+        # U331: a card with a nav record gets role-scoped companion cards for the other ACTIVE tools (open_companions
+        # itself returns [] for a companion card, so only primaries open any). Only the expected failures are recorded;
+        # a programming error (NameError, KeyError...) still propagates instead of being reported as ok.
+        try:
+            if card_nav.read_card(desk, card):  # read_card rejects ids the window registry accepts (e.g. "1234")
+                card_results[card]["companions"] = [c["id"] for c in card_nav.open_companions(desk, card)]
+        except (OSError, ValueError, RuntimeError, card_nav.NavRejected, PresenceRejected) as exc:
+            card_results[card]["companions_error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
 
     return {
         "ok": True,
