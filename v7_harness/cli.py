@@ -1840,7 +1840,8 @@ def cmd_card_audit(args: argparse.Namespace) -> int:
 
     try:
         result = card_pipeline.audit(_card_desk(args), args.card, code_paths=args.code_path or (),
-                                     run_dirs=discover(Path(args.project)))
+                                     run_dirs=discover(Path(args.project)),
+                                     test_roots=[Path(args.project)])
     except ValueError as exc:
         _print_json({"ok": False, "error": str(exc)})
         return 2
@@ -3070,7 +3071,7 @@ def cmd_rsi_ship(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": 'CARD_AUDIT: name the card in the packet ("card": "U##")'})
         return 1
     audit = card_pipeline.audit(Path(shared_desk(project)), card, code_paths=packet.get("changed_files", []),
-                                run_dirs=discover(project))
+                                run_dirs=discover(project), test_roots=[Path(project)])
     if not audit["ok"]:
         _print_json({"ok": False, "error": f"CARD_AUDIT: {card} has no {', '.join(audit['missing'])} evidence",
                      "audit": audit})
