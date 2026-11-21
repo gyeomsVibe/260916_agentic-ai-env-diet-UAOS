@@ -82,6 +82,60 @@ class CompanionNeverClobbersPrimary(unittest.TestCase):
         self.assertEqual(["thread-329"], sent)
         self.assertEqual("thread-329", windows.window_for(self.p, "U329.codex", "codex"))
 
+    def test_hyphenated_and_non_numeric_companions_stay_isolated(self) -> None:
+        from v7_harness.coord.deliver import _is_companion_card
+
+        for comp in ("U331-FF.agy", "U335-DH.agy", "U331-FF.codex", "PCO.codex", "u331-ff.AGY"):
+            expected = f"{comp.rsplit('.', 1)[0].upper()}.{comp.rsplit('.', 1)[1].lower()}"
+            self.assertEqual(windows.normalize_topic_key(comp), expected)
+            self.assertTrue(_is_companion_card(comp), comp)
+        for non_comp, expected_topic in (("U331-FF", "U331"), ("U335-DH", "U335"), ("PCO", "PCO"), ("U329-R2", "U329")):
+            self.assertEqual(windows.normalize_topic_key(non_comp), expected_topic)
+            self.assertFalse(_is_companion_card(non_comp), non_comp)
+
+    def test_real_send_reply_for_hyphenated_companion_leaves_primary_untouched(self) -> None:
+        for base, comp, cid in (("U331", "U331-FF.agy", "comp-u331ff-1"), ("U335", "U335-DH.agy", "comp-u335dh-1")):
+            windows.record_window(self.p, base, "antigravity", f"primary-{base}-0")
+            sent = mock.Mock(reason="", message_id=f"relay_{base}")
+            with mock.patch("v7_harness.coord.deliver.deliver", return_value=sent):
+                agy_dispatch._send_reply(
+                    self.p, now=1.0, message_id=f"relay_in_{base}", actor="codex", envelope={"response": "ok"},
+                    runner=None, card=comp, usage={"input_tokens": 5}, conversation_id=cid, reservation=None)
+            primary = json.loads((self.p / ".coord" / "windows" / f"{base}.json").read_text(encoding="utf-8"))
+            self.assertEqual(primary["tools"]["antigravity"]["id"], f"primary-{base}-0")
+            self.assertEqual(windows.window_for(self.p, comp, "antigravity"), cid)
+            windows.release_window(self.p, comp, "antigravity", reason="companion_done")
+            self.assertIsNone(windows.window_for(self.p, comp, "antigravity"))
+            self.assertEqual(windows.window_for(self.p, base, "antigravity"), f"primary-{base}-0")
+            card, entry = windows.window_entry_for_topic(self.p, comp, "antigravity")
+            self.assertEqual(card, comp)
+            self.assertNotEqual(entry.get("id"), f"primary-{base}-0")
+
+    def test_failed_hyphenated_companion_send_does_not_failover_or_clobber(self) -> None:
+        from v7_harness.coord import presence
+        from v7_harness.coord.deliver import DeliverResult, deliver
+
+        presence.mark(self.p, "codex", "ACTIVE")
+        windows.record_window(self.p, "U331", "codex", "primary-u331-codex")
+        for base, comp, tid in (("U331-FF", "U331-FF.codex", "thread-u331ff"), ("PCO", "PCO.codex", "thread-pco")):
+            windows.record_window(self.p, comp, "codex", tid)
+            sent: list[str] = []
+
+            def fail(_envelope, thread, **_kw):
+                sent.append(thread)
+                return DeliverResult(False, "codex", "DELIVERY_FAILED:rc=1", (), "")
+
+            fake = {"window": tid, "companion": comp}
+            with mock.patch("v7_harness.coord.card_nav.ensure_companion_window", return_value=fake), \
+                    mock.patch("v7_harness.coord.deliver._verify_thread", return_value="DISPATCH"), \
+                    mock.patch("v7_harness.coord.deliver._newest_verified_thread", return_value="thread-other"), \
+                    mock.patch("v7_harness.coord.deliver._deliver_to_codex", side_effect=fail):
+                deliver(self.p, message="counterexample please", actor="claude", target="codex", card=base)
+                deliver(self.p, message="direct companion card", actor="claude", target="codex", card=comp)
+            self.assertEqual([tid, tid], sent)
+            self.assertEqual(tid, windows.window_for(self.p, comp, "codex"))
+        self.assertEqual("primary-u331-codex", windows.window_for(self.p, "U331", "codex"))
+
 
 if __name__ == "__main__":
     unittest.main()

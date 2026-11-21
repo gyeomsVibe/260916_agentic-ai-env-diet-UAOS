@@ -47,7 +47,7 @@ WINDOW_LOCK_SLEEP_S = 0.01
 
 _CARD_FAMILY_RE = re.compile(r"(?:^|[^A-Za-z0-9])(U\d{2,4})(?=$|[^0-9])", re.IGNORECASE)
 # U331-FF: a companion card `<ID>.<tool>` is its own topic; folding it onto `<ID>` clobbered the primary window.
-_COMPANION_CARD_RE = re.compile(r"^(U\d{2,4})\.(?:codex|claude|antigravity|agy)$", re.IGNORECASE)
+_COMPANION_CARD_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.(?:codex|claude|antigravity|agy)$", re.IGNORECASE)
 _SUBSTEP_SUFFIX_RE = re.compile(
     r"(?:[-_.](?:R\d+|L\d+|V\d+|A\d+|S\d+|STAGE\d*|FIX\d*|SLICE\d*|VERDICT|MANUAL|AUDIT|RETRY\d*|SPEC|\d{6,8}))+$",
     re.IGNORECASE,
