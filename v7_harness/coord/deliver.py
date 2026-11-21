@@ -173,6 +173,12 @@ def _project_mailbox(project: Path) -> Mailbox:
     return Mailbox(root)
 
 
+def _is_companion_card(card: str) -> bool:
+    """U331-FF: `<ID>.<tool>` companion cards own one conversation; a failed send must not move them to another card."""
+    from v7_harness.coord.windows import _COMPANION_CARD_RE
+    return bool(card and _COMPANION_CARD_RE.fullmatch(card))
+
+
 def _deliver_to_codex(
     message: str,
     thread: str,
@@ -1483,7 +1489,8 @@ def _deliver_unlocked(
                     # Rule 6: retry once on rc != 0 with newest verified thread other than failed one
                     # U147-D: a letter to the designated user desk is never re-sent to a guessed relay window.
                     if not result.delivered and result.reason.startswith("DELIVERY_FAILED:rc=") \
-                            and chosen_thread != read_user_desk(desk, "codex"):
+                            and chosen_thread != read_user_desk(desk, "codex") \
+                            and not _is_companion_card(card):  # U331-FF: never re-send a companion to a guessed window
                         alt_thread = _newest_verified_thread(desk, _codex_sessions(), exclude_threads={chosen_thread})
                         if alt_thread:
                             fallback = {"given": chosen_thread, "used": alt_thread, "why": "send_failed"}
@@ -1701,6 +1708,7 @@ def _deliver_impl(
     companion_route = False  # U331-A: set only when the card branch below chose the window
     window_fallback: dict[str, str] = {}  # U331-F: card window swapped for the verified desk before publishing
     agy_card = ""  # U331-A: the companion card whose window the headless Antigravity turn must resume (not the primary)
+    window_card = card  # U331-FF: the card whose window lease/failover record the turn uses
     if lane and not window:
         from v7_harness.coord.process_lanes import (
             _resolve_codex_lane_thread,
@@ -1783,6 +1791,7 @@ def _deliver_impl(
         companion = card_nav.ensure_companion_window(desk, card, target, actor, runner=runner)
         if companion.get("window"):
             window = companion["window"]
+            window_card = str(companion.get("companion") or card)  # U331-FF: leases/failover live on <ID>.<tool>
             if target == "antigravity":
                 agy_card = str(companion.get("companion") or "")
             digest = _digest(actor, message, card, window, requested_target, id_fields)
@@ -1882,7 +1891,7 @@ def _deliver_impl(
     try:
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
-                                 card=card, window=window or "", lane=lane, identity_digest=digest,
+                                 card=window_card, window=window or "", lane=lane, identity_digest=digest,
                                  wants_turn=wants_turn or wake_requested, window_fallback=window_fallback,
                                  agy_card=agy_card)
     finally:
