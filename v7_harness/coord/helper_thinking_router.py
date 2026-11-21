@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from v7_harness.coord.hook_context import shared_desk
+from v7_harness.coord.model_router import keypoint_model, load_registry, seat_model
 
 THINKING_LEVELS: tuple[str, ...] = ("Low", "Medium", "High")
 
@@ -33,8 +34,6 @@ SUB_PROCESS_STAGES: tuple[str, ...] = (
     "SP5_MERGE_AND_RUNTIME",
 )
 
-CALCULATOR_MODEL = "qwen2.5-coder:7b"
-
 # The common rule, identical for all 3 tools (U304-B). Seat roles mirror the 5:3:2 split already used by U271/U290.
 COMMON_HELPER_RULE: dict[str, Any] = {
     "schema": "uaos-3tool-helper-rule-v1",
@@ -53,30 +52,35 @@ COMMON_HELPER_RULE: dict[str, Any] = {
     "keypoint_rule": "main model at High effort; Codex alone may escalate to GPT-6 Astra (U257 CODEX_EXCLUSIVE_KEYPOINTS)",
 }
 
-# tool -> (main model, display, one helper, display, telemetry lane, native helper subagent, effort parameter name)
-_TOOL_SEATS: dict[str, tuple[str, str, str, str, str, str, str]] = {
-    # Codex main = the configured `model` in ~/.codex/config.toml (1,481 calls in 7 days). Helper GPT-6 Luna costs
-    # 0.032 credits/call vs 0.253 for GPT-6.1 Terra on the same measured token mix (docs/107 table 2).
-    "codex": ("gpt-6.1-sol", "GPT-6.1 Sol", "gpt-6-luna", "GPT-6 Luna", "luna", "uaos-luna-worker", "reasoning_effort"),
-    # Antigravity helper Gemini 3.5 Flash-Lite: SWE-Bench Pro 54.2 % / Terminal-bench 54.0 % at $0.30/$2.50,
-    # vs 3.8 Flash at $0.75/$3.75 (docs/107 table 3).
-    "antigravity": ("gemini-4-argon", "Gemini 4 Argon", "gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "flash",
-                    "uaos-flash-worker", "thinking_level"),
-    "claude": ("claude-opus-5-5", "Claude Opus 5.5", "claude-haiku-5-5", "Claude Haiku 5.5", "haiku",
-               "uaos-haiku-worker", "effort"),
-}
-
+# U327: the per-tool seats (main, helper, keypoint escalation, effort parameter, telemetry lane, subagent) now come from
+# `model_registry.json` through `model_router`; a model release is a registry edit, not a code edit. Day-0 content of
+# the registry equals the former U304-B constants (docs/107 tables 2 and 3 are cited in each registry `why`).
+_REGISTRY = load_registry()
 # U257: only Codex has a keypoint escalation model (Astra on the $20 Plus plan: 5-45 messages per 5 h).
 KEYPOINT_ESCALATION_MODEL: dict[str, tuple[str, str] | None] = {
-    "codex": ("gpt-6-astra", "GPT-6 Astra"),
-    "antigravity": None,
-    "claude": None,
+    t: ((k["model_id"], k["display"]) if (k := keypoint_model(_REGISTRY, t)) else None)
+    for t in ("codex", "antigravity", "claude")
 }
+_calc_entry = seat_model(_REGISTRY, "ollama", "calculator")
+if _calc_entry is None:
+    raise ValueError("model registry has no active calculator model for tool 'ollama'")
+CALCULATOR_MODEL = _calc_entry["model_id"]
 
 
-def _build_lineup(tool: str) -> dict[str, Any]:
-    main, main_disp, helper, helper_disp, lane, subagent, param = _TOOL_SEATS[tool]
-    escalation = KEYPOINT_ESCALATION_MODEL[tool]
+def _build_lineup(tool: str, reg: dict[str, Any] | None = None) -> dict[str, Any]:
+    reg = _REGISTRY if reg is None else reg
+    main_e, helper_e = seat_model(reg, tool, "primary"), seat_model(reg, tool, "helper")
+    for seat, entry in (("primary", main_e), ("helper", helper_e)):
+        if entry is None:
+            raise ValueError(f"model registry has no active {seat} model for tool {tool!r}")
+    for key in ("helper_telemetry_lane", "helper_subagent"):
+        if not str(helper_e.get(key) or "").strip():
+            raise ValueError(f"model registry entry {helper_e['model_id']!r} (helper of {tool!r}) is missing {key}")
+    main, main_disp = main_e["model_id"], main_e["display"]
+    helper, helper_disp = helper_e["model_id"], helper_e["display"]
+    lane, subagent, param = helper_e["helper_telemetry_lane"], helper_e["helper_subagent"], main_e["thinking_param_name"]
+    key_e = keypoint_model(reg, tool)
+    escalation = (key_e["model_id"], key_e["display"]) if key_e else None
     reasoning = (main,) + ((escalation[0],) if escalation else ())
     names = {main: main_disp, helper: helper_disp}
     if escalation:
@@ -125,11 +129,14 @@ def normalize_thinking_level(level: str | None, default: str = "Medium") -> str:
 
 
 def get_official_tool_lineup(tool: str | None = None) -> dict[str, Any]:
-    """Return the official helper & reasoning model lineup for one tool or all 3 tools."""
+    """Return the official helper & reasoning model lineup for one tool or all 3 tools.
+
+    U327: rebuilt from the registry file on every call, so a registry edit or an `advance_rollout` is seen by a running
+    process without a restart. The module constants stay as the import-time day-0 snapshot for existing importers."""
+    reg = load_registry()
     if tool is None:
-        return {k: dict(v) for k, v in OFFICIAL_TOOL_MODEL_LINEUP.items()}
-    norm = normalize_tool_name(tool)
-    return dict(OFFICIAL_TOOL_MODEL_LINEUP[norm])
+        return {t: _build_lineup(t, reg) for t in OFFICIAL_TOOL_MODEL_LINEUP}
+    return _build_lineup(normalize_tool_name(tool), reg)
 
 
 def infer_lane_from_card_metadata(
@@ -200,7 +207,7 @@ def select_optimal_helper_and_thinking(
     """
     del prefer_claude_thinking_on_agy, prefer_open_source_on_agy
     norm_tool = normalize_tool_name(tool)
-    catalog = OFFICIAL_TOOL_MODEL_LINEUP[norm_tool]
+    catalog = get_official_tool_lineup(norm_tool)  # live registry read, not the import-time snapshot
     resolved_lane = (
         lane_id
         if lane_id in PROCESS_LANES
@@ -474,7 +481,7 @@ def audit_and_optimize_claude_ollama_haiku_parallel(
             },
             "lane_3_opus_sonnet_20pct": {
                 "worker": "claude",
-                "models": [OFFICIAL_TOOL_MODEL_LINEUP["claude"]["main_model"]],
+                "models": [get_official_tool_lineup("claude")["main_model"]],
                 "thinking_levels": {"routine_supervision": "Medium", "mia_architecture_and_verdict": "High"},
                 "allowed_scope": ["architecture_frame", "independent_peer_verdict", "final_integration"],
             },
