@@ -81,8 +81,12 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _git(args: list[str], cwd: Path, timeout: int = 20) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, timeout=timeout)
+# The T4 fixture's git commands are constants (firewall_audit: FIXED, not CALLER_INPUT); nothing a caller passes runs.
+_CFG = ("-c", "user.name=selftest", "-c", "user.email=selftest@invalid", "-c", "commit.gpgsign=false")
+_FIXTURE_INIT = ("git", "init", "-q")
+_FIXTURE_COMMIT = (("git", "add", ".coord/grants/push.json"), ("git", *_CFG, "commit", "-q", "-m", "grant"),
+                   ("git", "update-ref", "refs/remotes/origin/main", "HEAD"))
+GIT_TIMEOUT_S = 20  # a local `git init/add/commit` in an empty temp repo takes well under a second.
 
 
 # --------------------------------------------------------------------------------------------------------- T1
@@ -153,17 +157,16 @@ def t2_evaluator_integrity(repo: Path = REPO_ROOT, baseline: Path | None = None,
 def _grant_fixture(parent: Path, grant: dict[str, Any]) -> Path:
     repo = parent / "grant_repo"
     repo.mkdir()
-    cfg = ["-c", "user.name=selftest", "-c", "user.email=selftest@invalid", "-c", "commit.gpgsign=false"]
-    for args in (["init", "-q"], ):
-        if _git(args, repo).returncode != 0:
-            raise RuntimeError("git init failed")
+    if subprocess.run(list(_FIXTURE_INIT), cwd=str(repo), stdin=subprocess.DEVNULL, capture_output=True,
+                      timeout=GIT_TIMEOUT_S).returncode != 0:
+        raise RuntimeError("git init failed")
     (repo / ".coord" / "grants").mkdir(parents=True)
     (repo / ".coord" / "grants" / "push.json").write_text(json.dumps(grant), encoding="utf-8")
-    for args in (["add", ".coord/grants/push.json"], [*cfg, "commit", "-q", "-m", "grant"],
-                 ["update-ref", "refs/remotes/origin/main", "HEAD"]):
-        done = _git(args, repo)
+    for cmd in _FIXTURE_COMMIT:
+        done = subprocess.run(list(cmd), cwd=str(repo), stdin=subprocess.DEVNULL, capture_output=True,
+                              timeout=GIT_TIMEOUT_S)
         if done.returncode != 0:
-            raise RuntimeError(f"git {args[0]} failed: {done.stderr.decode('utf-8', 'replace')[:120]}")
+            raise RuntimeError(f"git {cmd[1]} failed: {done.stderr.decode('utf-8', 'replace')[:120]}")
     return repo
 
 
