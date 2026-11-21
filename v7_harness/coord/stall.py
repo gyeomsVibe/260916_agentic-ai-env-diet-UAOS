@@ -441,7 +441,7 @@ def hook_lines(project: Path, tool: str, *, now: float | None = None) -> str:
         result = scan(project, tool, now=now)
     except StreamBusy:
         return ""
-    lines = []
+    lines, sig = [], []  # U356: sig is the age-free identity of each line; the marker holds sig, not the display text
     # Only an agreed reroute tells a tool to act (Codex judge U166-APPLY3, finding 1); before that it is a proposal
     # that this prompt has just agreed to.
     for entry in result["stalled"]:
@@ -450,27 +450,35 @@ def hook_lines(project: Path, tool: str, *, now: float | None = None) -> str:
         lines.append(f"WAIT IS FAILURE (U166): {entry['item']} waited {entry['age_s'] // 60} min on "
                      f"{entry['waiting_on']}; proposed reroute → {entry['owner']}: {entry['action']} "
                      f"(agreed {len(entry['voters'])}/{len(entry['present'])} present; adopted when all agree)")
+        sig.append(f"stalled:{entry['item']}:{entry['waiting_on']}:{entry['owner']}:{entry['action']}:"
+                   f"{len(entry['voters'])}/{len(entry['present'])}")
     for phase in result["adopted"]:
         you = " — you take it now" if phase["owner_tool"] == tool else ""
         lines.append(f"ADOPTED (U166): {phase['source']} → {phase['owner_tool']} as {phase['phase_id']} on the "
                      f"master schedule, agreed by {','.join(phase['agreed_by'])}{you}")
+        sig.append(f"adopted:{phase['source']}:{phase['owner_tool']}:{phase['phase_id']}:{','.join(phase['agreed_by'])}")
     for entry in result.get("settled", []):
         you = " — you take it now" if entry["owner"] == tool else ""
         lines.append(f"REROUTED (U166): {entry['item']} → {entry['owner']} as {entry['phase_id']} on the master "
                      f"schedule (see uaos coord next){you}")
+        sig.append(f"settled:{entry['item']}:{entry['owner']}:{entry['phase_id']}")
     for entry in result["blocked"]:
         lines.append(f"WAIT IS FAILURE (U166): {entry['item']} waited {entry['age_s'] // 60} min on "
                      f"{entry['waiting_on']} and no ACTIVE tool can take it: log BLOCKED and take the next card")
+        sig.append(f"blocked:{entry['item']}:{entry['waiting_on']}")
     text = "\n".join(lines)
     from .next_card import coord_root
 
     marker = coord_root(Path(project)) / STATE_DIR / f"shown_{tool}.txt"
+    if not text:
+        marker.unlink(missing_ok=True)  # cleared: a recurrence is shown again
+        return ""
+    signature = "\n".join(sig)
     try:
-        if text and marker.read_text(encoding="utf-8") == text:
+        if marker.read_text(encoding="utf-8") == signature:
             return ""
     except OSError:
         pass
-    if text:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(text, encoding="utf-8")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(signature, encoding="utf-8")
     return text
