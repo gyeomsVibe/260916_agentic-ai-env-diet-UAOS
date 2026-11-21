@@ -396,6 +396,24 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
     items.extend((item, None) for item in absence_items(project, since, tool, seen_uncommitted=seen_uncom))
     for actor, group in events.items():
         items.append((f"{len(group)} run event(s) from {actor}, newest {group[-1].stem}: {summary_of(group[-1])}", None))
+    # U331: this tool's card-navigation deltas (companion cards, UNKNOWN cards); best effort, never blocks the hook.
+    nav_seen: dict = cursor.get("nav") if isinstance(cursor.get("nav"), dict) else {}
+    # The cursor's nav state advances only when the lines are really shown: a full hook (or lines that would be cut by
+    # MAX_LINES) keeps the old state so the delta comes back next prompt; lines that alone exceed MAX_LINES advance
+    # anyway, or they would defer forever.
+    if len(items) < MAX_LINES:
+        try:
+            from v7_harness.coord import card_nav
+
+            nav_lines, new_nav = card_nav.hook_lines(project, tool, now=now, seen=dict(nav_seen))
+            if isinstance(new_nav, dict):
+                if len(items) + len(nav_lines) > MAX_LINES and len(nav_lines) <= MAX_LINES:
+                    pass  # defer: keep nav_seen
+                else:
+                    items.extend((line, None) for line in nav_lines)
+                    nav_seen = new_nav
+        except Exception:
+            pass
     shown = [letter for _text, letter in items[:MAX_LINES] if letter is not None]
     unshown = [letter.stem for _text, letter in items[MAX_LINES:] if letter is not None]
     text = ""
@@ -416,7 +434,7 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(
-            json.dumps({"since": now, "plan": rows, "unshown": unshown, "uncommitted": cur_uncom}, ensure_ascii=False),
+            json.dumps({"since": now, "plan": rows, "unshown": unshown, "uncommitted": cur_uncom, "nav": nav_seen}, ensure_ascii=False),
             encoding="utf-8",
         )
         os.replace(tmp, path)

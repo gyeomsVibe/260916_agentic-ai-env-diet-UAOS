@@ -999,6 +999,17 @@ def _codex_thread(desk: Path, thread: str) -> tuple[str, dict[str, str], str]:
     return "", {}, "NO_VERIFIED_THREAD"
 
 
+def _release_stale_card_window(desk: Path, card: str, window: str, why: str = "") -> None:
+    """Release the Codex window entry (of the card or its topic) that still names `window`; never raises."""
+    try:
+        from v7_harness.coord.windows import release_window, window_entry_for_topic
+        resolved, entry = window_entry_for_topic(desk, card or "", "codex")
+        if entry and str(entry.get("id")) == window:
+            release_window(desk, resolved, "codex", reason=f"STALE_CARD_WINDOW:{why}")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _verify_thread(desk: Path, root: Path, thread: str) -> str:
     """U134-R F1 strict identity: a UUID whose rollout names itself and a cwd inside this project."""
     if not UUID_RE.fullmatch(thread):
@@ -1348,6 +1359,8 @@ def _deliver_unlocked(
     lane: str = "",
     identity_digest: str | None = None,
     wants_turn: bool | None = None,
+    window_fallback: dict[str, str] | None = None,
+    agy_card: str = "",
 ) -> DeliverResult:
     """메시지를 대상 도구에게 직접 전달한다.
 
@@ -1452,7 +1465,16 @@ def _deliver_unlocked(
             if target == "codex":
                 if window:  # U115: the card's own Codex thread replaces the default thread
                     thread = window
-                chosen_thread, fallback, status = _codex_thread(desk, thread)
+                if card and window:
+                    # U331-F: a card's window is never swapped for a guessed thread; a bad one fails closed here
+                    # (the verified-desk swap, if any, already happened before the envelope was built).
+                    bad_status = _verify_thread(desk, _codex_sessions(), window)
+                    chosen_thread, fallback, status = ((window, {}, "DISPATCH") if bad_status == "DISPATCH"
+                                                       else ("", {}, bad_status))
+                    if status == "DISPATCH" and window_fallback:
+                        fallback = dict(window_fallback)
+                else:
+                    chosen_thread, fallback, status = _codex_thread(desk, thread)
                 if status != "DISPATCH":
                     result = DeliverResult(False, "codex", status, (), "")
                 else:
@@ -1676,6 +1698,9 @@ def _deliver_impl(
     # U115: a card letter goes into the card's window of the resolved target (U114 record). A LIMITED/ABSENT target
     # was resolved to None above, so it gets no window and is queued without one (U113, U134-C).
     window = thread or None
+    companion_route = False  # U331-A: set only when the card branch below chose the window
+    window_fallback: dict[str, str] = {}  # U331-F: card window swapped for the verified desk before publishing
+    agy_card = ""  # U331-A: the companion card whose window the headless Antigravity turn must resume (not the primary)
     if lane and not window:
         from v7_harness.coord.process_lanes import (
             _resolve_codex_lane_thread,
@@ -1703,11 +1728,24 @@ def _deliver_impl(
     elif card:
         from v7_harness.coord.windows import window_for
         window = window_for(desk, card, target or "")  # a bad card id raises before anything is published
-    token = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
-    if token:
+        companion_route = True
+        if target == "codex" and window:
+            # U331-F (Codex P1, relay_5a9158db): resolve a bad card window BEFORE the envelope is built, so the
+            # published letter, its digest and the dispatch all name the same (verified desk) recipient.
+            _bad = _verify_thread(desk, _codex_sessions(), window)
+            if _bad != "DISPATCH":
+                companion_route = False  # never open a companion window over a bad card window
+                _desk_thread = read_user_desk(desk, "codex")
+                if _desk_thread and _verify_thread(desk, _codex_sessions(), _desk_thread) == "DISPATCH":
+                    _release_stale_card_window(desk, card, window, _bad)
+                    window_fallback = {"given": window, "used": _desk_thread, "why": f"card_window_{_bad}"}
+                    window = _desk_thread
+                # else: keep the entry and the window; the dispatch below fails closed (never a guessed thread)
+    verdict_tag = _unstructured_verdict(message, requested_target, wake_class, verdict_requested, verdict)
+    if verdict_tag:
         # U188 (Codex design verdict relay_61456b14): text never becomes authoritative and NOTICE never wakes, so the
         # contradiction fails visibly before any publish; the sender resends with the structured field.
-        diag = (f"UNSTRUCTURED_VERDICT: the first line reads as verdict {token!r} but carries no wake field; resend "
+        diag = (f"UNSTRUCTURED_VERDICT: the first line reads as verdict {verdict_tag!r} but carries no wake field; resend "
                 "with --verdict <PASS|REVISE|FAIL|APPROVE|PIVOT|REWORK> (or --wake-class ACTIONABLE --delta), or "
                 "mark a status echo ACK_ONLY")
         return DeliverResult(False, target or "mailbox_only", "UNSTRUCTURED_VERDICT", (), diag, message_id, digest)
@@ -1732,6 +1770,23 @@ def _deliver_impl(
         cls, diag = classify(_payload(actor, message, digest, requested_target, card, window, **explicit))
         if cls == "INVALID":
             return DeliverResult(False, target or "mailbox_only", "INVALID_INTENT", (), diag, message_id, digest)
+    if (card and companion_route and target in ("codex", "antigravity") and not audit
+            and os.environ.get("UAOS_COMPANION_WINDOWS", "1") != "0"
+            and explicit.get("wake_class") not in ("NOTICE", "ACK_ONLY")
+            and explicit.get("verdict_requested") is not False
+            and not _declines_turn(message, explicit)):  # Codex REVISE: a body-only `ACK_ONLY:` marker launches nothing
+        # U331-A: only a letter that passed validation and is a real collaboration letter (never an explicit NOTICE,
+        # ACK_ONLY, verdict_requested=False, or a refused/invalid intent: those launch nothing) opens or reuses the
+        # receiver's companion window
+        # `<card>.<tool>` and goes there. No nav record, a QUEUED companion (3-cap) or a refused launch keep the old route.
+        from v7_harness.coord import card_nav
+        companion = card_nav.ensure_companion_window(desk, card, target, actor, runner=runner)
+        if companion.get("window"):
+            window = companion["window"]
+            if target == "antigravity":
+                agy_card = str(companion.get("companion") or "")
+            digest = _digest(actor, message, card, window, requested_target, id_fields)
+            message_id = "relay_" + digest[:32]
     # U66: the intent marker exists before the inbox letter. A racing watcher waits instead of starting a second
     # paid turn; on failure `_deliver_unlocked` removes it and the same unseen letter becomes the fallback route.
     if _track is not None:
@@ -1780,14 +1835,14 @@ def _deliver_impl(
             if not agy_wait and runner is None:
                 # U296 (B11): the CLI returns right after PUBLISHED; the answer arrives later as a normal letter.
                 # An injected runner (tests) stays synchronous: a detached process cannot call it.
-                started = dispatch_detached(desk, message_id=message_id, actor=actor, message=message, card=card,
+                started = dispatch_detached(desk, message_id=message_id, actor=actor, message=message, card=agy_card or card,
                                             audit=audit)
                 if started:
                     return DeliverResult(False, "antigravity", "PUBLISHED", (),
                                          f"AGY_DETACHED answer arrives as a letter (id {message_id})", message_id, digest)
             # U199: a verdict request is the commit-gate audit; its answer is never held back by the daily cap
             row = dispatch(desk, message_id=message_id, actor=actor, message=message, runner=runner or subprocess.run,
-                           card=card, audit=audit)
+                           card=agy_card or card, audit=audit)
             detail = json.dumps(row, ensure_ascii=False)[:300] if row["state"] == "ANSWERED" else unread
             unread = f"AGY_{row['state']} {detail}"
         return DeliverResult(False, "antigravity", "PUBLISHED", (), unread, message_id, digest)
@@ -1828,7 +1883,8 @@ def _deliver_impl(
         return _deliver_unlocked(project, message=message, actor=actor, target=target,
                                  thread=thread, runner=runner, pending_owner=pending_owner,
                                  card=card, window=window or "", lane=lane, identity_digest=digest,
-                                 wants_turn=wants_turn or wake_requested)
+                                 wants_turn=wants_turn or wake_requested, window_fallback=window_fallback,
+                                 agy_card=agy_card)
     finally:
         _release_guard(guard, owner)
 

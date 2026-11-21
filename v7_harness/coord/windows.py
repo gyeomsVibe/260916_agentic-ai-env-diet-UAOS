@@ -473,10 +473,37 @@ def _write_card_record_locked(project: Path, card: str, tool: str, entry: dict[s
     return entry
 
 
+class ForeignCodexThread(ValueError):
+    """A Codex thread whose rollout cwd is not a checkout of this project (U331-F: it would only fail closed later)."""
+
+
+def _foreign_codex_thread(project: Path, thread: str) -> bool:
+    """True only when the thread's rollout exists, names itself and sits in a cwd outside this project's checkouts.
+
+    An unknown thread (no rollout yet, unreadable meta) is not foreign: a freshly started thread has no rollout until
+    its first turn, and refusing it here would break every new window.
+    """
+    from . import deliver
+
+    if not deliver.UUID_RE.fullmatch(str(thread)):
+        return False
+    matched = list(deliver._codex_sessions().glob(f"*/*/*/rollout-*-{thread}.jsonl"))
+    if not matched:
+        return False
+    cid, cwd, status = deliver._read_rollout_meta(matched[0])
+    if status != "OK" or cid != thread or not cwd:
+        return False
+    return os.path.normcase(str(cwd.resolve())) not in deliver._registered_roots(project)
+
+
 def record_window(project: Path, card: str, tool: str, window_id: str, *, now: float | None = None,
                   title: str | None = None, **extra: Any) -> dict[str, Any]:
     """U127 / U279: atomically write one tool's window for a card under per-card `_window_lock` so parallel
     writers on the same card serialize without blocking other cards or lanes."""
+    # A RELEASED record may keep a foreign id: releasing a stale entry is how the foreign thread is retired.
+    if tool == "codex" and window_id and extra.get("state") != "RELEASED" and not extra.get("released_at") \
+            and _foreign_codex_thread(Path(project), window_id):
+        raise ForeignCodexThread(f"THREAD_PROJECT_MISMATCH {window_id}: rollout cwd is outside this project")
     path = _record_path(project, card)
     with _window_lock(project, f"card_{card}"):
         record = _load(path)
@@ -716,12 +743,18 @@ def _codex_rpc_session() -> Callable[[str, dict], dict]:
         proc.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
         proc.stdin.flush()
 
+    seen_methods: list[str] = []
+
     def answer(request_id: int) -> dict:
         for line in proc.stdout:
             try:
                 message = json.loads(line)
             except ValueError:
                 continue
+            if not isinstance(message, dict):
+                continue  # a JSON array/number is no JSON-RPC message
+            if message.get("method"):
+                seen_methods.append(str(message["method"]))  # U331: a turn notification may arrive before wait_turn
             if message.get("id") == request_id:
                 if "error" in message:
                     raise RuntimeError(str(message["error"]))
@@ -737,11 +770,84 @@ def _codex_rpc_session() -> Callable[[str, dict], dict]:
           "params": {"clientInfo": {"name": "uaos", "title": "UAOS", "version": "0"}}})
     answer(0)
     send({"jsonrpc": "2.0", "method": "initialized"})
+
+    def wait_turn(timeout_s: float) -> str:
+        """U331-C2: keep the app-server alive until the first turn ends (it was killed right after turn/start, so the
+        rollout ended `task_started -> turn_aborted` and the desktop app never listed the thread). COMPLETED, ABORTED,
+        EOF (stdout closed first) or TIMEOUT; nothing here proves the app lists the thread, only that the turn ran to its end."""
+        def verdict(methods: list[str]) -> str:
+            for method in methods:
+                if "turn/completed" in method:
+                    return "COMPLETED"
+                if "turn/aborted" in method or "turn/failed" in method:
+                    return "ABORTED"
+            return ""
+
+        found = {"status": verdict(seen_methods)}
+        if found["status"]:
+            return found["status"]
+
+        def pump() -> None:
+            for line in proc.stdout:
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                found["status"] = verdict([str(message.get("method") or "")])
+                if found["status"]:
+                    return
+            found["status"] = "EOF"  # stdout closed (crash/exit) before any turn end: not a timeout
+
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
+        reader.join(timeout_s)
+        return found["status"] or "TIMEOUT"
+
     call.proc = proc
+    call.wait_turn = wait_turn
     return call
 
 
-def _open_codex(project: Path, title: str, prompt: str, rpc: Callable[[str, dict], dict] | None) -> str:
+# U331-C: `thread/name/set` right after `thread/start` fails with "rollout ... jsonl is empty" until Codex writes its
+# first rollout line (seen 4 of 7 opens on 2026-11-20). 10 s is the user-set ceiling; the backoff starts at 0.25 s and
+# doubles to at most 2 s, so a normal rollout (about 1 s) costs two tries and a stuck one stops at the deadline.
+NAME_DEADLINE_S = 10.0
+# U331-C2: how long our own short-lived app-server stays up for the first turn. 90 s is an unmeasured upper bound for one
+# LLM turn (spec 9.4-1 puts a turn at tens of seconds to minutes); a TIMEOUT is recorded, not hidden.
+TURN_WAIT_S = 90.0
+NAME_BACKOFF_START_S = 0.25
+NAME_BACKOFF_MAX_S = 2.0
+
+
+def name_codex_thread(rpc: Callable[[str, dict], dict], thread_id: str, title: str, *,
+                      deadline_s: float = NAME_DEADLINE_S, sleep: Callable[[float], Any] = time.sleep,
+                      clock: Callable[[], float] = time.monotonic) -> bool:
+    """Name a fresh Codex thread, waiting out the empty-rollout error within `deadline_s`.
+
+    Never raises after the thread exists: on the deadline (or any other refusal) the created thread id is kept by the
+    caller, so a failed name never leaves an orphan unnamed thread behind a second `thread/start`. Returns True if named.
+    """
+    end = clock() + deadline_s
+    delay = NAME_BACKOFF_START_S
+    while True:
+        try:
+            rpc("thread/name/set", {"threadId": thread_id, "name": title})
+            return True
+        except RuntimeError as exc:
+            if "empty" not in str(exc).lower() and "rollout" not in str(exc).lower():
+                return False  # not the race: retrying cannot help
+        remaining = end - clock()
+        if remaining <= 0:
+            return False
+        sleep(min(delay, remaining))
+        delay = min(delay * 2, NAME_BACKOFF_MAX_S)
+
+
+def _open_codex(project: Path, title: str, prompt: str, rpc: Callable[[str, dict], dict] | None,
+                info: dict[str, Any] | None = None) -> str:
+    """Open a Codex thread; `info` (if given) receives `named` (bool) and, for an own server, `first_turn`."""
     own = rpc is None
     if own:
         rpc = _codex_rpc_session()
@@ -749,11 +855,26 @@ def _open_codex(project: Path, title: str, prompt: str, rpc: Callable[[str, dict
         thread_id = rpc("thread/start", {"cwd": str(project)})["thread"]["id"]
         rpc("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": prompt}]})
         # The name comes after the first turn: before it the thread has no rollout, so no sidebar row (U114 probe).
-        rpc("thread/name/set", {"threadId": thread_id, "name": title})
+        named = name_codex_thread(rpc, thread_id, title)
+        if info is not None:
+            info["named"] = named  # False = an unnamed thread the app cannot list under this card
+        if own and hasattr(rpc, "wait_turn") and info is not None:
+            info["first_turn"] = rpc.wait_turn(TURN_WAIT_S)
+        elif own and hasattr(rpc, "wait_turn"):
+            rpc.wait_turn(TURN_WAIT_S)
         return thread_id
     finally:
         if own:
-            rpc.proc.kill()
+            try:
+                if rpc.proc.poll() is None:  # already gone after EOF: killing it raises on Windows and would mask the id
+                    rpc.proc.kill()
+                rpc.proc.wait(timeout=5)  # reap the server so no zombie process is left
+            except Exception:  # noqa: BLE001
+                pass
+
+
+class AgyOpenFailed(RuntimeError):
+    """`agy -p` answered without a conversation id; the message carries the status/error it did answer."""
 
 
 def _open_antigravity(project: Path, prompt: str, runner: Callable[..., Any]) -> tuple[str, int | None]:
@@ -768,9 +889,20 @@ def _open_antigravity(project: Path, prompt: str, runner: Callable[..., Any]) ->
         envelope = json.loads(raw)
     except ValueError:
         match = re.search(r"\{.*\}", raw, re.S)
-        envelope = json.loads(match.group(0)) if match else {}
-    tokens = (envelope.get("usage") or {}).get("input_tokens")
-    return str(envelope["conversation_id"]), tokens if type(tokens) is int and tokens >= 0 else None
+        try:
+            envelope = json.loads(match.group(0)) if match else {}
+        except ValueError as exc:
+            raise AgyOpenFailed(f"AGY_UNPARSEABLE_ANSWER error={str(exc)[:80]} raw={raw[:120]!r}") from exc
+    # U331: an error/limit answer carries no conversation id (measured 2026-11-20: KeyError 'conversation_id' crashed
+    # `coord window --tool antigravity`). That is a refused open with its reason, never a traceback and never an id.
+    conversation = envelope.get("conversation_id") or envelope.get("conversationId") if isinstance(envelope, dict) else None
+    if not isinstance(conversation, str) or not conversation.strip():
+        status = envelope.get("status") if isinstance(envelope, dict) else None
+        error = envelope.get("error") if isinstance(envelope, dict) else None
+        raise AgyOpenFailed(f"AGY_NO_CONVERSATION_ID status={status} error={str(error or raw)[:160]}")
+    usage = envelope.get("usage")
+    tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+    return conversation.strip(), tokens if type(tokens) is int and tokens >= 0 else None
 
 
 def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
@@ -812,13 +944,21 @@ def open_window(project: Path, card: str, tool: str, title: str, prompt: str, *,
         name = window_title(card, title)
         extra: dict[str, Any] = {}
         if tool == "codex":
-            window_id = _open_codex(project, name, prompt, rpc)
+            codex_info: dict[str, Any] = {}
+            window_id = _open_codex(project, name, prompt, rpc, codex_info)
+            # U331: "opened" is UNKNOWN until a second signal (the completed first turn); the app's list is unmeasured.
+            extra["visibility"] = "UNKNOWN"
+            extra["first_turn"] = codex_info.get("first_turn", "UNKNOWN")
+            extra["named"] = bool(codex_info.get("named"))
         elif tool == "claude":
             window_id = str(session_id)
             if isinstance(raw_session_id, str) and raw_session_id.strip().lower().startswith("local_"):
                 extra["native_id"] = f"local_{window_id}"
         else:
-            window_id, tokens = _open_antigravity(project, prompt, runner)
+            try:
+                window_id, tokens = _open_antigravity(project, prompt, runner)
+            except AgyOpenFailed as exc:
+                return {"refused": "AGY_OPEN_FAILED", "tool": tool, "card": card, "detail": str(exc)}
             if tokens is not None:  # U131: the opening turn's size, so the U127 resume cap can read it
                 extra["last_input_tokens"] = tokens
         with _window_lock(project, f"card_{card}"):
