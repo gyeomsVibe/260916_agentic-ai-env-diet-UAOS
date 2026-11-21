@@ -49,7 +49,7 @@ OS_PREFIXES = ("exec", "spawn")
 MODEL_MARKERS = ("tool_call", "function_call", "functioncall", "proposal", "model_output", "completion")
 READ_KEYS = frozenset({"tool_calls", "function_call", "functionCall"})
 GUARD_RE = re.compile(r"(allow|guard|forbid|policy|lint|permit|check_|_check|validate|verify|within)", re.IGNORECASE)
-DOC_PATH = Path("docs") / "50_u54-tool-execution-firewall-gap-audit.md"
+DOC_PATH = Path("docs") / "60_u54-tool-execution-firewall-gap-audit.md"
 
 
 @dataclass(frozen=True)

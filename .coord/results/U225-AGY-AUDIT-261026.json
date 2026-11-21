@@ -1,0 +1,35 @@
+{
+  "work_id": "U225-AGY-AUDIT-261026",
+  "card": "U225",
+  "tool": "antigravity",
+  "session_id": "1e097d46-f16a-4361-819e-862ef9869399",
+  "timestamp": "2026-10-26T17:11:00+09:00",
+  "request_letter": "relay_44d0b5db4ac0d087727d127a38977371",
+  "worktree": "C:/Users/Kimyoongyeom/.codex/worktrees/u225-nonstop/260916_agentic-ai-env-diet",
+  "branch": "codex/u225-nonstop-quota",
+  "base_commit": "a7130d92a43189f221f9afabaf0388e65a98f2d1",
+  "contract": ".coord/tasks/U225-nonstop-quota-repair.md",
+  "source_sha256": {
+    "v7_harness/adapters/claude_worker.py": "e2fe98b551e26421ab3f8f08dfbeb293cc77d6d2d6fc93638bb90dc0b415079f",
+    "v7_harness/cli.py": "f0b8d71a543d5d1384507d7c9749e35cd27ff0ccda774fab637d29b4170cc7c3",
+    "v7_harness/coord/continuity.py": "2e7c53ffa5f6c5b98c845d4e1d86251057e68f862e53e78d36149fc33ef2c82d",
+    "v7_harness/coord/next_card.py": "806ab855beb7161f61ca271e8f4710f1f1a00eaffca53496b919814dbb0bd437",
+    "v7_harness/coord/watch.py": "f341907019e150168213543f42e6a5bf29cd9f633f3b9da52b704a6cd90bd7de",
+    "v7_harness/global_install.py": "37e98e6f801fa9ef776b300fe4650ac7e062065cabca22198b9310ae49658684",
+    "v7_harness/worker_routing.py": "88a8a28f10e99067b637e33031384e58cf94a59ed83a27f277cb8a57e96e95f2"
+  },
+  "test_sha256": {
+    "tests/test_u225_continuity.py": "b9e8c23f7dcfc65e65e9529a305a6b3a3a5fe08905e0e1e6aa89958430257190",
+    "tests/test_u225_protected_ready.py": "1a8f1955f4c43660ea49f02aab389039e70ea021014052baa788fb5a0848936a",
+    "tests/test_u225_quota_exhaustion.py": "e431f7c29a14f9eb5849b412b08d6169af064847f42eb93a553d2ee49d4e0c88",
+    "tests/test_u225_worker_continuity.py": "5c55d267a60346a0b51b3fcfbef6fe5099047ff4680d25a90bdf19fa113f9cc5",
+    "tests/test_u225_worker_routing.py": "96d3673d142f15f654b081f4381f94af951ca2f8d63b3a32f34484d9a00a8e3d"
+  },
+  "test_command": "python -B -m unittest tests.test_u225_continuity tests.test_u225_protected_ready tests.test_u225_quota_exhaustion tests.test_u225_worker_continuity tests.test_u225_worker_routing -v",
+  "tests_ran": 32,
+  "wall_seconds": 5.357,
+  "exit_code": 0,
+  "verdict": "PASS",
+  "source_edits": 0,
+  "notes": "All 7 product files and 5 test modules match pinned U225 contract hashes (including frozen test_u225_continuity.py b9e8c23f and next_card.py 806ab855). All 32 unit tests pass (exit 0)."
+}

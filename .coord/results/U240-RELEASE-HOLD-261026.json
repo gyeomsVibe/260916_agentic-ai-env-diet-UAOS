@@ -1,0 +1,29 @@
+{
+  "relay": "relay_e1a9f4c71691198fae886772b0a24357",
+  "U240": {
+    "pr": 206,
+    "state": "MERGED",
+    "head": "d9e13514f45970b3fe4724dda8cc04f75e7142b3",
+    "merge": "164b72c456859f37c2853b79dd73de2edd2a6743",
+    "ci": "SUCCESS",
+    "prior_source_pass": "relay_abf535ba279a5e8deb1450c706b8b302",
+    "release": "BLOCKED_U239_CUMULATIVE_PAYLOAD",
+    "scope": "sync_project_hub helper; automatic finish integration not established by the eleven-line addition"
+  },
+  "runtime_incident": {
+    "observed": "0.3.0-a3f0477ea4a1",
+    "observed_source": "D:/D_Workspace_NB/-agentic-ai-workspace/260916_agentic-ai-env-diet/.claude/worktrees/user-conversation-setup-42d227",
+    "contains_U240": true,
+    "contains_known_U239_defect": true,
+    "installed_real_journal_counterexample": "provider ollama model qwen3:4b -> local_calls0 paid_calls1",
+    "proof_exit": 0,
+    "no_live_installer_before_rollback": true,
+    "backup": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/backup_20261026_u239_hold/runtime-current-a3f0477.json",
+    "recovery_command": "python C:/Users/Kimyoongyeom/.uaos/uaos.py runtime --apply --rollback 0.3.0-f4723bc9dd46",
+    "recovery_exit": 0,
+    "current": "0.3.0-f4723bc9dd46",
+    "new_runtime_directory_preserved": true,
+    "other_source_edits": 0
+  },
+  "next": "Coordinate with actual installer owner; no runtime reinstall of cumulative PR205/206 payload until U239 correction plus independent gates, or a separately reviewed exact payload omitting that defective feature"
+}

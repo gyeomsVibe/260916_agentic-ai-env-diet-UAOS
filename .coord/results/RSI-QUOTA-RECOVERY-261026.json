@@ -1,0 +1,421 @@
+[
+  {
+    "summary": "RSI window 29 for apply: pass 1.0, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x29",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 30 for apply: pass 0.7, rework 0.3, recurring UNKNOWN — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "No remedy on file for UNKNOWN; the judge reviews the receipts",
+        "cause": "UNKNOWN",
+        "evidence": [
+          "U155-APPLY1",
+          "U159-APPLY1"
+        ],
+        "id": "rsi_be75047e44ae",
+        "target": "review"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x30",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 31 for apply: pass 0.9, rework 0.1, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x31",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 33 for apply: pass 1.0, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x33",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 35 for apply: pass 0.9, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x35",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 41 for apply: pass 1.0, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x41",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 42 for apply: pass 1.0, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x42",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 43 for apply: pass 1.0, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x43",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 44 for apply: pass 1.0, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x44",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 45 for apply: pass 0.9, rework 0.1, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x45",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 46 for apply: pass 0.9, rework 0.1, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_apply_10x46",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 11 for ollama: pass 0.1, rework 0.1, recurring PROMPT_TOO_LARGE,PROVIDER_ERROR — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Split the input or summarise it first (olla read map); keep one file per manual",
+        "cause": "PROMPT_TOO_LARGE",
+        "evidence": [
+          "U141-M1",
+          "MSGID-20261004",
+          "U141-B1",
+          "U141-B3",
+          "U146-R1"
+        ],
+        "id": "rsi_f73d31290cb4",
+        "target": "manual_template"
+      },
+      {
+        "action": "Check that the Ollama service and model are up; do not escalate to a paid worker automatically",
+        "cause": "PROVIDER_ERROR",
+        "evidence": [
+          "U150-C-LOCAL1",
+          "U151-LOCAL1"
+        ],
+        "id": "rsi_a097cb04dae9",
+        "target": "environment"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x11",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 13 for ollama: pass 0.0, rework 0.3, recurring CODE,PROMPT_TOO_LARGE — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Split the input or summarise it first (olla read map); keep one file per manual",
+        "cause": "PROMPT_TOO_LARGE",
+        "evidence": [
+          "U164-LOCAL1",
+          "U157MSG-LOCAL1",
+          "U163-LOCAL1",
+          "U163-LOCAL2",
+          "U166-LOCAL1"
+        ],
+        "id": "rsi_f73d31290cb4",
+        "target": "manual_template"
+      },
+      {
+        "action": "No remedy on file for CODE; the judge reviews the receipts",
+        "cause": "CODE",
+        "evidence": [
+          "U164-LOCAL2",
+          "U165-LOCAL1"
+        ],
+        "id": "rsi_c2f4e01d9dcc",
+        "target": "review"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x13",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 19 for ollama: pass 0.8, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x19",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 23 for ollama: pass 0.9, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x23",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 24 for ollama: pass 0.7, rework 0.0, recurring NO_FILE_BLOCK — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice",
+        "cause": "NO_FILE_BLOCK",
+        "evidence": [
+          "U205-S6",
+          "U205-S7"
+        ],
+        "id": "rsi_10522dbec6c4",
+        "target": "manual_template"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x24",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 25 for ollama: pass 0.5, rework 0.1, recurring PROVIDER_ERROR — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Check that the Ollama service and model are up; do not escalate to a paid worker automatically",
+        "cause": "PROVIDER_ERROR",
+        "evidence": [
+          "U207-L3",
+          "U207-B-L3",
+          "U207-B-L3B"
+        ],
+        "id": "rsi_a097cb04dae9",
+        "target": "environment"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x25",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 26 for ollama: pass 0.2, rework 0.3, recurring CODE,PROVIDER_ERROR — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Check that the Ollama service and model are up; do not escalate to a paid worker automatically",
+        "cause": "PROVIDER_ERROR",
+        "evidence": [
+          "U207-B-L5",
+          "U207-B-L5B",
+          "U209-R2",
+          "U210-L1"
+        ],
+        "id": "rsi_a097cb04dae9",
+        "target": "environment"
+      },
+      {
+        "action": "No remedy on file for CODE; the judge reviews the receipts",
+        "cause": "CODE",
+        "evidence": [
+          "U196-REROUTE-BINDING-local1",
+          "U209-R2",
+          "U210-L2"
+        ],
+        "id": "rsi_c2f4e01d9dcc",
+        "target": "review"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x26",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 27 for ollama: pass 0.4, rework 0.2, recurring CODE,DICTATION_MISMATCH — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "No remedy on file for CODE; the judge reviews the receipts",
+        "cause": "CODE",
+        "evidence": [
+          "U212-B",
+          "U213-L1"
+        ],
+        "id": "rsi_c2f4e01d9dcc",
+        "target": "review"
+      },
+      {
+        "action": "Re-cut into one ===EDIT slice of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice",
+        "cause": "DICTATION_MISMATCH",
+        "evidence": [
+          "U211-A1",
+          "U212-A"
+        ],
+        "id": "rsi_c3334942b0a7",
+        "target": "manual_template"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x27",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 31 for ollama: pass 0.8, rework 0.1, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x31",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 32 for ollama: pass 0.9, rework 0.0, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x32",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 34 for ollama: pass 0.6, rework 0.1, recurring PROVIDER_ERROR — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Check that the Ollama service and model are up; do not escalate to a paid worker automatically",
+        "cause": "PROVIDER_ERROR",
+        "evidence": [
+          "U223-R3-S1",
+          "OQB-Q2-LOCAL-1"
+        ],
+        "id": "rsi_a097cb04dae9",
+        "target": "environment"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x34",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 35 for ollama: pass 0.8, rework 0.0, recurring PROMPT_TOO_LARGE — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Re-cut into one-function slices of about 20 lines and rerun worker: local; use worker: apply with apply_after only after a small slice failed twice",
+        "cause": "PROMPT_TOO_LARGE",
+        "evidence": [
+          "OQB-ID-1",
+          "OQB-ID-1"
+        ],
+        "id": "rsi_f73d31290cb4",
+        "target": "manual_template"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x35",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 36 for ollama: pass 0.8, rework 0.1, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x36",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 37 for ollama: pass 0.7, rework 0.3, recurring UNKNOWN — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "No remedy on file for UNKNOWN; the judge reviews the receipts",
+        "cause": "UNKNOWN",
+        "evidence": [
+          "OQB-S7B-DELIVER",
+          "OQB-Q5A-S1A-REPLACE"
+        ],
+        "id": "rsi_e5b1d98946ce",
+        "target": "review"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x37",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 40 for ollama: pass 0.2, rework 0.1, recurring PROVIDER_ERROR,SYNTAX_ERROR — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Check that the Ollama service and model are up; do not escalate to a paid worker automatically",
+        "cause": "PROVIDER_ERROR",
+        "evidence": [
+          "U222-S2-H5c",
+          "U221-S3-H3L",
+          "U236A-L2"
+        ],
+        "id": "rsi_a097cb04dae9",
+        "target": "environment"
+      },
+      {
+        "action": "Split the task per file and quote the exact SEARCH text; for dictated code use worker: apply",
+        "cause": "SYNTAX_ERROR",
+        "evidence": [
+          "U235-L1",
+          "U235-L2"
+        ],
+        "id": "rsi_86c26f88e136",
+        "target": "manual_template"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x40",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 43 for ollama: pass 0.7, rework 0.2, recurring CODE — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "No remedy on file for CODE; the judge reviews the receipts",
+        "cause": "CODE",
+        "evidence": [
+          "U241-L1",
+          "U241B-L1"
+        ],
+        "id": "rsi_c2f4e01d9dcc",
+        "target": "review"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x43",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 44 for ollama: pass 0.7, rework 0.1, recurring none — run `rsi propose`",
+    "proposals": [],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x44",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  },
+  {
+    "summary": "RSI window 45 for ollama: pass 0.3, rework 0.1, recurring PROVIDER_ERROR,UNREQUESTED_DELETION — run `rsi propose`",
+    "proposals": [
+      {
+        "action": "Check that the Ollama service and model are up; do not escalate to a paid worker automatically",
+        "cause": "PROVIDER_ERROR",
+        "evidence": [
+          "U241C-RW1",
+          "U241C-S2",
+          "U241C-S4"
+        ],
+        "id": "rsi_a097cb04dae9",
+        "target": "environment"
+      },
+      {
+        "action": "Ask for ===EDIT blocks, quote the SEARCH text, add the tests that import the file to acceptance; if the code is already known use worker: apply",
+        "cause": "UNREQUESTED_DELETION",
+        "evidence": [
+          "U241C-S3",
+          "U241C-S3",
+          "U241C-S4"
+        ],
+        "id": "rsi_bfc1ca325afc",
+        "target": "manual_template"
+      }
+    ],
+    "disposition": "EVIDENCE_RECORDED_PROPOSALS_REFRESHED_NO_ADOPTION",
+    "id": "rsi_review_ollama_10x45",
+    "next": "Candidate needs separate fixed acceptance trial and independent admission; current core/runtime P1 hold takes priority"
+  }
+]

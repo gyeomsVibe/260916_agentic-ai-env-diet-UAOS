@@ -1,0 +1,1224 @@
+{
+  "schema": 1,
+  "prepared_at": 1792084110.732565,
+  "read_only_manifest": true,
+  "order": "stored filesystem arrival, then message id",
+  "items": [
+    {
+      "message_id": "codex_brief_20260925",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790275899380796800,
+      "sha256": "a39e76bdce26bd5a1709b8aea3534d283741ddb21e41d2bc3b17ec759d868ff9",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "agy_u42_r1_obs_20260926_1303",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790395383759159800,
+      "sha256": "70890c3866e20425dd149c8460306a7b48ac8d4f45f99a23858c962a0d34a2a0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "agy_u45_readiness_20260926_1439",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790401145258929600,
+      "sha256": "e0591f21f37031335154ba506d96410163e7274cc561fe777f241c4d5fa7c612",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "agy_u45_closeout_20260926_1545",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790405056400866600,
+      "sha256": "29f0483fb2e1349e492c768ae9f13064ce854631c7be7211ee7687f8a914710b",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_u47r1c_judge_20260926_1840",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790415549080559000,
+      "sha256": "b7ef16ad91bc124d2c84ce78bc86d82c68b2c968c4e2206c33a9861ce108fd56",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_u47_handoff_to_codex_20260926_1910",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790417380729505600,
+      "sha256": "fbb18f401a0a030e794d53f72a1709815ec2c21a1cd09b763d11473853a75d2f",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_u47j5_judge_20260926_2035",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790422515181531600,
+      "sha256": "c6613ba9b27aa4930cb57719bf03bbb71cd85572cd476378e41db97d052c7107",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_return_report_20260927_0012",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790435522084409600,
+      "sha256": "d5830f43e43e8d44b285dbbec79102e206e38538712a04b2df67cac500da5632",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_f1_openwith_20260927_0037",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790437060221327700,
+      "sha256": "475fb8ec28e3712d61fab8f6a58ebe50eb6e790328262a45eb22fdd80fac7201",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_a406558_verify_20260927_0047",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790437632280700200,
+      "sha256": "739732fcf3d5f6ead705ab249f2823f6b4f9b8b8dc6910f638feb2e5745c8174",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_handoff_rw1_20260927_0255",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790445181758109600,
+      "sha256": "c8d3a22b234c03ff03f7ffa32373a75f24ff3e59534cb16afb7d885c74497f8d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_rw1c_bundle_20260927_0325",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790445949925716000,
+      "sha256": "4acaa6146c195dc7c04271709a3a8cc2981e1dbb838569abb5ba9fe387f91871",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_release_20260927_0308",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790446015662672700,
+      "sha256": "22af653fabd294c688714282d8fc31b8eff7635c50bcd81ad8c15ac4ef650235",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_olla_mcp_registered_20260927_0325",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790446432902887100,
+      "sha256": "a4aa9e59e683e2b1020a29200ecc139d4a4df58d5f1d09cf6faed9e7605700e1",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_rw1e_review_20260927_0340",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790448031080730500,
+      "sha256": "a5571eef217ca45eb0f85d7d048d9bc2d0e313aa890c21e860c107f548a027b7",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_report_and_plan_request_20260927_1405",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790485306361448600,
+      "sha256": "78a37c4e7adf703d43438806e2117eabe1ba906592c66c83142219c439dfd1d3",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_rw1e_applied_20260927_1440",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790487399879271200,
+      "sha256": "0dddc9e45901a0d1cec4f45c8e7997585643138b662d8e6658a6db87dc6d2110",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u48_plan_ack_20260927_1455",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790488998700504900,
+      "sha256": "d01cf93c6c82325ef3506b39b4177135b7232a8cd03095ad7b779c8b6e4df524",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u48_d0_m1_handoff_20260927_1630",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790494025722320300,
+      "sha256": "7597375df57c565313d372cdeded7e2d00e11e48497f6f57510500868eafe834",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u48_d0_m1_handoff_20260927_1640",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790494748780979800,
+      "sha256": "0f4be1c8a68b91be3340f54bfdaad1bcdd55a24a601f5b36a1a57bcbfc1d86d7",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_olla_scope_f1_20260927_1725",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790496461043333400,
+      "sha256": "87c6a6e31703ed95b7703b03c66044b79f08fb5cdcf669d1a8314be91982f939",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u47_olla_scope_f1_20260927_1740",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790496722926901500,
+      "sha256": "30a3599d9cbc5a0015fb13b8d79a5e39c9e011f16528231bc6c745bef0632874",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u49_return_delta_20260927",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790509494544586300,
+      "sha256": "47ad11341de343de3e1d3ea5abe45bf8d090237081924c904a3f61f8111d2162",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u49_g1_verdict_request_20260927",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790509558350551800,
+      "sha256": "5b07be6bea229cbcb99cfb7669f66b03d616669ec6a9b6f08942e0febadef425",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "claude_to_codex_u49_ack_g1_reject_20260927",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790509858173330900,
+      "sha256": "7486a08e260701a9eb126c82a1f93443a90a4fa5b2c0515e4c3afa2ece82fbf1",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "user_approval_u50_u52_paid_s2_to_codex_20260927",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790510199945855900,
+      "sha256": "a44b3ebe7d29ae0299725c188f683315aced82e9ba941dc641cedc66288c1840",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_da9efa9922054749b19d5073db28c885",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790512882668908900,
+      "sha256": "26de335128453671f9df747309503343f30e461169c4ce857044a1e014a5fecd",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_bedf77b266d103e93fe57f4ea4946796",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790513002076559400,
+      "sha256": "cb30a2afe4fd2ccacdda268db240b7bd122cd02fb83371fbb9807573411f10dc",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_554d48273280f5ae9e9242e75c52d6e3",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790524264893377800,
+      "sha256": "327ef0c7b68954e9b25e6f7f4cca6fd73963d91c3f13ef2d6f90bbd5fd1ac45c",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_7a6d2f5eda08c40fd97a13bdb43a8705",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790531291742207400,
+      "sha256": "4765a4322948cd65e5b2587dee15ce7b9d26695188fa9dc3c38b6a55923857a8",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_917daf19dec3943e9255b408c663eb84",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790532982247020400,
+      "sha256": "9d96da0487eac685f2d0c4c7ae9e15cfb2460abc3c2270191b5ca1dd08fb4d38",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_10c5279caec50db43fd0de16dfd55976",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790533932514163400,
+      "sha256": "5efad1701344b450142b220df7f1cfbabeee8f22c060f65967f2165b268a9f0e",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_c8d73332b1e2ec4259355657ce1017f1",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790533940717305500,
+      "sha256": "88a7ddac3e8467f8171511be79135ea4e43d7a3dc8966cd260c16b699483f07d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_3e089fdc193fdc901864328dc6b6ee09",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790533995450773500,
+      "sha256": "fa7887488cc496b033690a6937a524f8355501e76953f8271014ba714dc6a16e",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_e1a838c373c43e003c704bcdb88f92ea",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790534675931571900,
+      "sha256": "e239a22336f694052c631b05e3123daac90129cfdf851b62c1101dac3dde21e7",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_181d470660dc437658f8fbd0724824f6",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790535643530245700,
+      "sha256": "3b4fd492bdfdf7d55bd766ec127ebb227ba5ec81b625604e902feb49bb0c246e",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_b69e59e6dd58fb0e78edcc41caee9ca5",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790544645690394300,
+      "sha256": "1e1cf46f72d1d010d2ea46703c2af08a40d7575aeb7a241457b7070bc4ae8beb",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_8983ab313baab11d0bfd0614c6c38d4a",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790544871208974400,
+      "sha256": "69afeb3d36eb33c070ba2e7b7106347a64d0709de707326413ac371196705c48",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_647fd74a4326d9732ad5f1e96a18df2f",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790579020384813400,
+      "sha256": "9d162e66cd15b867349027a5a480930e716211b7173669b545528c7c3a7be422",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_11b6d206360a27fb068906d9c268f4a0",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790580420930163700,
+      "sha256": "db62c504f0d0ea3bf6a4462806db8ecb95fc2cc21fba79dec1f2485ef6d81398",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_c56b6d3e57c0716256271c88ebd26b8c",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790581110797656600,
+      "sha256": "3b2113d7b00d7a856c7b6b10f926e910a8f60747bb2a8b9430acd650945321e0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_67da6ec0eb039af2e1e8f74122fff155",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790582210066773100,
+      "sha256": "43cd65a5ad8d7444325d7f98ce2c1faffd3eabea4f7fa707d93b092e7f56efec",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_2ba2fad9636e6dd9b5733f7b6e41e5b4",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790582985469820900,
+      "sha256": "ae93da6ee3c16e1823ecf62a483fb4dd36dc8531d13907455ce12069d83ca648",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_178c7bb1f471b39a408a228a790872ea",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790583838619429100,
+      "sha256": "050677c46b0beaffddba7316a3314743ddfcbde78a5e98fcb90371db92d9ce94",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_840c1ac3386e8692534d96b3e7862675",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790597463230507500,
+      "sha256": "c921c17e01749146ad360cbb5b292ce049ea266ddd737365b8e5fa8654a64689",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_504dc68840c98129b89a34c5499a895b",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790599901719430500,
+      "sha256": "1c022b326e3f41807120e8d0f5054335ee643dff5f24e9b20e7c99b9fb3c4123",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_5dba5dfce9c34444541b7363bc80ae9a",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790600405724150000,
+      "sha256": "433457b7110cd8a90b8b1cd58c3b8e8ad697f0ffffc2e7abeda0f3ced74bb97d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_5eac2792abe075d88d891497d159b75a",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790603998795597700,
+      "sha256": "4ea17c2c96c5116dee5ec0cadb25c1070f6ee6f54a6feddc0b694bc39eac880f",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_5d598736f7d46620b5a27797666a5829",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790605042668692200,
+      "sha256": "c5ea21a395c9ebac96aeb9ca844900cbd0d3de8bd3ba38091043a21b4875b9dc",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_c6a07a8f23fcd03f17c3a8d05d38c193",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790605594211563300,
+      "sha256": "b4e553114acf0f25a3afb4e54b04ce02c607b7ebd43fa7871f7b5db08f492c11",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_daff48aecfab7ce701d994efaa683d4b",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790608417657095900,
+      "sha256": "ff434b197e9873964e8f5ba53004aa4dd1f9ecafd23d5845b563ff34a2feb041",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_689b55d7c406966ac33c60fca26cfe6f",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790645684793644800,
+      "sha256": "8f9611b92cb7a38a980223fc3e3a28758eaa70d82deab69f90bd3ba33952fe44",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_c39efcc649def2237cde39cb31c0680a",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790647021387044000,
+      "sha256": "d1cdffa396a3fcf0a24cbc3b6ad6359f822fd4d6c3db0329aca0d4c95cf02661",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_0ec188b5f696802b79a2a402dd2c6e18",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790647455940932200,
+      "sha256": "5442e7171779c00edd6bdadef00b74120381b43a21f743f659cac06e5f2a450a",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_7a5ddbbb12ee93530b559fedf0ffabe8",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790650863107577300,
+      "sha256": "36787409400ff39fa56bb7215e2a294c43b4e9336fe774c70632388b325037eb",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_c134fccc498563b9a535d9a2c5a83d06",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790652380378510000,
+      "sha256": "98e8fc6b0e99edee643b69da33637972abd758dda153781e108dfabcb96ed89b",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_cd217f5b5c813498e766a72be1ffef70",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790653158010177000,
+      "sha256": "b22cb61284b448944d38511ce7c1dda3e916d11eb25009fd969c24d938fb105a",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_cab69853e08ea73f08942a6c116d7c6d",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790661613265520600,
+      "sha256": "4e0dfb99b7d17add51590af479e0b63acd21812ad8fcefd5f7ec3aac67232af0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_8e86767ee96f7ad2f767a2aa6c963bf4",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790670335701012600,
+      "sha256": "8893abc6cefbfc023000b7deacf2c5d2be50b4f63135f844e38e906254b6273c",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_4f0af003c0ebc414e5591cfc34ef41b0",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790670888253331900,
+      "sha256": "25e7fa93ca3179a5da0ca82d53cd6f20e504c3113219b91c279266c24e967d46",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_5d10bcf578e2e22ed305550f6c223680",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790671315197355600,
+      "sha256": "a794ad58c1b1652a73f7ab6d99b406add46bf9cc8b89f6a173fe44645380bd17",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_77441e62af0f4aa056fd244146f22ccf",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790672085412547400,
+      "sha256": "6ca7b59200bc9abd39659689f31ae993dfc390272472c40dcdca96f9c5dec112",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_5fd96e887cfda771c9de94797fa80d2a",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790747687844244500,
+      "sha256": "cea99f6d51d84a9d3545fefaa001eb89f0313bf781cca1780ebde6daf6c96593",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_0c764c5792aec6d270f9f2ca26290148",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790759570156723100,
+      "sha256": "9d9296ede892c703ac4334a9d583e8fe46a33ae305a871cb54f65efca09ab01f",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_69e6f89c1be79c77efbebce54d795bd6",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790764777258340300,
+      "sha256": "bdf514d9d672977194f64d002afcfe1810b65a4b189187ff0c753e78918b5822",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_fd1c57158e6678358f7c2e2c385d1a95",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790829399474637900,
+      "sha256": "8d746005c01213e37aecf60dba93ea98d62d5ae61357dee25ba8a5c0897a7274",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_9f83c95678c75012e8868bb40b584332",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790851974673122900,
+      "sha256": "4608b85f825e73b5b3af6886b254f07c74db1427949d34a0014cc08e10c605ef",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_990ce4b5cc40eff84efb97536a012c11",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790854362354994500,
+      "sha256": "78228e4bb60d82378c2bd67934e31975b432c47ea7a00be9089f541f47449b12",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_45a3a06c2883972416430fb88ce91198",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790858097216048900,
+      "sha256": "9da88b6f24f237dd2dafde64053be801730d336b0c00d440b9323e2b269905a9",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_559c1d9dcd1798a94cc556a06f7ff8fc",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790858455048199400,
+      "sha256": "bdf646e35031470b459f67f26ecfe78de9c6c377d0efe1e5b8a73c496d8764d0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_5c2934bef1cdcba260d1cfe1571a1b44",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790917650576891900,
+      "sha256": "ff50d2bacb6b75f940597cf9be2f86c1e4d4c0788cf780daca00562c0d514a4d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_4cb54b070f8c5a1a492b6a526dc55627",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790920602466432600,
+      "sha256": "f76258fbb2f732981fe02e7008d9447966d4d5590ade69c0a3b9f34a8c041427",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_e63681fd28c5dc7a5ac586d690679e36",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790922731363550700,
+      "sha256": "10a3e57d6e0c79426430785f5b09bea3d2b195ed89753a66b6529dac3ce47096",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_33eeecbc4c28ebf3fed6cda83edd9ee0",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1790926225255918400,
+      "sha256": "2391dbbe1b0e298a36735a64175e916b2a77c273481f8cfabae837b31db72924",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_6cc577bea80fc38dff7b84c72b0d89c9",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791035038841796900,
+      "sha256": "5679c3ceb9ce7a5afa6a8a392bf40427f43c414ec9e6585709b2ee18e7699fa8",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_d3d53dbb0653f2036a3e7f61a935804d",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791037175995465700,
+      "sha256": "98b070bcb2f1478176dd9665ccb32e4493026d18b1ce18d1b133e54ae170846e",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_f91c340d6e65499166e5c82a40d1f884",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791040521251926700,
+      "sha256": "9d4b490c7c908abd1146e996a0d4b399e187b26536f27259196b59cf44907bf0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_6f9f90cb67c06a974b96da686cc3adf4",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791050427045845800,
+      "sha256": "b0a47c7c1cc8a14d261183fc2bd7bff96f672d86bed430fe0d76b9195ea86c0d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_903b55ca57970aa03d6ad3232338fd10",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791058701175256600,
+      "sha256": "98d9e5f6de87482bfdd93a330ffdb683526972fa27ed54e870b360afd14d811d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_ollama_10x9",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791059857158348000,
+      "sha256": "9dd268c4695e673c37d50a281e772761238e30b69441a7103b5f1302d4be1fdb",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_ollama_10x10",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791064026946396800,
+      "sha256": "d7f4e2d5cc0fbb107b8fdc0397c96a57c908de6e5cefddbdb3c577bb1e5f6305",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_apply_10x29",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791083702771915200,
+      "sha256": "f2afdfb5e65140f593837a715624514d1818eccac04807b3a27fc34a19d47454",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_ollama_10x11",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791098856618615800,
+      "sha256": "458bfb93ea7ac015b5f66f83838b78c2c2a7424e76f92bfb8ec45b9e583a0483",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_apply_10x30",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791103207529239400,
+      "sha256": "5404f27fd2a102daca7d64d7dd6226d671d2212f7b8f6f8350697b4a25ca5749",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_eb7a96e5fd6703de8f1b410c58bc78c2",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791106826592497000,
+      "sha256": "5147eee21845f28db9ce27202ce7c93e216dbdda8b651e43973bed9e05763bc7",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_e2fac06e211785e3807ce1dc16e2c831",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791119341479222500,
+      "sha256": "7a25b651547f1f9d4916d0c9ac886c686502f88227d51d790d895f64a24a5959",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_38f1bee644c511628a13933197e49869",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791122786957563500,
+      "sha256": "83e2816eeba50b02c94c214a2b01247dabb1f9c1407d817c51582058886be4a0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_apply_10x31",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791124170717423800,
+      "sha256": "bafb0a46de42465fb805402217a455c6684985fe671aa75e997dd29c29a1ddf0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_2ab40811327ceb33e382cce8da10bce6",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791124337916911100,
+      "sha256": "1dcd1ccd4f2e212b84b1d020c5a6d965b23bc6531aced8a4c02119d7f1c35414",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_5264d69737bfff742d64e8cd756af94f",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791137421395757800,
+      "sha256": "969a38feab3b87b111b19eef111d9a1c266f22f6a9a642bbba5f5e668a622bb7",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_78eece49f6505f8279bebf5f4320806c",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791137424240084500,
+      "sha256": "deb3ab469900ef43e3bccd79b1d492c7b0f91a674398b015a21e51a9e8b837c6",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_fec0212644c806c53071c2496e825638",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791137425823637000,
+      "sha256": "81d8b5bd004c4c3f71c315a9ece583d83c4bf453d18f12d0e6b239d5e8d6cba7",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_ollama_10x13",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791138725898960000,
+      "sha256": "c7af2cfa75c56f724ff7bede8bd93237a2ef2ed62b5ec709038c528ade42a856",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_741ea3298efa5502dd134311f61296c9",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791139443744310600,
+      "sha256": "3357c22ee0613895adefcfbd28eddaafa55e14f52b62a4a5f48ecc9617b9f1c3",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_33bf289d6f78494b94c187622f404c2e",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791139674142046100,
+      "sha256": "a6ce13280aa36c8723fe52beb45bd98fd6fd5e10cfcc796cc80efd46f6de3b4c",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_8535022731512de4f61714cab25c1462",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791139705957757900,
+      "sha256": "de616e8274df4fbd42a8dcba1e6bb6333688f7e894f85a01c7a35b7d50a42286",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_36786b3d286e3e22e710a6b9299a6230",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791139974223852400,
+      "sha256": "abdcec096368f64e51d5d8c528b21a2be58c5a71f102310b65ebbf50ab6f6705",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_9107b627fb8cc7b9ddf5a4bea064b561",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791140489559712900,
+      "sha256": "be74d6d0fd4e9f03197beb39d669cfd725015c26d0c7f3fe8ad8106a510edf3b",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_apply_10x33",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791140802110256300,
+      "sha256": "5740d75e8dd4833338e35fa6f65bacd078cb86984730509c3ae3f10eba8c8903",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_178f64a63181e0d0176ba7eca2521eb0",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791168145487980300,
+      "sha256": "33744e85277de703fbe399205e7bf40d40481ec280eb71de56ce3e00534766c5",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_2a5993225adaf0d2e27a8a05503b9656",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791168146524171800,
+      "sha256": "99f460d118a0ac93f13eb7577c345b1a2ff4579f9a4dc9018a178eec5943b4ac",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_6cdce45a886711612ca77d49f1f6bf91",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791168147386982200,
+      "sha256": "f1cc9e7e8b85bc7505918870bae701f53aedbef2dbcb281a5675bf56a3295ae2",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_cb0e98936b2b632df539bd80d381f9d3",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791168149346091800,
+      "sha256": "3e8ae2d1317b8b0a2f0cd2bb36600d0beb0a2757919fa8f69fc413d8649c2594",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_f278bf4c2dab94d0767aa9e0",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791181797971661000,
+      "sha256": "54564bdee14af4aa0fb27dfd648cda9b1e9549b50207fc157be707c67723992e",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_8e35a0af0cb8c036f7cc7420",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791184002334899700,
+      "sha256": "2b48721dae384a0ac42284d79dbf4a9478ae0ca3c50c7ad93886e2c26f7610d5",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_17f1aaa00fec8193468f7cb3c6ceadc5",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791216428294256200,
+      "sha256": "e9400ace0e2861c1686c7d0f2821e7e4e924afda8372704aac4fd9bbc5eb04ca",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_1f6677536ccdfe7d6741fbaee8c1a3d8",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791216432585304200,
+      "sha256": "2b05c9d0e89ab8149e7902b56ab2010cadb7f54e9ca7b8bc151be978dbafbaf0",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_6d6fda6c4571f07c4bf3346e93843f2e",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791597705652878700,
+      "sha256": "90d0b8261440cb33f928e3161e817fe3afe43b1d40e18e0a9506acda58dbd489",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_apply_10x35",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791601267184528300,
+      "sha256": "11ccb436b3b5eaf7e766733104bf406fe3d0dc0af01e4c2a715bb95dd39ecdb3",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_caa8d7491f25173de1dd9bdc",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791637636366397000,
+      "sha256": "131d307783ab176a1478964bff19f1bc42563ff04a6dab8377fc6ab8dd889429",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_d7e9ee9491e911da1560c2d7",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791637881494554500,
+      "sha256": "0c581d334e74ca9a61b59b410afb490494db9a0a44533715065bb89ea34bc508",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_5cecf623ea3611d38006e75b",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791637942634355100,
+      "sha256": "c693a03f30d33e0e8ed7770a6d8a805df347c2d67d465f15d85bcaf03f234d21",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_2e3b0014ee1dee7f299e8639",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791638003823550400,
+      "sha256": "f970d80cb5d2e95cf4b5066a682d8eb718175d824035ba9044666e3043a668b4",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_26c2c88867a12f78b5594766",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791638065029455400,
+      "sha256": "4da2d3ea75745ef5781c0b705b6edf7de9c0e5c119b13d66b85aacbe6792450c",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_a7285a28fc957921824bc9e3",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791638984808540800,
+      "sha256": "231aa32bef28625bdec71867a3a0c24c3b84102a1848a28bee40e3c8b92cbb72",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_a9ec73ec282801bf4bc0c437",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791639841662374100,
+      "sha256": "109824801939ac24347860485a1c93abf0f7d5ba429457de8baacbd3705c2b55",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_9e24a6104ddcfe43aa301922",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791640636528342700,
+      "sha256": "7be9c26976b652ce70b3c4b02627ff9baefa3305a571d3a214777bc53313f8d1",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_04c7163f27a75605a487446d",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791641492208490200,
+      "sha256": "4873cc22ebfceb72a065ea712cf1588d86ae710aba599c901af2831e43fdeb91",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_dbe3e27725f076813f844097",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791641675646478900,
+      "sha256": "ac83f579a3b7226ff4e1ce180e0f8b416f59dc6670055adf5cb9019ca755e11b",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_c7ed752d031e14a04c89743f",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791642289180564800,
+      "sha256": "d6f81e498adc8473c430d1b1f6f3875818c450e690cabeb4902f57cf03065269",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_096047945fc1141925ca1b70",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791642719618553900,
+      "sha256": "264fa99a9d10138741a9ba79082ff67b14bfb3eb86526894ba4c5d38e82cc090",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_1a0a2dd7f498691a13d34d3d",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791645292355918300,
+      "sha256": "8e56118071c686566d6e39c0b88cd94377e53aba87f6ad2be93c5a79b3377994",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_784086e62bcb1935761ff6af",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791645662692323100,
+      "sha256": "fcc25a60e5b5b9f1c28b8881f21f6b19eda09427440ebb513bb38ea977dd582c",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_9d6ee31a0afae6f008ef49dd",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791680825004914200,
+      "sha256": "05fa3a50bdc10168fcfac810d5bd0e0d21f7cae6044fbd0e632e954b17de694e",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_456fc4c62750c36350d7681d",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791683790320720000,
+      "sha256": "98608a3eb5141ad3bd489ba4d5b246c87ef0b5d1da0b92136a1dc0e071aba689",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_685992632a8a78d5e5684e3b",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791683916113767700,
+      "sha256": "1caa53bec9b4d2234477fc5303ae672953254b174b0a0f607669104d7e177097",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_a2975f66480e261ef4315410",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791683981109110100,
+      "sha256": "021da1ee6fe6dd5087e79125794d2699d7a3b9c83a368dfef5c68ae4223031b8",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_9efd78428fcd39e944031cf6",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791686073397816900,
+      "sha256": "8de71fb975591bb6aee8e8e29b7672533eb97602731ec494c91a7a1df63fd0ba",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_8f3131d17baf240805bef2dc",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791972482050037400,
+      "sha256": "727ed5782996e80245e305c449e5b7765d2bfb46a7e7b8070a4a8a6230a57121",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_66950fcddabf38d52cf06af4",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791982727888703600,
+      "sha256": "cacb4cc4216f2831b0e4c70275dd96edd52547eaaa1c4a79ba650b7aa33f55a4",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_9693c760f476af619ab00d9b",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791994767658794100,
+      "sha256": "cb8ba6616f233e8213dde5d921db23183948d6c71f3ea87ff8a194443375935c",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_a7cbcbed468a04017e7f5424",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1791995567179397600,
+      "sha256": "df3f728afa7001e0482fe8e9e00b40546c76792e5b04978b98e64e25a9c0d1b7",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_8ddee2f38f0c82d0281b4548",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792032415673176400,
+      "sha256": "c3669b9382969f475aa3767fe83ec92498922118bc7082dc3e10de4c0979034a",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_1cc548d16a1cf499b1723d4e",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792033154594118900,
+      "sha256": "2ad1b10289de33e8087e4cefbb6492bffe9141a0aa4aaa5db5f97d926304c214",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_bfac47a0d89ef9dc73c59d38",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792033217321682800,
+      "sha256": "f52c4fd4a879fadcd5c71de8e9a61b73babcd103587d2c012e74c55117b4c67a",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_67a2d90586ca6dcde37f26f8",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792049701233602100,
+      "sha256": "547edb50159d9cf645f45acacfae580de47f8193ef1e2dad50d2aed4831cd944",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_0f8234381f38eeb9429e39ab",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792059380326458900,
+      "sha256": "6986e8777e6deab00f2c7aeba997fc7962708541d55320742180ade4494442e8",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_ollama_10x19",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792061180264801900,
+      "sha256": "0c13b0fb2857931b730fbd9c710c85a1a8a99bbbe2764218683fa7c35e30988e",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_5caf8b1fe320829ffd012e88",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792061799391010000,
+      "sha256": "62bd4a9d1746c8a6c404762b10a2e4fc60f44d10136b897eea83cc1099f848df",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_d1c53105b812e38d59ee5867",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792062426935505900,
+      "sha256": "aaf7e2998cf3f58eec38af8b310c7fd5b13a98ca8810e856bc3dcf31f653235f",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_d6a9862a8ff1febfbc13e403",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792062865010068200,
+      "sha256": "a0c427755034f52b97cc7dc68fe968ce0f3619de0f71f268cc2eef2236a63bb9",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_6a8519edb6d3879b9e4ebe14148ba21f",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792068461683013300,
+      "sha256": "a2de1a9af04214acf4cf834bec7fd13fec8cc1eee07d39d655625bdfbd8f5807",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_74dd9419cc1533e61d0560d069e16b39",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792068724523795800,
+      "sha256": "08327ecbd56b118d1f80e4f4d13410438d9065f70b7b4e41afbf14e8be77eaaf",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_140c5bbb6d1ecddb12d4e2d8d1ce020d",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792068743171224300,
+      "sha256": "9436c3c218138f624e5d3c37fbb91bb109afab96ae5214e25a307d66402fd53d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_7cd5ae44e85b45b78f097648",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792071029331656900,
+      "sha256": "220a292038965a70d663dc9e13a6f25081cc656b51fd10b4f772bf39174b650a",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_9319aefcb0dfe32b8ac47de7",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792073774645828400,
+      "sha256": "70ba709d0719dbcd9b9ee40e38ac0c37cdfceed9a251a43f4caaf464008c3f70",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_ff3116ae468b6aa4e565fdcd",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792080432276561000,
+      "sha256": "57a74f57ea3684905ab45cc49c5ac81c38d2f40b3e960ba435435bcd755d3c81",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_955c2c5ae8c4bb3a4afbe9d4484b47ca",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792082828138506400,
+      "sha256": "fca07fb6cde0882235c1ccaa946fc8a4e6d20d93ac15ce6f3239732e62ce624d",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "wake_62acb8c920596e08874f07f1",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792083444784633500,
+      "sha256": "72e3e8ae6d3697a197613e36e98c8916f2456f297c0dc868b993a57d8905ec3c",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "rsi_review_apply_10x41",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792083570077375700,
+      "sha256": "53e723c446d4bfcabaab7f48fe09d0ea678a22b8ccaec34c7f2cf76f7df34846",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_659f860f244b4439cb17d66ebb3e7759",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792083576098877700,
+      "sha256": "57f8fdcd8b098b7a8b57c81fb4f94f5a568811ea7443ae50c2319731b1d626da",
+      "disposition": "PENDING_REVIEW"
+    },
+    {
+      "message_id": "relay_49f5a4e58a7ee955d61fae31a66da502",
+      "requested_target": "codex",
+      "card": null,
+      "arrival_mtime_ns": 1792083831348316300,
+      "sha256": "20d17d83f36703eedbba40a77268613052ff9a5e6428a1b033df87811d0b8172",
+      "disposition": "PENDING_REVIEW"
+    }
+  ]
+}

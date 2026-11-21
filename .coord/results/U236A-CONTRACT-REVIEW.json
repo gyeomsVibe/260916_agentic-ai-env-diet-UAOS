@@ -1,0 +1,23 @@
+{
+  "lint_exit": 0,
+  "findings": [
+    "Unconditional modelUsage enforcement and global alias rejection conflict with legacy success/default contracts. Use explicit opt-in and preserve existing tests.",
+    "USD threshold can overshoot; pre-spend hard-cap claim is contradicted by existing adapter source.",
+    "Probe is outside this no-network/no-paid implementation contract; require separately bounded evidence or existing sanitized metadata.",
+    "Independent acceptance file absent: create and hash-pin before worker dispatch."
+  ],
+  "implementation": "NO_GO_PENDING_FIXED_GATES",
+  "letter": "relay_0220a1ff9f2f7e2c7c4e4713a7f03e03",
+  "contract_sha256": "ae804aac367599c52f2d0572fcad35a7cdc58b98f50bb18b831240649e553a2d",
+  "verdict": "REVISE_EXECUTION",
+  "delivery_state": "FAILED_SESSION_IN_USE_MAILBOX_PRESERVED",
+  "adapter_sha256": "e2fe98b551e26421ab3f8f08dfbeb293cc77d6d2d6fc93638bb90dc0b415079f",
+  "related_test_warnings": [
+    "u46",
+    "u69",
+    "u70",
+    "u98d"
+  ],
+  "next": "Contract-only revision, no duplicate writer or paid route retries; U235 HOLD stays",
+  "delivery": "relay_a6e033c2b3951d558e63a4c6c91cb48d"
+}

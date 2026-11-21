@@ -1,0 +1,20 @@
+{
+  "wake_id": "wake_eadc894a53246842a2314700",
+  "baseline": ".coord/results/wake_e7538b4422ea002cd7215d4a-disposition.json",
+  "unique_steps": 130,
+  "added": [],
+  "removed": [
+    "U236A-L2"
+  ],
+  "verdict": "AGGREGATE_WAKE_RECONCILED_NO_BLANKET_COMPLETION",
+  "dispositions": {
+    "unchanged": "Preserve prior step disposition and unresolved backlog; no automatic rerun",
+    "U236A-L2": "Absent from these newer wake lists; reconciled ABANDONED receipt retained",
+    "U233-merge": "Resolved: PR201 live MERGED 3dcfa956ecc0c5d8d535e3fb39f784d85ac2930a, CI SUCCESS verified this session. Deployment remains separate and unconfirmed.",
+    "U229-SCHEDULER": "Runtime command mismatch already independently reproduced; no later repair evidence in these wakes",
+    "EVALCW-u188,P01": "Still unresolved; aggregate wake does not supply owner/artifact evidence for reconciliation"
+  },
+  "current_owner": "Existing local pilot17100 remains alive; preserve exclusive source owner",
+  "new_paid_worker_calls": 0,
+  "result_ref": ".coord/results/relay_57bb5b72ec0b4125f87915df1d32985c-disposition.json"
+}

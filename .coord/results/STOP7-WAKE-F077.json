@@ -1,0 +1,18 @@
+{
+  "gate": "U235 authentic-provenance HOLD retained",
+  "delta": "BLOCKED_TASK: U234R-L1",
+  "delivery": {
+    "id": "relay_8480228802a1c42928ef7db7cdbee939",
+    "mailbox": "DURABLY_PUBLISHED",
+    "state": "DELIVERY_FAILED",
+    "retry": "No duplicate CLI session launch; existing owner continues",
+    "reason": "Claude session already in use"
+  },
+  "id": "wake_f07792e459d748edd1d4eda0",
+  "distinct": 130,
+  "entries": 150,
+  "time": "2026-10-25T15:46:40.3301324+09:00",
+  "read": "FULL_JSON_PARSED",
+  "disposition": "Failed local attempt preserved as ABANDONED/UNKNOWN with UNREQUESTED_DELETION, no bundle or acceptance; successor U234R-A2 independently verified and APPLIED; no retry or EVAL restart",
+  "resolution": "ALERT_HANDLED_NOT_ALL_BLOCKERS_RESOLVED"
+}

@@ -1,0 +1,15 @@
+{
+  "card": "U192",
+  "title": "[U192] Review provenance exact head rework",
+  "tools": {
+    "antigravity": {
+      "id": "f90bbbaa-4be8-461b-9495-c90c149efd7f",
+      "opened_at": 1792035784.3215067,
+      "last_input_tokens": 65636
+    },
+    "claude": {
+      "id": "c90d74de-8190-4479-8b6c-9c2a1ecc25a8",
+      "opened_at": 1792070882.3422544
+    }
+  }
+}

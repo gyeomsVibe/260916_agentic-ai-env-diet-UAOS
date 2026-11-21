@@ -1,0 +1,16 @@
+{
+  "card": "U198",
+  "title": "[U198] Canonical Ollama slicing deployment",
+  "tools": {
+    "antigravity": {
+      "id": "8d467d8b-9740-4fda-8c95-bca93aa0adb7",
+      "opened_at": 1792065138.1760733,
+      "last_input_tokens": 53891
+    },
+    "claude": {
+      "id": "c90d74de-8190-4479-8b6c-9c2a1ecc25a8",
+      "opened_at": 1792065621.6831598,
+      "released_at": 1792070882.1330993
+    }
+  }
+}

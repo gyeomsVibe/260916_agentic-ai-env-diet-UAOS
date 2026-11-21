@@ -1,0 +1,1388 @@
+{
+  "schema": "historical-codex-mail-audit-v1",
+  "work_id": "DESK-261026-HISTORICAL-MAIL",
+  "read_only_except_this_file": true,
+  "canonical_project": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet",
+  "inbox_command": "C:/Python314/python.exe -B C:/Users/Kimyoongyeom/.uaos/uaos.py coord inbox --project <canonical_project>",
+  "initial_inbox_messages": 394,
+  "initial_relay_count_all_targets": 76,
+  "excluded": "RSI_REVIEW, wakes, non-Codex targets; no bulk ACK",
+  "entries": [
+    {
+      "id": "relay_05f9a6052ad47d10e6649dd86f1b6ff5",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": "U223",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "UNRESOLVED_PROVENANCE_NOT_PASS",
+      "further_action_remains": true,
+      "reason": "Historical U223 provider PASS lacks an independently verified authentic lineage here; SOLE-CODEX inventory preserves quarantine179d24a and exact source7beb. Later schedule DONE is merge reconciliation only.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\SOLE-CODEX-261020.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_05f9a6052ad47d10e6649dd86f1b6ff5.json",
+      "letter_sha256": "D0CE840D613FA9C9ECD82D9945374273116DACDDA1F3FC839867FF6CED0E15C6",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\SOLE-CODEX-261020.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_1185bdefc06f74423aa56b1de27d806f",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_REVIEW_OFFER",
+      "further_action_remains": false,
+      "reason": "Historical offer to review U228; later U228 result and schedule reconcile the document work. No new review is requested by this offer.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U228.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_1185bdefc06f74423aa56b1de27d806f.json",
+      "letter_sha256": "1EC6D36AD5DE2FD6095AA924638D3BC125E7C40ACC738FA69A0BF0FB70920DA7",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U228.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_140c5bbb6d1ecddb12d4e2d8d1ce020d",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "ALREADY_DISPOSED_CANONICAL_RELEASE",
+      "further_action_remains": false,
+      "reason": "U198-CANONICAL-DEPLOYMENT records independent review, platform PR19 MERGED53deff7, UAOS PR157 MERGEDf23d0c2, Build/SourceCheck/Apply/Check, combined2178 and installed40 PASS. U194 separately records exact-head acceptance. Historical merge/owner request is obsolete; no new deployment.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_140c5bbb6d1ecddb12d4e2d8d1ce020d.json",
+      "letter_sha256": "9436C3C218138F624E5D3C37FBB91BB109AFAB96AE5214E25A307D66402FD53D",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_178f64a63181e0d0176ba7eca2521eb0",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "ALREADY_REJECTED_FORGED_AUDIT_WITH_SCOPED_SUCCESSOR",
+      "further_action_remains": true,
+      "reason": "PLAN preserves explicit Codex rejection of hand-written agy_auto rows83-85; later independent CODEX-return-attest-boot receipt covers U174-AUDIT-PROOF signed genuine CI and forged-artifact refusal. No old forged evidence is accepted. Broad unrelated U146/U143/U168 re-review subrequests remain UNKNOWN outside this specific audit defect.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.work\\u169\\codex_gate_decision.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\reviews\\CODEX-return-attest-boot-20261016.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_178f64a63181e0d0176ba7eca2521eb0.json",
+      "letter_sha256": "33744E85277DE703FBE399205E7BF40D40481EC280EB71DE56CE3E00534766C5",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.work\\u169\\codex_gate_decision.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\reviews\\CODEX-return-attest-boot-20261016.json"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_17f1aaa00fec8193468f7cb3c6ceadc5",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "NOTICE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_HISTORICAL_DESK",
+      "further_action_remains": false,
+      "reason": "Historical desk declaration is superseded by current explicit native desk records. Do not restore old routing or replay old absence dates.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_claude.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_antigravity.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_17f1aaa00fec8193468f7cb3c6ceadc5.json",
+      "letter_sha256": "E9400ACE0E2861C1686C7D0F2821E7E4E924AFDA8372704AAC4FD9BBC5EB04CA",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_claude.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_antigravity.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_18c0adaa4f1a77c16c85cdd8c0e2eed7",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U141",
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_18c0adaa4f1a77c16c85cdd8c0e2eed7.json",
+      "letter_sha256": "C0CD6EB39CF3A92CBCE3F2CFA23C3B78AE69FFE5D9270DBD65FACADE1086B2B3",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_1f6677536ccdfe7d6741fbaee8c1a3d8",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_HISTORICAL_DESK",
+      "further_action_remains": false,
+      "reason": "Historical desk declaration is superseded by current explicit native desk records. Do not restore old routing or replay old absence dates.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_claude.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_antigravity.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_1f6677536ccdfe7d6741fbaee8c1a3d8.json",
+      "letter_sha256": "2B05C9D0E89AB8149E7902B56AB2010CADB7F54E9CA7B8BC151BE978DBAFBAF0",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_claude.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_antigravity.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_26e8bc42a762ad1ca5e6ad16dae807b4",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U198",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": true,
+      "disposition": "ALREADY_DISPOSED_CANONICAL_RELEASE",
+      "further_action_remains": false,
+      "reason": "U198-CANONICAL-DEPLOYMENT records independent review, platform PR19 MERGED53deff7, UAOS PR157 MERGEDf23d0c2, Build/SourceCheck/Apply/Check, combined2178 and installed40 PASS. U194 separately records exact-head acceptance. Historical merge/owner request is obsolete; no new deployment.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_26e8bc42a762ad1ca5e6ad16dae807b4.json",
+      "letter_sha256": "13CBD654CDCB843FF16D98B59A3CB94991FC1221F47AD696B149D449E8779FFF",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_2a5993225adaf0d2e27a8a05503b9656",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "ALREADY_REJECTED_FORGED_AUDIT_WITH_SCOPED_SUCCESSOR",
+      "further_action_remains": true,
+      "reason": "PLAN preserves explicit Codex rejection of hand-written agy_auto rows83-85; later independent CODEX-return-attest-boot receipt covers U174-AUDIT-PROOF signed genuine CI and forged-artifact refusal. No old forged evidence is accepted. Broad unrelated U146/U143/U168 re-review subrequests remain UNKNOWN outside this specific audit defect.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.work\\u169\\codex_gate_decision.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\reviews\\CODEX-return-attest-boot-20261016.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_2a5993225adaf0d2e27a8a05503b9656.json",
+      "letter_sha256": "99F460D118A0AC93F13EB7577C345B1A2FF4579F9A4DC9018A178EEC5943B4AC",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.work\\u169\\codex_gate_decision.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\reviews\\CODEX-return-attest-boot-20261016.json"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_2ab40811327ceb33e382cce8da10bce6",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_2ab40811327ceb33e382cce8da10bce6.json",
+      "letter_sha256": "1DCD1CCD4F2E212B84B1D020C5A6D965B23BC6531ACED8A4C02119D7F1C35414",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_33bf289d6f78494b94c187622f404c2e",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_33bf289d6f78494b94c187622f404c2e.json",
+      "letter_sha256": "A6CE13280AA36C8723FE52BEB45BD98FD6FD5E10CFCC796CC80EFD46F6DE3B4C",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Reconcile OL-D/A/C/B proposal against later U198/U225 and actual usage ledger; issue a bounded decision only for genuinely unimplemented measured gap, avoiding duplicate cards.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_36786b3d286e3e22e710a6b9299a6230",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_POSITIVE_REVIEW",
+      "further_action_remains": false,
+      "reason": "These PASS/arithmetic reports for bundle410dc910 are superseded as acceptance evidence by root independent REVISE relay_c8ccecba842a9d5712bbd66983be79b6. Do not promote this old bundle from PASS arithmetic.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_c8ccecba842a9d5712bbd66983be79b6.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_36786b3d286e3e22e710a6b9299a6230.json",
+      "letter_sha256": "ABDCEC096368F64E51D5D8C528B21A2BE58C5A71F102310B65EBBF50AB6F6705",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_c8ccecba842a9d5712bbd66983be79b6.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ]
+    },
+    {
+      "id": "relay_38f1bee644c511628a13933197e49869",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "NOTICE",
+      "explicit_verdict_requested": null,
+      "disposition": "HISTORICAL_EVIDENCE_NOTICE_ONLY",
+      "further_action_remains": false,
+      "reason": "Status/native-origin advisory contains no fresh acceptance request; preserve evidence without treating native origin as blanket authority or claiming end-to-end completion.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_38f1bee644c511628a13933197e49869.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_38f1bee644c511628a13933197e49869.json",
+      "letter_sha256": "83E2816EEBA50B02C94C214A2B01247DABB1F9C1407D817C51582058886BE4A0",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_38f1bee644c511628a13933197e49869.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_3c441a5e6ff5d53dcad3d11d0a961b45",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U127",
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_3c441a5e6ff5d53dcad3d11d0a961b45.json",
+      "letter_sha256": "A2CD2BC8CBCB504660067DDE31A9B78D98653290E70D7A29C0371E905F7D0488",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_4e4ffa79bd453551787f9c62e9fc08da",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": "U163",
+      "wake_class": "NOTICE",
+      "explicit_verdict_requested": null,
+      "disposition": "HISTORICAL_EVIDENCE_NOTICE_ONLY",
+      "further_action_remains": false,
+      "reason": "Status/native-origin advisory contains no fresh acceptance request; preserve evidence without treating native origin as blanket authority or claiming end-to-end completion.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_4e4ffa79bd453551787f9c62e9fc08da.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_4e4ffa79bd453551787f9c62e9fc08da.json",
+      "letter_sha256": "71E024318181435640E01EA4C450C64268F775AEE08F466A826EEBCD5825F618",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_4e4ffa79bd453551787f9c62e9fc08da.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_5264d69737bfff742d64e8cd756af94f",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_5264d69737bfff742d64e8cd756af94f.json",
+      "letter_sha256": "969A38FEAB3B87B111B19EEF111D9A1C266F22F6A9A642BBBA5F5E668A622BB7",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_5d9966f14bc039616c4b500b79300e1d",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U128",
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_5d9966f14bc039616c4b500b79300e1d.json",
+      "letter_sha256": "223F81000990AA1F5CE1CFFCC0EE4B45750E7D03B860703C69CC26ACD98A8298",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_6896b61fd4d182a755d06b2855f942be",
+      "actor": "codex",
+      "target": "codex",
+      "card": null,
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_OLD_THREAD_CONTAINMENT",
+      "further_action_remains": false,
+      "reason": "Old-thread polling containment names obsolete desk/PIDs; current native Codex desk is different. Do not execute its historical stop/PID instructions again.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_6896b61fd4d182a755d06b2855f942be.json",
+      "letter_sha256": "A33BD71362E49BB2BE52D204940893E362960C54BD9076D34B53BF94B43CCCA3",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_6a8519edb6d3879b9e4ebe14148ba21f",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "NOTICE",
+      "explicit_verdict_requested": null,
+      "disposition": "ALREADY_DISPOSED_CANONICAL_RELEASE",
+      "further_action_remains": false,
+      "reason": "U198-CANONICAL-DEPLOYMENT records independent review, platform PR19 MERGED53deff7, UAOS PR157 MERGEDf23d0c2, Build/SourceCheck/Apply/Check, combined2178 and installed40 PASS. U194 separately records exact-head acceptance. Historical merge/owner request is obsolete; no new deployment.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_6a8519edb6d3879b9e4ebe14148ba21f.json",
+      "letter_sha256": "A2DE1A9AF04214ACF4CF834BEC7FD13FEC8CC1EEE07D39D655625BDFBD8F5807",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_6cdce45a886711612ca77d49f1f6bf91",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_6cdce45a886711612ca77d49f1f6bf91.json",
+      "letter_sha256": "F1CC9E7E8B85BC7505918870BAE701F53AEDBEF2DBCB281A5675BF56A3295AE2",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_6d6fda6c4571f07c4bf3346e93843f2e",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "NOTICE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_HISTORICAL_DESK",
+      "further_action_remains": false,
+      "reason": "Historical desk declaration is superseded by current explicit native desk records. Do not restore old routing or replay old absence dates.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_claude.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_antigravity.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_6d6fda6c4571f07c4bf3346e93843f2e.json",
+      "letter_sha256": "90D0B8261440CB33F928E3161E817FE3AFE43B1D40E18E0A9506ACDA58DBD489",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_codex.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_claude.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\presence\\user_desk_antigravity.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_741ea3298efa5502dd134311f61296c9",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "HISTORICAL_OWNERSHIP_NOTICE_UNKNOWN",
+      "further_action_remains": true,
+      "reason": "Observer disclaimed ownership, and explicitly said the dirty writer was UNKNOWN. This is not authorization to claim the old source; current owner reconciliation is required before using it.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_741ea3298efa5502dd134311f61296c9.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_741ea3298efa5502dd134311f61296c9.json",
+      "letter_sha256": "3357C22EE0613895ADEFCFBD28EDDAAFA55E14F52B62A4A5F48ECC9617B9F1C3",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_741ea3298efa5502dd134311f61296c9.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_74dd9419cc1533e61d0560d069e16b39",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "ALREADY_DISPOSED_CANONICAL_RELEASE",
+      "further_action_remains": false,
+      "reason": "U198-CANONICAL-DEPLOYMENT records independent review, platform PR19 MERGED53deff7, UAOS PR157 MERGEDf23d0c2, Build/SourceCheck/Apply/Check, combined2178 and installed40 PASS. U194 separately records exact-head acceptance. Historical merge/owner request is obsolete; no new deployment.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_74dd9419cc1533e61d0560d069e16b39.json",
+      "letter_sha256": "08327ECBD56B118D1F80E4F4D13410438D9065F70B7B4E41AFBF14E8BE77EAAF",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_78eece49f6505f8279bebf5f4320806c",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "NOTICE",
+      "explicit_verdict_requested": null,
+      "disposition": "HISTORICAL_EVIDENCE_NOTICE_ONLY",
+      "further_action_remains": false,
+      "reason": "Status/native-origin advisory contains no fresh acceptance request; preserve evidence without treating native origin as blanket authority or claiming end-to-end completion.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_78eece49f6505f8279bebf5f4320806c.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_78eece49f6505f8279bebf5f4320806c.json",
+      "letter_sha256": "DEB3AB469900EF43E3BCCD79B1D492C7B0F91A674398B015A21E51A9E8B837C6",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_78eece49f6505f8279bebf5f4320806c.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_824d82d832dcc901c33c8e30a950067d",
+      "actor": "codex",
+      "target": "codex",
+      "card": "U157",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": true,
+      "disposition": "DUPLICATE_FORWARDED_REQUEST_RETAIN_ORIGINAL",
+      "further_action_remains": false,
+      "reason": "Explicit forwarding duplicates original relay_96ab8ed75698c00b1792b54c0e2123de. Its historical verdict remains UNKNOWN and is represented separately; no duplicate review should run.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_96ab8ed75698c00b1792b54c0e2123de.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_824d82d832dcc901c33c8e30a950067d.json",
+      "letter_sha256": "52E7677905BF39A762849AE92288873244BD0D8603DC2D11E6F63B04EAEBF245",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_96ab8ed75698c00b1792b54c0e2123de.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_8535022731512de4f61714cab25c1462",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_POSITIVE_REVIEW",
+      "further_action_remains": false,
+      "reason": "These PASS/arithmetic reports for bundle410dc910 are superseded as acceptance evidence by root independent REVISE relay_c8ccecba842a9d5712bbd66983be79b6. Do not promote this old bundle from PASS arithmetic.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_c8ccecba842a9d5712bbd66983be79b6.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_8535022731512de4f61714cab25c1462.json",
+      "letter_sha256": "DE616E8274DF4FBD42A8DCBA1E6BB6333688F7E894F85A01C7A35B7D50A42286",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_c8ccecba842a9d5712bbd66983be79b6.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ]
+    },
+    {
+      "id": "relay_875ca612cf40bbdd916d5926800ed026",
+      "actor": "codex",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_CANDIDATE_BY_INTEGRATION_SCOPE",
+      "further_action_remains": false,
+      "reason": "Old U222-R full-result release request is superseded by later U222 independent repairs and combined U221-U222 integration. Old original candidate must not be promoted again; latest integration schedule/receipt controls.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U222-return-desk4-261022.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U221-U222-integration-desk4-261022.md",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\HANDBACK-U236A-261026-codex.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_875ca612cf40bbdd916d5926800ed026.json",
+      "letter_sha256": "D9FDFF9A5CE531124D17851CF15873BFB0EFE1C3F6CD9B97C4D68E30EA83F23D",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U222-return-desk4-261022.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U221-U222-integration-desk4-261022.md"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\HANDBACK-U236A-261026-codex.json"
+        }
+      ]
+    },
+    {
+      "id": "relay_88b5d5eb757d94995126f3eac3c7977f",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U183",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": true,
+      "disposition": "PARTIAL_SCOPED_REVIEW_DONE_REMAINING_SUBREQUEST_UNKNOWN",
+      "further_action_remains": true,
+      "reason": "U183-CODE-PROOF schedule has independent_verdict PASS_SCOPED, reviewed_by codex01a1423b, and exact evidence_ref. Receipt verifies boot8, CI9, genuine/forged attestation. Historical budget/authority dissent is retained; this does not approve additional deployment or all STOP-GATEv2 subscopes.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\reviews\\CODEX-return-attest-boot-20261016.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_88b5d5eb757d94995126f3eac3c7977f.json",
+      "letter_sha256": "CEB5A7DF5F5F5DDF454B7FAF94A76BE97336D914A560DD27F9174C68832D5B19",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Boot/code-proof and signed CI path have independent PASS_SCOPED; separately locate STOP-GATEv2 original relay5a863a66 acceptance and explicit authority/budget dissent disposition. Do not re-register or reinstall boot.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\reviews\\CODEX-return-attest-boot-20261016.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_9107b627fb8cc7b9ddf5a4bea064b561",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_POSITIVE_REVIEW",
+      "further_action_remains": false,
+      "reason": "These PASS/arithmetic reports for bundle410dc910 are superseded as acceptance evidence by root independent REVISE relay_c8ccecba842a9d5712bbd66983be79b6. Do not promote this old bundle from PASS arithmetic.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_c8ccecba842a9d5712bbd66983be79b6.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_9107b627fb8cc7b9ddf5a4bea064b561.json",
+      "letter_sha256": "BE74D6D0FD4E9F03197BEB39D669CFD725015C26D0C7F3FE8AD8106A510EDF3B",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_c8ccecba842a9d5712bbd66983be79b6.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ]
+    },
+    {
+      "id": "relay_96ab8ed75698c00b1792b54c0e2123de",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U157",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": true,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_96ab8ed75698c00b1792b54c0e2123de.json",
+      "letter_sha256": "9C968A5B89CDAE0C57B0915C036FA26EB7AA4333A3397D75C91447B25AB05A1C",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_a698e115e5debbcf1e378b809ef0e22e",
+      "actor": "antigravity",
+      "target": "codex",
+      "card": "GLOBAL-RULES-ARTICLES-V4-AUDIT",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "UNRESOLVED_EXACT_AUDIT_MANIFEST",
+      "further_action_remains": true,
+      "reason": "GO claims exact dc6bf68 manifest and accept_audit.py, but its underlying audit_verdict/manifest was not independently inspected in this recovery audit; do not adopt from this notice.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_a698e115e5debbcf1e378b809ef0e22e.json"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_a698e115e5debbcf1e378b809ef0e22e.json",
+      "letter_sha256": "9B7C369A34012EEFAEC78A167C5DF4F8C935438715812C21DE100805090A9A34",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Locate manifest dc6bf68bf12a1e6c0a2ddca487bb911e4b36ca29eabf2c10b8cce84aab338e93, exact audit_verdict.json and accept_audit.py result; verify source identity and named non-author before adopting.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_a698e115e5debbcf1e378b809ef0e22e.json"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_b76a7918a2b609582dc4280fb2b419c5",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U213",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_b76a7918a2b609582dc4280fb2b419c5.json",
+      "letter_sha256": "0AD7491800443419C54829FADFEF3C2694E46F92B3015C20888E20D864CC02F6",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_b902b5c9dd758362b4291e1a8f2922db",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U166",
+      "wake_class": "NOTICE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_b902b5c9dd758362b4291e1a8f2922db.json",
+      "letter_sha256": "5AD153FC3A74B6EC26056045A9FEBB137AD6B107CC8FEC3F09F096B725C7B05F",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_c8ccecba842a9d5712bbd66983be79b6",
+      "actor": "codex",
+      "target": "codex",
+      "card": "U163",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_c8ccecba842a9d5712bbd66983be79b6.json",
+      "letter_sha256": "C34032B6F8B980081B15FAFC6C521DE58C3B9E78CDD2BA90578CE59C1291BCE9",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_cb0e98936b2b632df539bd80d381f9d3",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_cb0e98936b2b632df539bd80d381f9d3.json",
+      "letter_sha256": "3E8AE2D1317B8B0A2F0CD2BB36600D0BEB0A2757919FA8F69FC413D8649C2594",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_daff48aecfab7ce701d994efaa683d4b",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_daff48aecfab7ce701d994efaa683d4b.json",
+      "letter_sha256": "FF434B197E9873964E8F5BA53004AA4DD1F9ECAFD23D5845B563FF34A2FEB041",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_e0b2f8fdca78dec5ee43729209e85328",
+      "actor": "claude",
+      "target": "codex",
+      "card": "U146",
+      "wake_class": null,
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_e0b2f8fdca78dec5ee43729209e85328.json",
+      "letter_sha256": "EEBCEC3CBBD16EEC0F1E887DAE2DD182FDF8182B03B0E6E0E0A72EBA0DE65C94",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_e2fac06e211785e3807ce1dc16e2c831",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "SUPERSEDED_OLD_GLOBAL_RULE_VERSION",
+      "further_action_remains": false,
+      "reason": "Old v7.5.2 merge request is superseded by later canonical deployment v7.5.7 and independently reviewed v7.5.8 in U227. No live PR state checked, so no new merge instruction inferred.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U227.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_e2fac06e211785e3807ce1dc16e2c831.json",
+      "letter_sha256": "7A25B651547F1F9D4916D0C9AC886C686502F88227D51D790D895F64A24A5959",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "No new implementation or provider call; root may ACK only after recording this individual disposition in its maintained handoff.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\results\\U227.md"
+        }
+      ]
+    },
+    {
+      "id": "relay_eb7a96e5fd6703de8f1b410c58bc78c2",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_eb7a96e5fd6703de8f1b410c58bc78c2.json",
+      "letter_sha256": "5147EEE21845F28DB9CE27202CE7C93E216DBDDA8B651E43973BED9E05763BC7",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Existing U157-L/U156 owner and later lifecycle must be reconciled before any draft execution; inspect contract_v2/v4 and frozen hashes. Deletion/purge semantics remain human boundary; no draft GO or old grant replay.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_fb23a33036bf582912fc9702acde06b6",
+      "actor": "codex",
+      "target": "codex",
+      "card": "U163",
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_fb23a33036bf582912fc9702acde06b6.json",
+      "letter_sha256": "7DA8A6A78E843BD4D82BAD9FBFCCABECB375386D29CF4855B76059354F52D9F4",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    },
+    {
+      "id": "relay_fec0212644c806c53071c2496e825638",
+      "actor": "claude",
+      "target": "codex",
+      "card": null,
+      "wake_class": "ACTIONABLE",
+      "explicit_verdict_requested": null,
+      "disposition": "INDEPENDENT_VERDICT_UNCONFIRMED",
+      "further_action_remains": true,
+      "reason": "The letter requests a historical independent verdict or unresolved process action; no exact-letter independent disposition was located. Merged or DONE status alone is not approval.",
+      "evidence_paths": [
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json",
+        "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+      ],
+      "letter_path_at_audit": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\mailbox\\inbox\\relay_fec0212644c806c53071c2496e825638.json",
+      "letter_sha256": "81D8B5BD004C4C3F71C315A9ECE583D83C4BF453D18F12D0E6B239D5E8D6CBA7",
+      "scope": "Historical letter triage only; not source/runtime approval",
+      "inbox_file_exists": true,
+      "ack_file_exists": false,
+      "mailbox_state": "UNACKNOWLEDGED",
+      "next_dependency": "Codex conductor must preserve this explicit UNKNOWN/BLOCKED disposition, locate exact named original bundle/contract and fixed acceptance, identify sole current owner, and issue a separate independent verdict; no historical approval inferred.",
+      "evidence_path_exists": [
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\master_schedule.json"
+        },
+        {
+          "exists": true,
+          "path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.coord\\PLAN.md"
+        }
+      ],
+      "queue_state": "NEEDS_EXACT_SOURCE_PROVENANCE",
+      "owner": "codex",
+      "promotion_allowed": false
+    }
+  ],
+  "counts": {
+    "further_action": 23,
+    "disposed_or_superseded": 18,
+    "read_codex_letters": 41
+  },
+  "limits": [
+    "No ACK/delivery/claims/source/schedule/runtime writes",
+    "No fresh live PR/API checks or acceptance execution",
+    "DONE/merged author status is not independent review",
+    "Unknown ownership and unresolved review requests retained",
+    "Concurrent root inbox processing may move read letters to ack; this report never ACKs"
+  ],
+  "root_updates": "Root independently handled29 RSI letters and three aggregate wakes; excluded here. U241C-S4B not duplicated. This audit records old letter identities only.",
+  "ack_semantics": "Disposition received and persisted; unresolved reviews remain open in entries, never treated as passed",
+  "root_verdict": "Triage accepted; independently verify unresolved source before any promotion"
+}

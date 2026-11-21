@@ -1,0 +1,22 @@
+{
+  "wake_id": "wake_7d838c719b25af833b15395b",
+  "baseline": ".coord/results/wake_ef718720f117c1f8eb220630-disposition.json",
+  "unique_steps": 133,
+  "added": [
+    "U239-RELEASE",
+    "U240-RELEASE"
+  ],
+  "disposition": "HANDLED_WAKE_RETAIN_UNRESOLVED_BLOCKS",
+  "U239": ".coord/results/U239-CODEX-REWORK-261026.json: two independently reproduced counterexamples, release hold remains",
+  "U240": ".coord/results/U240-RELEASE-HOLD-261026.json: merged source, cumulative runtime held",
+  "runtime": "0.3.0-f4723bc9dd46",
+  "runtime_recovery": "Restored f472 from a3; source/runtime dirs preserved; no additional mutation needed",
+  "installer_owner_notice": {
+    "message": "relay_cc4dcbb37a56922637714d4ecd0023a3",
+    "acked": true,
+    "still_inbox": false
+  },
+  "historical_U233": "Merge already verified; do not re-merge historical alert",
+  "historical_reconciliations": "EVALCW-u188,P01 still lack owner/artifact proof; not blindly reconciled",
+  "no_blanket_ack_or_task_completion": true
+}

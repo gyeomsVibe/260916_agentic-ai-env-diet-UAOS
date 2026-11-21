@@ -1,0 +1,11 @@
+{
+  "pr": 189,
+  "merge_commit": "05ede4bd17044513bbe7febeac4700fa35145373",
+  "current_runtime": "0.3.0-cbd2208ef625",
+  "rollback_performed": false,
+  "listen_exit": 0,
+  "source_install_performed": false,
+  "disposition": "HISTORICAL_P1_SUPERSEDED_BY_VERIFIED_MERGE",
+  "related_result": ".coord/results/U231-relay64-recheck-20261025.md",
+  "id": "relay_72abaf7c320a0228c87902d61434f508"
+}

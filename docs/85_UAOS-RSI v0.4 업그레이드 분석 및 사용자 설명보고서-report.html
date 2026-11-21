@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UAOS-RSI 운영체제 v0.4 업그레이드 분석 및 사용자 설명보고서</title>
+<style>
+  :root {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --bg-card: #273549;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent-blue: #38bdf8;
+    --accent-indigo: #818cf8;
+    --accent-emerald: #34d399;
+    --accent-amber: #fbbf24;
+    --accent-rose: #f43f5e;
+    --border-color: #334155;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    padding: 24px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  header {
+    background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
+    border: 1px solid var(--accent-indigo);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 28px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+  }
+  .badge-tag {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .badge-primary { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); border: 1px solid var(--accent-blue); }
+  .badge-success { background: rgba(52, 211, 153, 0.15); color: var(--accent-emerald); border: 1px solid var(--accent-emerald); }
+  .badge-warning { background: rgba(251, 191, 36, 0.15); color: var(--accent-amber); border: 1px solid var(--accent-amber); }
+  .badge-unknown { background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); border: 1px solid var(--accent-rose); }
+  h1 { font-size: 2rem; font-weight: 800; margin-bottom: 8px; color: #fff; }
+  .subtitle { color: var(--text-secondary); font-size: 1.05rem; }
+  
+  .card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+  }
+  .card-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--accent-blue);
+  }
+  
+  /* 비유 설명 섹션 */
+  .analogy-box {
+    background: rgba(30, 41, 59, 0.7);
+    border-left: 4px solid var(--accent-emerald);
+    padding: 16px 20px;
+    border-radius: 0 10px 10px 0;
+    margin-bottom: 16px;
+  }
+  .analogy-title { font-weight: 700; color: var(--accent-emerald); margin-bottom: 6px; }
+
+  /* 경고 박스 */
+  .notice-box {
+    background: rgba(251, 191, 36, 0.08);
+    border-left: 4px solid var(--accent-amber);
+    padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 14px;
+    font-size: 0.88rem;
+    color: var(--accent-amber);
+  }
+
+  /* 테이블 */
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.92rem; }
+  th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border-color); }
+  th { background-color: rgba(15, 23, 42, 0.6); color: var(--text-secondary); font-weight: 600; }
+  tr:hover { background-color: rgba(51, 65, 85, 0.3); }
+
+  /* 그리드 */
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+
+  .subcard {
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .subcard-header { font-weight: 700; margin-bottom: 8px; color: #fff; display: flex; justify-content: space-between; align-items: center; }
+
+  /* 로드맵 타임라인 */
+  .timeline { position: relative; padding-left: 28px; margin-top: 14px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--border-color);
+  }
+  .timeline-item { position: relative; margin-bottom: 20px; }
+  .timeline-dot {
+    position: absolute;
+    left: -28px;
+    top: 4px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+    border: 3px solid var(--bg-secondary);
+  }
+
+  footer {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <span class="badge-tag badge-primary">UAOS-RSI Architecture Review</span>
+    <span class="badge-tag badge-warning">연구 분석 전용 — 미채택 (Codex 검토 전)</span>
+    <h1>UAOS-RSI v0.4 업그레이드 분석 및 사용자 설명보고서</h1>
+    <p class="subtitle">사용자 제공 자료 목록(기사 7편 링크 · 숏츠 2편 파일)과 확인 범위 — 확인됨/UNKNOWN 구분, 연구 목적 요약 (채택 결정 전 상태)</p>
+  </header>
+
+  <!-- 보고서 상태 공지 -->
+  <div class="notice-box">
+    ⚠️ <strong>보고서 상태 (2026-10-19 수정):</strong> 이 문서는 연구·분석 전용 초안입니다. 3대 도구 협의·합의는 아직 완료되지 않았으며, Codex의 독립 검토가 완료되기 전까지 어떤 제안도 채택·구현 승인 상태가 아닙니다. 성능·비용 수치 중 로컬 실측 기반이 없는 항목은 [UNMEASURED]로 표기합니다. 동영상은 파일 해시 또는 타임스탬프/전사 증거 없이 내용이 확인되지 않았으므로 해당 수치는 [UNKNOWN]으로 표기합니다.
+  </div>
+
+  <!-- 1. 초보자를 위한 1분 쉬운 요약 -->
+  <div class="card">
+    <div class="card-title">💡 [1분 핵심 비유] 모르는 걸 모르는 사용자를 위한 쉬운 해설</div>
+    <div class="analogy-box">
+      <div class="analogy-title">🏢 비유: 3명의 전문 일꾼(Codex, Claude, Antigravity)이 일하는 건축 현장</div>
+      <p>지금까지 우리 시스템은 세 일꾼이 각자 자기 터미널에서 일하며 디스크 우편함으로 편지를 주고받았습니다. 훌륭하지만 가끔 다음과 같은 비효율이 있었습니다:</p>
+      <ul style="margin-left: 20px; margin-top: 6px;">
+        <li>벽돌을 나르는 단순 노동에도 1통에 수백 원 하는 비싼 수석 연구원(Claude Sonnet/Opus)을 불렀습니다.</li>
+        <li>너무 긴 설계 도면을 손에 쥐어주어 머리 용량(컨텍스트 윈도우)이 꽉 차서 멈추는 일이 생겼습니다.</li>
+        <li>누가 누구에게 일감을 넘겨야 하는지 명찰과 좌석 배치가 파일마다 흩어져 있어 혼선이 있었습니다.</li>
+      </ul>
+    </div>
+    <div class="analogy-box" style="border-left-color: var(--accent-blue);">
+      <div class="analogy-title">🚀 사용자가 가져오신 기사·숏츠가 주는 시사점 (연구 요약, 미채택)</div>
+      <p><strong>"비싼 모델은 지휘·판정만 하고, 기계적 작업은 경량 일꾼(Haiku 5.5 / Ollama)에게 맡기며, 긴 자료는 서랍(디스크)에 넣고 제목만 전달해 속도를 높이자!"</strong></p>
+      <p style="margin-top:8px; font-size:0.88rem; color:var(--accent-amber);">[UNMEASURED] 속도 향상 배율 및 비용 절감율은 로컬 통제 측정이 완료되기 전까지 추정값이며, 실측 비교 없이는 확인할 수 없습니다.</p>
+    </div>
+  </div>
+
+  <!-- 2. 사용자 자료 9건 목록과 확인 범위 -->
+  <div class="card">
+    <div class="card-title">📚 사용자 제공 자료 9건 목록과 확인 범위 (9건 모두 1차 출처 열람 증거 없음 → UNKNOWN)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>자료 구분</th>
+          <th>핵심 내용 요약</th>
+          <th>제공된 URL (2차) / 1차 출처</th>
+          <th>UAOS-RSI 운영체제 시사점</th>
+          <th>출처 상태</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>기사 1: OpenRig</strong></td>
+          <td>Claude Code와 Codex를 팀으로 묶어 YAML 명세로 역할·주소를 고정하고 협업시키는 오케스트레이터</td>
+          <td>2차: <a href="https://news.hada.io/topic?id=34854" target="_blank" style="color:var(--accent-blue);">news.hada.io/topic?id=34854</a><br>1차: <a href="https://github.com/mvschwarz/openrig" target="_blank" style="color:var(--accent-emerald);">github.com/mvschwarz/openrig</a></td>
+          <td>선언적 팀 구성(RigSpecs)과 MCP 기반 동적 에이전트 상태 관리 기법 — 현재 UAOS의 명시적 데스크/역할 명세(AGENTS.md, coord 시스템)와 중복 여부를 먼저 확인해야 함</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span><br><small>1차 출처 링크만 있음, 실제 열람·버전·날짜 증거 없음</small></td>
+        </tr>
+        <tr>
+          <td><strong>기사 2: Show GN 에이전트 앱</strong></td>
+          <td>Claude Code와 Codex CLI를 한 화면에서 대화·수정하는 올인원 TUI 환경</td>
+          <td>2차: <a href="https://news.hada.io/topic?id=31980" target="_blank" style="color:var(--accent-blue);">news.hada.io/topic?id=31980</a><br>1차: <span style="color:var(--accent-rose);">[UNKNOWN — 1차 URL 미확인]</span></td>
+          <td>CLI 도구별 개별 실행 창을 통합 감시하는 대시보드 인터페이스 참고 아이디어 (구현 승인 없음)</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span></td>
+        </tr>
+        <tr>
+          <td><strong>기사 3: Claude Code 내부 구조</strong></td>
+          <td>Agentic Loop 6단계 해부, 서브에이전트 스폰, 컨텍스트 윈도우 오버플로우 방지 파일 오프로딩</td>
+          <td>2차: <a href="https://news.hada.io/topic?id=28062" target="_blank" style="color:var(--accent-blue);">news.hada.io/topic?id=28062</a><br>1차: <a href="https://code.claude.com/docs/en/mcp" target="_blank" style="color:var(--accent-emerald);">code.claude.com/docs/en/mcp</a></td>
+          <td><code>maxResultSizeChars</code>: 도구 실행 결과가 크면 파일로 저장하고 경로만 전달하는 기술 — 아이디어 수준, 컷오프 값 [UNMEASURED]</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span><br><small>1차 출처 링크만 있음, 실제 열람·버전·날짜 증거 없음</small></td>
+        </tr>
+        <tr>
+          <td><strong>기사 4: 코딩 모범 사례</strong></td>
+          <td>Anthropic 공식 권장: 탐색-계획-구현-커밋 4단계 루프, 헤드리스 모드 및 멀티 인스턴스 병렬화</td>
+          <td>2차: <a href="https://news.hada.io/topic?id=20430" target="_blank" style="color:var(--accent-blue);">news.hada.io/topic?id=20430</a><br>1차: <span style="color:var(--accent-rose);">[UNKNOWN — 1차 URL 미확인]</span></td>
+          <td>현재 UAOS의 MIA 11단계 전략 및 pilot 헤드리스 루프와 방향성 일치 (기존 설계 뒷받침, 추가 구현 아님)</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span></td>
+        </tr>
+        <tr>
+          <td><strong>기사 5: 생산성 극대화 팁</strong></td>
+          <td>CLAUDE.md 메모리 계층, 단축 명령어, 프롬프트 캐싱 극대화 전략</td>
+          <td>2차: <a href="https://news.hada.io/topic?id=27817" target="_blank" style="color:var(--accent-blue);">news.hada.io/topic?id=27817</a><br>1차: <span style="color:var(--accent-rose);">[UNKNOWN — 1차 URL 미확인]</span></td>
+          <td>3도구 공유 규칙 블록의 불필요한 캐시 무효화 방지 및 접두사 일치형 명령어 유지 — 참고 수준</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span></td>
+        </tr>
+        <tr>
+          <td><strong>기사 6: Claude 가속화</strong></td>
+          <td>실제 사용자 지연시간 메트릭 고정, CI 래칫 관문, 정적 입력 렌더링, 150개 스레드 무사고 운영</td>
+          <td>2차: <a href="https://news.hada.io/topic?id=34206" target="_blank" style="color:var(--accent-blue);">news.hada.io/topic?id=34206</a><br>1차: <a href="https://claude.dev/blog/how-we-made-claude-ai-faster/" target="_blank" style="color:var(--accent-emerald);">claude.dev/blog/how-we-made-claude-ai-faster/</a></td>
+          <td>성능 퇴행을 CI 관문으로 막는 래칫(Ratchet) 시스템 — 로컬 지연시간 기준선 [UNMEASURED], p95 수치는 Anthropic 내부 기준이며 로컬 UAOS 환경에 직접 적용 불가</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span><br><small>1차 출처 링크만 있음, 실제 열람·버전·날짜 증거 없음</small></td>
+        </tr>
+        <tr>
+          <td><strong>기사 7: Opus 5.5 활용법</strong></td>
+          <td>심층 추론 모델을 아키텍처 설계와 비판적 감사에 집중 배치하는 역할 분담론</td>
+          <td>2차: <a href="https://news.hada.io/topic?id=34734" target="_blank" style="color:var(--accent-blue);">news.hada.io/topic?id=34734</a><br>1차: <span style="color:var(--accent-rose);">[UNKNOWN — 1차 URL 미확인]</span></td>
+          <td>유료 최상위 모델은 조율/감사에만 쓰고 하위 작업은 경량 모델에 위임하는 UAOS 예산 규칙과 방향성 일치 (기존 정책 확인, 신규 구현 아님)</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span></td>
+        </tr>
+        <tr>
+          <td><strong>숏츠 1: Haiku 5.5 출시</strong></td>
+          <td>동영상 파일(KakaoTalk_...356.mp4) — 타임스탬프/전사 증거 없이 내용 미확인</td>
+          <td>동영상 1 (로컬 파일, 파일 해시 미확인)</td>
+          <td>가격·성능 수치 모두 [UNKNOWN] — 동영상 재생·타임코드 증거 없이 주장 불가. 공식 출처: <a href="https://www.anthropic.com/claude-haiku-5-5" target="_blank" style="color:var(--accent-emerald);">anthropic.com/claude-haiku-5-5</a> / <a href="https://platform.claude.com/docs/en/models/haiku-5-5/overview" target="_blank" style="color:var(--accent-emerald);">platform.claude.com 문서</a>를 직접 확인 필요</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span></td>
+        </tr>
+        <tr>
+          <td><strong>숏츠 2: 멀티 AI CLI 셋업</strong></td>
+          <td>동영상 파일(KakaoTalk_...801.mp4) — 타임스탬프/전사 증거 없이 내용 미확인</td>
+          <td>동영상 2 (로컬 파일, 파일 해시 미확인)</td>
+          <td>설치 절차·융합 기능 주장 모두 [UNKNOWN] — 동영상 재생·타임코드 증거 없이 확인 불가</td>
+          <td><span class="badge-tag badge-unknown">UNKNOWN</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin-top:10px; font-size:0.88rem;">💲 <strong>Haiku 5.5 공식 API 요금 (API 전용 조건부, 2026-10-19 Codex 확인):</strong> 프롬프트 100,000토큰 이하 — 입력 US$0.10 / 출력 US$0.50 (100만 토큰당), 100,000토큰 초과 — 입력 US$0.50 / 출력 US$2.50. 출처: <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank" style="color:var(--accent-emerald);">platform.claude.com/docs/en/about-claude/pricing</a>. 구독 요금이나 UAOS 절감 효과에 대한 주장이 아니며, 유료 경로 결정도 아닙니다.</p>
+  </div>
+
+  <!-- 2-1. 현재 UAOS에 이미 있는 것 (맥락 지도, 채택 아님) -->
+  <div class="card">
+    <div class="card-title">🗺️ 맥락 지도: 지금 UAOS에 이미 있는 것 (새 채택 없음)</div>
+    <ul style="margin-left: 20px;">
+      <li>명시적 데스크(desk)와 마스터 일정(master schedule)이 이미 운영 중입니다. 새 토폴로지(topology)를 더하기 전에 이것과 겹치는지부터 봐야 합니다.</li>
+      <li>U220: 쉬는 도구가 바쁜 담당자의 준비된 구현 카드를 돕는 규칙이 이미 반영되어 있습니다.</li>
+      <li>로컬 우선(local-first) 예산: 기계적 작업은 Ollama가 먼저 맡는 정책이 이미 있습니다. 경량 모델 계층을 새로 둘 필요가 있는지는 측정 전까지 UNMEASURED입니다.</li>
+      <li>U222 문서 관리자: 소스·전체 테스트는 PASS이지만 아직 출시(release)되지 않았습니다.</li>
+      <li>U223 편지 첫 확인: 출처 검증(provenance) 관문에 막혀 출시가 BLOCKED 상태입니다.</li>
+      <li>이 보고서는 새 토폴로지·계층·평가기(evaluator) 채택을 승인하지 않습니다 (implementation_authorized: false).</li>
+    </ul>
+  </div>
+
+  <!-- 3. 연구 제안 분석 (미채택) -->
+  <div class="card">
+    <div class="card-title">⚖️ 연구 제안 분석 — Codex 검토 전 상태, 채택 여부 미결정</div>
+    <div class="notice-box">
+      ⚠️ 아래 내용은 연구 분석 초안입니다. 3대 도구의 협의·합의가 완료된 것이 아니며, Codex의 독립 검토·승인 없이는 어떤 항목도 채택되지 않습니다. 현재 배포된 명시적 데스크/마스터 스케줄/U220/로컬 우선 예산 정책과의 중복·충돌을 먼저 확인해야 합니다.
+    </div>
+    <div class="grid-2">
+      <div class="subcard" style="border-left: 4px solid var(--accent-emerald);">
+        <div class="subcard-header">
+          <span>✅ 검토 가치 있는 아이디어 (미채택)</span>
+          <span class="badge-tag badge-warning">검토 필요</span>
+        </div>
+        <ul style="margin-left: 18px; font-size: 0.9rem; color: var(--text-secondary);">
+          <li><strong style="color:#fff;">1. 도구 출력 파일 오프로딩</strong>: 큰 터미널/테스트 출력을 <code>.work/tmp_output/</code>에 파일로 저장하고 경로만 모델에 넘기는 기법 — 컷오프 값 [UNMEASURED], 현재 UAOS 기존 구현과 중복 여부 확인 필요.</li>
+          <li><strong style="color:#fff;">2. Haiku 5.5 경량 계산기 티어</strong>: 단순 반복 수정에 경량 모델 라우팅 — 비용·속도 절감 [UNMEASURED], 자동 유료 라우팅 신규 계정/자격증명 변경 없이 검토 가능한 범위로만.</li>
+          <li><strong style="color:#fff;">3. CI 기반 지연시간 래칫 관문</strong>: 성능 퇴행 시 릴리스 차단 — p95 기준값 [UNMEASURED], 로컬 기준선 측정 선행 필요.</li>
+          <li><strong style="color:#fff;">4. 선언적 팀 명세</strong>: 역할을 JSON/YAML로 일원화 — 현재 AGENTS.md/coord 시스템과 중복 여부, 기존 데스크·마스터 스케줄 매핑 확인 후 검토.</li>
+        </ul>
+      </div>
+
+      <div class="subcard" style="border-left: 4px solid var(--accent-rose);">
+        <div class="subcard-header">
+          <span>⛔ 이식 제외 / 경계 (Reject &amp; Avoid)</span>
+          <span class="badge-tag badge-warning">C등급</span>
+        </div>
+        <ul style="margin-left: 18px; font-size: 0.9rem; color: var(--text-secondary);">
+          <li><strong style="color:#fff;">1. OpenRig 프레임워크 자체 통째 설치</strong>: OpenRig은 macOS/Linux의 tmux 및 별도 백그라운드 데몬에 의존하므로, Windows 11 환경인 사용자 시스템에 충돌을 유발함. <em>(프레임워크 대신 핵심 아이디어만 UAOS 파이썬 코어로 순수 흡수 검토)</em></li>
+          <li><strong style="color:#fff;">2. 외부 클라우드 의존성 강제화</strong>: Datadog 등 유료 SaaS 모니터링 연동은 불필요한 비용을 발생시키므로 로컬 SQLite 및 JSONL 장부 유지.</li>
+          <li><strong style="color:#fff;">3. 자동 유료 라우팅 / 신규 계정·자격증명·설정 변경</strong>: 계약 금지 항목 — 어떠한 구현도 사용자 명시 승인 전 불가.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. 검토 사항 (미스케줄) -->
+  <div class="card">
+    <div class="card-title">🗓️ UAOS-RSI v0.4 검토 사항 목록 (Codex 스케줄 결정 전 상태)</div>
+    <div class="notice-box">
+      ⚠️ 아래는 Codex 검토·승인 없이 마스터 스케줄로 확정되지 않은 연구 제안 목록입니다. 현재 운영 중인 명시적 데스크·마스터 스케줄·U220·로컬 우선 예산과의 충돌·중복을 먼저 매핑해야 합니다.
+    </div>
+    <div class="timeline">
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <strong style="color:var(--accent-blue);">검토 항목 1: 토큰 오버플로우 방지 (파일 오프로딩)</strong>
+        <p style="font-size:0.88rem; color:var(--text-secondary);">도구 실행 출력이 임계값을 넘길 경우 <code>.work/spill/</code>에 자동 분리 저장하고 요약 및 경로만 전달 — 컷오프 값 [UNMEASURED], 기존 구현과 중복 여부 확인 필요.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--accent-emerald);"></div>
+        <strong style="color:var(--accent-emerald);">검토 항목 2: 경량 계산기 티어 (Haiku 5.5 &amp; Ollama) 연동</strong>
+        <p style="font-size:0.88rem; color:var(--text-secondary);">코드 기계적 슬라이스를 고성능 Sonnet 대신 Haiku 5.5 및 로컬 모델로 우선 라우팅 — 비용·속도 절감 [UNMEASURED], 자동 유료 라우팅 신규 설정 변경은 사용자 승인 필요.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--accent-amber);"></div>
+        <strong style="color:var(--accent-amber);">검토 항목 3: 선언적 팀 명세 및 데스크 고정 (OpenRig 아이디어)</strong>
+        <p style="font-size:0.88rem; color:var(--text-secondary);"><code>.coord/team_rig.json</code> 도입 검토 — 현재 배포된 AGENTS.md/coord 시스템과 중복 여부, 기존 명시적 데스크·마스터 스케줄과의 충돌 확인 선행 필요.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--accent-rose);"></div>
+        <strong style="color:var(--accent-rose);">검토 항목 4: 통신 지연시간 래칫 관문 (CI Latency Gate)</strong>
+        <p style="font-size:0.88rem; color:var(--text-secondary);">성능 퇴행 발생 시 PR 병합을 차단하는 안전장치 — 로컬 기준선 [UNMEASURED], p95 수치는 Anthropic 내부 기준이며 로컬 UAOS 환경 적용 전 독립 측정 필수. CI/평가기 임계값 변경은 금지.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p>UAOS-RSI 운영체제 연구 분석 보고서 (연구 전용 초안) | 작성: Antigravity | 2026-10-19 | 채택·구현 미승인 — Codex 독립 검토 대기 중</p>
+  </footer>
+
+</div>
+</body>
+</html>

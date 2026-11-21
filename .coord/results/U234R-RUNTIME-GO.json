@@ -1,0 +1,37 @@
+{
+  "source": "DETACHED_72c98849",
+  "digest": "1df66c523ee7c27a2972b36e7aaeae7fc1adf4b2a4dad3a69606578602ef9948",
+  "owner": "claude",
+  "independent_package_delta": [
+    "v7_harness/coord/title_consensus.py"
+  ],
+  "apply": "INDEPENDENTLY_VERIFIED_PASS",
+  "files_after": 134,
+  "current": "0.3.0-75d540422674",
+  "u235": "HOLD_UNCHANGED",
+  "verdict": "GO_SCOPED_RUNTIME",
+  "launcher": "UNCHANGED",
+  "precondition": "Exact current/source unchanged; backup and rollback required",
+  "merge": "72c98849e68dc55bced325f4de8ba1162fe55633",
+  "letter": "relay_43fc6ce594609ceefe885686bf81cc60",
+  "target": "0.3.0-1df66c523ee7",
+  "files_before": 134,
+  "dry_run_exit": 0,
+  "installed_checks": {
+    "rollback": "PRESENT",
+    "manifest": "PASS",
+    "files": 134,
+    "real_worktree": "PASS",
+    "exits": 0,
+    "computed_digest": "1df66c523ee7c27a2972b36e7aaeae7fc1adf4b2a4dad3a69606578602ef9948"
+  },
+  "canonical_title_vote": {
+    "topic": "창구·호출기록 개선",
+    "own_vote": "codex",
+    "next": "native peers cast own votes, then adapter readback",
+    "agreeing": [
+      "codex"
+    ],
+    "accepted": false
+  }
+}

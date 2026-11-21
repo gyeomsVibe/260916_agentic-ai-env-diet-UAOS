@@ -1,0 +1,42 @@
+{
+  "work_id": "U236E-APPLY",
+  "judge": "codex",
+  "bundle_id": "be1ca0b85459475667f57f38b454020f67ac05a52ebb5969b61fcba4afdca178",
+  "verdict": "REWORK_REPLAN_REQUIRED",
+  "source_promotion_approved": false,
+  "paid_probe_approved": false,
+  "runtime_approved": false,
+  "independent_fixed_tests": 103,
+  "independent_fixed_exit": 0,
+  "independent_fixed_seconds": 21.414,
+  "counterexample_exit": 1,
+  "counterexamples": [
+    "Unknown overhead authorizes oversize paid dispatch without an estimate",
+    "Missing cache usage is converted to zero and trusted as learned overhead",
+    "Two real parallel processes both dispatch the one permitted probe"
+  ],
+  "counterexample_artifact": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet/.work/desk_261026_2/u236e-counterexamples.json",
+  "counterexample_sha256": "2CF8B64700BE3DC4566A35E39D0E1722BE495359917032DBC8941FCF2FC6D9F6",
+  "judge_gate_sha256": "3269C91A7A5FB1301BF17FEEAF177AD65A61F4BA7D26875E5F0E3CA9B63E82A5",
+  "candidate_files": [
+    {
+      "Path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.claude\\worktrees\\unapproved-nonstop-orchestration-f646c5\\.work\\pilot_u236e\\stage\\U236E-APPLY\\v7_harness\\token_preflight.py",
+      "Hash": "DBECD8B70DD07D61C6AF4EAF86F9E56E6DE86FF08078CCBC195C7D9CC9A8E8A7"
+    },
+    {
+      "Path": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.claude\\worktrees\\unapproved-nonstop-orchestration-f646c5\\.work\\pilot_u236e\\stage\\U236E-APPLY\\v7_harness\\adapters\\claude_worker.py",
+      "Hash": "2CC516D2E42130C8F4725E44146E1841E0DA96C15685E376464CC0E184D33A80"
+    }
+  ],
+  "fixed_test_sha256": "3A239D962BD6F1C511154B0910A81700A7358022DBEA8B95597C3C1ADD3C2392",
+  "paid_calls_by_judge": 0,
+  "advisory_agy_review_tokens": 32029,
+  "advisory_does_not_override_gate": true,
+  "required_replan": [
+    "Unknown overhead cannot establish an enforced pre-dispatch total-token bound. PROBE_ONCE with estimate null is not hard-budget admission; observed maximum is not a future upper bound. Revise contract before any real paid probe.",
+    "Validate raw usage fields before defaults/coercion; missing cache counters stay UNKNOWN and must not become zero trusted learned rows. Pin model/profile/version/context provenance of any bound.",
+    "Check/reserve/dispatch permission must be atomic under a real cross-process lifetime lock; preserve spent status for failed probes. A pre-dispatch append without a shared lock allows two simultaneous calls.",
+    "Keep originals and new judge counterexamples unchanged. Current test2 rewards unknown-overhead PROBE_ONCE, so obtain an independently reviewed contract/acceptance correction; do not silently alter fixed tests."
+  ],
+  "next": "Claude revises bounded contract, not promotion or paid classify probe; remain under immutable12000 gate"
+}

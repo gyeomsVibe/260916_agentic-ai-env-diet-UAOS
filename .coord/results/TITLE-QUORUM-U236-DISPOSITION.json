@@ -1,0 +1,22 @@
+{
+  "u236": {
+    "verdict": "REVISE_CONTRACT_ONLY",
+    "implementation": "NOT_AUTHORIZED_BY_THIS_VERDICT",
+    "receiver_started": "UNKNOWN",
+    "delivery": "relay_abf069c8b422932ed7f87cfc7ba58425",
+    "delivery_state": "FAILED_SESSION_IN_USE_MAILBOX_PRESERVED",
+    "next": "Claude new isolated worker-only contract with lint and non-author gates; preserve AGY draft and U235 HOLD"
+  },
+  "time": "2026-10-25T16:20:22.7904658+09:00",
+  "title": {
+    "all_desktop_visibility": "UNKNOWN",
+    "own_native_metadata": "SET_CONFIRMED",
+    "digest": "0d5ae86304be29be86120ff6fa1496f86c8fe6fde2c422149903aeba2f946926",
+    "accepted_topic": "창구·호출기록 개선",
+    "installed_readback": "PASS"
+  },
+  "letters": [
+    "relay_7c0e51ee52814ca316cb2956c7076d1f",
+    "relay_db53c0378f9ba875911bafa5c1174d2a"
+  ]
+}

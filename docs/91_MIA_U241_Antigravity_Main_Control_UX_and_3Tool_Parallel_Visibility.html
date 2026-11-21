@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>MIA 전략스킬 11단계 실행 보고서 — U239C·U237E 완결 및 U241 Antigravity 메인 컨트롤 UX/UI·백그라운드 가시성 엔진</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; line-height: 1.65; color: #1e293b; max-width: 1080px; margin: 2rem auto; padding: 0 1.5rem; background: #f8fafc; }
+    h1, h2, h3 { color: #0f172a; }
+    .card { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: #fff; }
+    th, td { border: 1px solid #cbd5e1; padding: 0.65rem 0.85rem; text-align: left; font-size: 0.92rem; }
+    th { background: #f1f5f9; font-weight: 700; }
+    code { background: #f1f5f9; padding: 0.15rem 0.35rem; border-radius: 4px; font-size: 0.86rem; }
+  </style>
+</head>
+<body>
+  <h1>MIA 전략스킬 11단계 실행 보고서 — U239C·U237E 완결 및 U241 Antigravity 메인 컨트롤 UX/UI·3대 도구 병렬 가시성 엔진</h1>
+  <div class="card">
+    <p><strong>실행 프레임워크</strong>: <code>mia-strategic</code> 11단계 표준 절차 (Stage 0 웹 딥리서치 ~ Stage 10 자율 병합 및 런타임 배포)</p>
+    <p><strong>핵심 달성 사항</strong>: (1) 선행 마스터 스케줄 보류 항목(<code>U239C</code>, <code>U237E</code>)을 Codex 독립 음수 게이트(<code>u239b-first-pass-negative.py</code>, <code>u237d-topic-negative.py</code>) 100% 통과로 완결하고, (2) <code>U241</code>(<code>v7_harness/control_ux.py</code> + Antigravity 인라인 Generative UI 관제 위젯)을 구축하여 3대 도구·하위 일꾼(Haiku 5.5, Ollama)·백그라운드 감시자·격리 워크트리의 실시간 상태를 한눈에 확인할 수 있도록 구현했습니다.</p>
+  </div>
+
+  <h2>1. MIA 11단계 실행 요약 (Stage 0 ~ Stage 10)</h2>
+  <table>
+    <thead>
+      <tr><th>단계</th><th>산출물 및 검증 관문 (Hard Gate)</th><th>실측 증거</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Stage 0. 사전 웹 딥리서치</strong></td><td>Claude Code Subagents/Worktrees, Git Worktree, GitHub Actions Status API, Antigravity Generative UI 1차 출처 조사</td><td><a href="https://code.claude.com/docs/en/sub-agents">code.claude.com/docs/en/sub-agents</a>, <a href="https://git-scm.com/docs/git-worktree">git-scm.com/docs/git-worktree</a></td></tr>
+      <tr><td><strong>Stage 1~2. 기획 및 검증</strong></td><td>백그라운드 비가시성 문제 정의 및 정량 성공 신호(<code>u239b</code>/<code>u237d</code> 음수 게이트 exit 0 + <code>test_u241_control_ux</code> exit 0) 확정</td><td><code>Pass</code> (측정 가능 결정론적 게이트 확정)</td></tr>
+      <tr><td><strong>Stage 3~4. 큰계획 및 4대 렌즈 검증</strong></td><td>대안 C(0토큰 결정론적 스냅샷 <code>v7_harness/control_ux.py</code> + <code>&lt;agent-embed&gt;</code> 인라인 위젯 + 3개 격리 워크트리 병렬 실행) 채택</td><td><code>Go</code> (유료 폴링 0원, 즉시 롤백 보장)</td></tr>
+      <tr><td><strong>Stage 5~8. 세부·구현계획 및 Lint</strong></td><td><code>U239C-L1</code>, <code>U237E-L1</code>, <code>U241-L1</code> 계약 매뉴얼 SHA256 핀닝 및 <code>pilot manual lint</code> 통과</td><td>3개 계약 모두 <code>ok: true, errors: []</code></td></tr>
+      <tr><td><strong>Stage 9~10. 병렬 구현·디버깅·자율 병합</strong></td><td>Ollama Local-First 파일럿 → Antigravity 감사(<code>PASS</code>) → Codex 음수 게이트 통과 → PR #209·#210·#211 병합 → 런타임 재설치</td><td>PR #200~#211 전수 MERGED 및 런타임 동기화 완료</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

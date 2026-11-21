@@ -1,0 +1,35 @@
+{
+  "card": "U251",
+  "judge": "codex",
+  "source_candidate": "0BB57A1B157C12DF5D66531D81BE45B8DE1C5EE86117069D3D636A374D08C63E",
+  "decision": "SCOPED_ISOLATION_PASS_FULL_REGRESSION_BLOCKED",
+  "full_tests": 2636,
+  "full_failures": 1,
+  "full_skips": 7,
+  "full_shard_exits": [
+    0,
+    1,
+    0
+  ],
+  "full_wall_s": 303.356,
+  "exact_disjoint_coverage": true,
+  "no_manifest_mismatches": true,
+  "timing_diagnostic_completed": true,
+  "timing_scenario_A": "4ready then common start:1ACK_ONLY+3LOCKED",
+  "timing_scenario_B": "4th waits first owner return and >=0.35s from first fetch:2ACK_ONLY+2LOCKED",
+  "two_ack_can_be_disjoint_sequential_owners": true,
+  "original_full_failure_cause": "UNKNOWN_NOT_WAIVED",
+  "timing_evidence": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet/.work/desk_261026_2/u251_judge/full_regression/diagnosis_timing/summary.json",
+  "timing_sha256": "7DD331BAB20E9C35DA51140CCF3EB2903FBB7B475C7F88DA0A82822AE1458080",
+  "source_promotion_approved": false,
+  "runtime_approved": false,
+  "master_schedule_hold_ids": [
+    "U241C",
+    "U236E",
+    "U251"
+  ],
+  "unrelated_master_phases_preserved": 97,
+  "source_and_runtime_mutations": 0,
+  "delivery": "Verdict and handoff durable in results,master schedule,PLAN and stream; no further costly agy-auto status dispatch",
+  "next": "Independent non-author disposition of unchanged scheduler frozen gate using genuine overlap evidence; do not weaken evaluator or blindly rerun full suite"
+}
