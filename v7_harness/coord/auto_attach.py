@@ -285,6 +285,48 @@ def _sync_queue_state(queue: list[dict[str, Any]], card: dict[str, Any]) -> None
             item["files"] = list(card.get("files", []))
             if "mia_tier" in card:
                 item["mia_tier"] = card["mia_tier"]
+            if "priority" in card:
+                item["priority"] = card["priority"]
+            if "intake_seq" in card:
+                item["intake_seq"] = card["intake_seq"]
+
+
+# U370: rank of the intake priorities (C33); a lower rank is more urgent and an unknown value ranks as P1.
+_PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
+
+
+def _higher_priority(p1: str, p2: str) -> str:
+    """Monotonic priority escalation: P0 > P1 > P2. Never downgrades existing priority."""
+    rank1 = _PRIORITY_ORDER.get(p1, 1)
+    rank2 = _PRIORITY_ORDER.get(p2, 1)
+    return p1 if rank1 <= rank2 else p2
+
+
+def _intake_and_prioritize(project: Path, prompt: str, *, source: str, now: float | None = None) -> dict[str, Any]:
+    """U370: append the prompt to the U350 ideas intake and take its deterministic priority. Never raises.
+
+    Called under the auto_attach lock only; intake.py never imports this module, so the lock order is one-way
+    (auto_attach lock -> .intake.lock) and cannot deadlock. A full queue sheds (audited) and the card still enqueues.
+    """
+    if not (prompt or "").strip():
+        return {"priority": "P1", "intake_seq": None, "intake_shed": False, "intake_status": "EMPTY_SKIPPED"}
+    try:
+        from .intake import append_idea, classify
+
+        prio = classify(prompt)
+        res = append_idea(project, prompt, source=source, now=now)
+        return {"priority": prio, "intake_seq": res.get("seq"), "intake_shed": bool(res.get("shed")),
+                "intake_status": "SHED" if res.get("shed") else "OK"}
+    except Exception as exc:  # noqa: BLE001 - a torn intake write must not stop the prompt hook
+        fallback_prio = "P1"
+        try:
+            from .intake import classify
+
+            fallback_prio = classify(prompt)
+        except Exception:  # noqa: BLE001 - P1 is the C33 default when even the classifier is unavailable
+            pass
+        return {"priority": fallback_prio, "intake_seq": None, "intake_shed": False,
+                "intake_status": f"ERROR:{type(exc).__name__}"}
 
 
 def _overlap_blocker(queue: list[dict[str, Any]], cards: dict[str, dict[str, Any]], card_id: str,
@@ -332,7 +374,8 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
             card = read_card(project, events[event_key]) or {}
             return {"ok": True, "action": "DUPLICATE", "duplicate": True, "reused": False,
                     "card_id": events[event_key], "state": card.get("state"), "blocked_by": card.get("blocked_by"),
-                    "mia_tier": card.get("mia_tier"), "mia_profile": card.get("mia_profile")}
+                    "mia_tier": card.get("mia_tier"), "mia_profile": card.get("mia_profile"),
+                    "priority": card.get("priority", "P1"), "intake_seq": card.get("intake_seq")}
         cards = _load_cards(project, queue)
         session_key = f"{tool}:{session}" if session else ""
         reuse_id = explicit_card or (sessions.get(session_key) if session_key else None)
@@ -344,6 +387,10 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
             existing["updated_at"] = t
             existing["mia_profile"] = _triage_card_prompt(existing.get("prompt", ""), merged)
             existing["mia_tier"] = existing["mia_profile"]["tier"]
+            intake_res = _intake_and_prioritize(project, prompt, source=tool, now=t)
+            existing["priority"] = _higher_priority(existing.get("priority", "P1"), intake_res["priority"])
+            if intake_res.get("intake_seq") is not None:
+                existing["intake_seq"] = intake_res["intake_seq"]
             _write_json(_card_path(project, existing["card_id"]), existing)
             _sync_queue_state(queue, existing)
             if event_key:
@@ -353,7 +400,8 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
             return {"ok": True, "action": "REUSED", "duplicate": False, "reused": True,
                     "card_id": existing["card_id"], "state": existing["state"],
                     "blocked_by": existing.get("blocked_by"), "peers": existing["peers"], "files": merged,
-                    "mia_tier": existing["mia_tier"], "mia_profile": existing["mia_profile"]}
+                    "mia_tier": existing["mia_tier"], "mia_profile": existing["mia_profile"],
+                    "priority": existing["priority"], "intake_seq": existing.get("intake_seq")}
         if existing and explicit_card:
             return {"ok": False, "action": "CARD_ID_TAKEN", "duplicate": False, "reused": False,
                     "card_id": existing["card_id"], "state": existing.get("state"),
@@ -364,14 +412,18 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
         state = "WAITING" if blocker else "PENDING"
         mia_profile = _triage_card_prompt(prompt, files)
         mia_tier = mia_profile["tier"]
+        intake_res = _intake_and_prioritize(project, prompt, source=tool, now=t)
+        priority = intake_res["priority"]
+        intake_seq = intake_res.get("intake_seq")
         card = {"card_id": card_id, "owner": tool, "prompt": prompt, "session": session, "peers": peers,
                 "state": state, "reason": "FILE_OVERLAP" if blocker else "", "blocked_by": blocker,
-                "files": files, "mia_tier": mia_tier, "mia_profile": mia_profile, "enqueued_at": t,
-                "updated_at": t, "project_id": project_id(project)}
+                "files": files, "mia_tier": mia_tier, "mia_profile": mia_profile, "priority": priority,
+                "intake_seq": intake_seq, "enqueued_at": t, "updated_at": t, "project_id": project_id(project)}
         _write_json(_card_path(project, card_id), card)
         queue.append({"card_id": card_id, "owner": tool, "prompt": prompt, "session": session,
                       "event_id": event_id, "peers": peers, "state": state, "blocked_by": blocker,
-                      "enqueued_at": t, "files": files, "mia_tier": mia_tier})
+                      "enqueued_at": t, "files": files, "mia_tier": mia_tier, "priority": priority,
+                      "intake_seq": intake_seq})
         if event_key:
             events[event_key] = card_id
         if session_key:
@@ -380,7 +432,7 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
         _write_json(_index_path(project), index)
     return {"ok": True, "action": "ENQUEUED", "duplicate": False, "reused": False, "card_id": card_id,
             "state": state, "blocked_by": blocker, "peers": peers, "files": files, "mia_tier": mia_tier,
-            "mia_profile": mia_profile}
+            "mia_profile": mia_profile, "priority": priority, "intake_seq": intake_seq}
 
 
 def _companion_session_owner(project: Path, tool: str, session: str) -> str | None:
