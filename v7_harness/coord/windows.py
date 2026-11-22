@@ -409,10 +409,36 @@ def _is_entry_active(entry: dict[str, Any]) -> bool:
     return True
 
 
+def _split_window_entry(project: Path, card: str, tool: str) -> dict[str, Any]:
+    """U346: the legacy per-tool split record `<card>.<tool>.json` of `card`, or {} when there is none.
+
+    U331-FF: a companion card `<ID>.<tool>` owns its own window, so no split name is ever built from it.
+    """
+    if tool not in TOOLS or _COMPANION_CARD_RE.fullmatch(card or ""):
+        return {}
+    split_card = f"{card}.{tool}"
+    if ".." in split_card or not CARD_RE.fullmatch(split_card):
+        return {}
+    entry = _load(_record_path(project, split_card)).get("tools", {}).get(tool, {})
+    return entry if isinstance(entry, dict) else {}
+
+
+def _split_fallback(project: Path, bases: list[tuple[str, Any]], tool: str) -> str | None:
+    """U346: the first active split record of a base whose own record has no entry for `tool` at all; a present but
+    released entry stays authoritative, so a released primary never resolves onto a companion-shaped name."""
+    for base, own in bases:
+        if not own:
+            split = _split_window_entry(project, base, tool)
+            if _is_entry_active(split):
+                return str(split["id"])
+    return None
+
+
 def window_for(project: Path, card: str, tool: str) -> str | None:
     exact = _load(_record_path(project, card)).get("tools", {}).get(tool, {})
     if _is_entry_active(exact):
         return str(exact["id"])
+    bases: list[tuple[str, Any]] = [(card, exact)]
     # U279: if `card` is a derived sub-card (e.g. `U275-R8-L1`, `PR244-U275`), automatically reuse the canonical
     # topic window (`U275`) so sub-tasks do not fall back to the primary user desk or demand separate windows.
     topic = normalize_topic_key(card)
@@ -420,7 +446,9 @@ def window_for(project: Path, card: str, tool: str) -> str | None:
         topic_entry = _load(_record_path(project, topic)).get("tools", {}).get(tool, {})
         if _is_entry_active(topic_entry):
             return str(topic_entry["id"])
-    return None
+        bases.append((topic, topic_entry))
+    # U346: real records (card, then topic) win; legacy split records are the last resort, in the same order.
+    return _split_fallback(project, bases, tool)
 
 
 def window_entry(project: Path, card: str, tool: str) -> dict[str, Any]:
@@ -450,11 +478,14 @@ def window_entry_for_topic(project: Path, card: str, tool: str) -> tuple[str, di
 
 
 def window_for_topic(project: Path, card: str, tool: str) -> str | None:
-    """U279: resolve an active window ID for `card` or its canonical `topic_key`."""
-    _, entry = window_entry_for_topic(project, card, tool)
+    """U279: resolve an active window ID for `card` or its canonical `topic_key`; U346: then their split records."""
+    resolved, entry = window_entry_for_topic(project, card, tool)
     if _is_entry_active(entry):
         return str(entry["id"])
-    return None
+    bases: list[tuple[str, Any]] = [(card, window_entry(project, card, tool))]
+    if resolved != card:
+        bases.append((resolved, window_entry(project, resolved, tool)))
+    return _split_fallback(project, bases, tool)
 
 
 def _write_card_record_locked(project: Path, card: str, tool: str, entry: dict[str, Any], *,

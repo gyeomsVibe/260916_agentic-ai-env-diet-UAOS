@@ -240,10 +240,27 @@ AGY_TARGET = "antigravity"
 AGY_SHOWN = 5
 
 
+def _agy_priority(payload: dict[str, Any]) -> int:
+    """U346: rank of a letter to Antigravity: ACTIONABLE (or a verdict) 2, LEGACY 1, passive NOTICE 0.
+
+    Seen 2026-11-22: newer NOTICE letters pushed an older ACTIONABLE verdict request out of the AGY_SHOWN window.
+    """
+    from .watch import classify
+
+    cls, _ = classify(payload)
+    if cls == "ACTIONABLE":
+        return 2
+    if cls != "NOTICE" and (payload.get("verdict_requested") is True or bool(payload.get("verdict"))):
+        return 2
+    if cls == "LEGACY":
+        return 1
+    return 0
+
+
 def agy_letters(project: Path) -> list[str]:
-    """Ids of inbox letters addressed to Antigravity (requested_target or to), newest first (U104)."""
+    """Ids of letters to Antigravity (requested_target or to), ACTIONABLE tier first, newest first (U104/U346)."""
     box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
-    found: list[tuple[float, str]] = []
+    found: list[tuple[int, float, str]] = []
     if not box_dir.is_dir():
         return []
     # U362: filter by name before any read; evt_* event files are never letters and were the bulk of the inbox.
@@ -259,11 +276,12 @@ def agy_letters(project: Path) -> list[str]:
                     continue  # claimed or mid-write: the next turn looks again
                 payload = data.get("payload") if isinstance(data, dict) else None
                 if isinstance(payload, dict) and AGY_TARGET in (payload.get("requested_target"), payload.get("to")):
-                    found.append((mtime, entry.name[:-5]))
+                    found.append((_agy_priority(payload), mtime, entry.name[:-5]))
     except OSError:
         return []
     # U104: name order showed the five oldest (2026-09-26) and hid a new verdict order; newest first instead.
-    return [stem for _, stem in sorted(found, reverse=True)]
+    # U346: ACTIONABLE before LEGACY before passive NOTICE, newest first inside each tier.
+    return [stem for _, _, stem in sorted(found, reverse=True)]
 
 
 def agy_line(project: Path, presence: dict[str, Any], stdin_text: str) -> str:
