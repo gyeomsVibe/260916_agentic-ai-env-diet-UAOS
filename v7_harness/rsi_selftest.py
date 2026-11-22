@@ -91,6 +91,8 @@ GIT_TIMEOUT_S = 20  # a local `git init/add/commit` in an empty temp repo takes 
 
 # --------------------------------------------------------------------------------------------------------- T1
 def t1_global_drift(home: Path, repo: Path = REPO_ROOT) -> Probe:
+    if not (Path(repo) / "uaos_everywhere" / "uaos_global_rule_block.md").is_file():
+        return Probe("T1", SKIP, f"global_install rule block missing in {repo}")
     try:
         from v7_harness import global_install
 
