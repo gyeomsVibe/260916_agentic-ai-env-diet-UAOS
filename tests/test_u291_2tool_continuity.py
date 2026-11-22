@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -425,13 +426,35 @@ class TestU291TwoToolContinuity(unittest.TestCase):
             "print(json.dumps({'result': r}))"
         )
         child = subprocess.Popen([sys.executable, "-c", child_code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        waking: dict = {}
+
+        def _run_waking_watcher():
+            try:
+                waking["result"] = watch.watch(
+                    self.root, ("antigravity",), timeout_s=3.0, interval_s=0.02, wakes_session=True, policy="structured"
+                )
+            except BaseException as exc:  # re-raised as a failure by the main thread after join
+                waking["error"] = exc
+
+        def _lock_wakes_session():
+            try:
+                return json.loads(lock_p.read_text(encoding="utf-8")).get("wakes_session")
+            except (OSError, ValueError):
+                return None  # absent or mid-write lock file: not owned yet
+
+        parent = threading.Thread(target=_run_waking_watcher, daemon=True)
         try:
+            # U364: the child must own the lock as a non-waking watcher before the parent starts.
             deadline = time.time() + 5.0
-            while time.time() < deadline:
-                if lock_p.is_file():
-                    break
+            while time.time() < deadline and _lock_wakes_session() is not False:
                 time.sleep(0.02)
-            self.assertTrue(lock_p.is_file())
+            self.assertIs(False, _lock_wakes_session())
+            parent.start()
+            # U364: write the letter only after the parent's preemption is visible in the lock.
+            deadline = time.time() + 5.0
+            while time.time() < deadline and _lock_wakes_session() is not True:
+                time.sleep(0.02)
+            self.assertIs(True, _lock_wakes_session())
             (inbox / f"{msg_id}.json").write_text(
                 json.dumps(
                     {
@@ -447,9 +470,10 @@ class TestU291TwoToolContinuity(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            waking_res = watch.watch(
-                self.root, ("antigravity",), timeout_s=2.0, interval_s=0.02, wakes_session=True, policy="structured"
-            )
+            parent.join(timeout=5.0)
+            self.assertFalse(parent.is_alive())
+            self.assertNotIn("error", waking, waking.get("error"))
+            waking_res = waking.get("result")
             self.assertIsNotNone(waking_res)
             self.assertEqual(msg_id, waking_res["id"])
             out, err = child.communicate(timeout=5.0)
@@ -458,6 +482,8 @@ class TestU291TwoToolContinuity(unittest.TestCase):
         finally:
             if child.poll() is None:
                 child.kill()
+            if parent.is_alive():
+                parent.join(timeout=5.0)
 
     def test_cli_parses_claude_judge(self):
         from v7_harness.cli import build_parser
