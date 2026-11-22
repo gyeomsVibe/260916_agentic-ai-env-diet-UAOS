@@ -266,7 +266,10 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
     launcher = uaos_dir / "uaos.py"
     state = _load_json(uaos_dir / STATE_FILE)[0] or {}
     changes: list[Change] = []
-    block = None if uninstall else rule_block(python, launcher, portable=portable)
+    # U357: render from the repo argument; the module constants point at REPO_ROOT, which an installed runtime lacks.
+    repo_rule = Path(repo) / "uaos_everywhere" / "uaos_global_rule_block.md"
+    rule_source = repo_rule if repo_rule.is_file() else RULE_BLOCK_SOURCE  # mock repos carry only v7_harness/
+    block = None if uninstall or not extra_rules else rule_block(python, launcher, source=rule_source, portable=portable)
     shell_note = ("the Python or home path has spaces: the command is quoted, which bash and cmd run but a PowerShell "
                   "hook shell does not (it needs `& ` in front)") if needs_quotes(python, launcher) and not uninstall else ""
 
@@ -309,8 +312,10 @@ def plan(home: Path, python: str, *, repo: Path = REPO_ROOT, rules: bool = True,
                 changes.append(Change(f"{tool} rules", path, "UNCHANGED",
                                       "global-rules canon owns this generated file"))
             else:
+                repo_adapter = Path(repo) / "uaos_everywhere" / "adapters" / f"{tool}.md"
                 tool_block = None if uninstall else rule_block(
-                    python, launcher, portable=portable, adapter=ADAPTER_SOURCE[tool]
+                    python, launcher, source=rule_source, portable=portable,
+                    adapter=repo_adapter if repo_adapter.is_file() else ADAPTER_SOURCE[tool],
                 )
                 changes.append(_text_change(f"{tool} rules", path, current_rules,
                                             _with_block(current_rules, tool_block),

@@ -91,6 +91,8 @@ GIT_TIMEOUT_S = 20  # a local `git init/add/commit` in an empty temp repo takes 
 
 # --------------------------------------------------------------------------------------------------------- T1
 def t1_global_drift(home: Path, repo: Path = REPO_ROOT) -> Probe:
+    if not (Path(repo) / "uaos_everywhere" / "uaos_global_rule_block.md").is_file():
+        return Probe("T1", SKIP, f"global_install rule block missing in {repo}")
     try:
         from v7_harness import global_install
 
@@ -304,8 +306,11 @@ def t5d_hygiene(project: Path, home: Path) -> Probe:
 
 # ------------------------------------------------------------------------------------------------------- driver
 def run(project: Path, home: Path, repo: Path = REPO_ROOT, baseline: Path | None = None) -> list[Probe]:
+    # U357: an installed runtime has no uaos_everywhere/; T1 then reads the project's rule block instead of SKIP.
+    rule = Path("uaos_everywhere") / "uaos_global_rule_block.md"
+    t1_repo = Path(project) if not (Path(repo) / rule).is_file() and (Path(project) / rule).is_file() else Path(repo)
     probes = [
-        t1_global_drift(home, repo),
+        t1_global_drift(home, t1_repo),
         t2_evaluator_integrity(repo, baseline),
         t4_legacy_grant_canary(),
         t5a_executables(),

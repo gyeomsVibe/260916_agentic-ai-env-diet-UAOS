@@ -230,6 +230,53 @@ class T1AndDriverTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(1, st.main(["--project", "."]))
 
+    def test_u357_run_falls_back_to_project_rule_block_for_t1(self) -> None:
+        # Receipt: the live runtime passed REPO_ROOT (no uaos_everywhere/) and T1 returned SKIP.
+        with tempfile.TemporaryDirectory() as tmp:
+            home, missing_repo = Path(tmp) / "h", Path(tmp) / "no_repo"
+            home.mkdir()
+            missing_repo.mkdir()
+            self.assertEqual(st.SKIP, st.t1_global_drift(home, missing_repo).status, "direct call keeps its repo")
+            t1 = st.run(REPO, home, repo=missing_repo)[0]
+            self.assertEqual("T1", t1.id)
+            self.assertIn(t1.status, (st.PASS, st.WARN), t1.detail)
+            self.assertEqual([], os.listdir(home), "plan must not write into home")
+
+    def test_u357_plan_reads_rule_block_and_adapter_from_its_repo(self) -> None:
+        from v7_harness import global_install
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home, repo = Path(tmp) / "h", Path(tmp) / "r"
+            (home / ".claude").mkdir(parents=True)
+            adapters = repo / "uaos_everywhere" / "adapters"
+            adapters.mkdir(parents=True)
+            (repo / "uaos_everywhere" / "uaos_global_rule_block.md").write_text("U357_RULE_MARKER\n", encoding="utf-8")
+            for tool in ("claude", "codex", "antigravity"):
+                (adapters / f"{tool}.md").write_text(f"U357_ADAPTER_{tool}\n", encoding="utf-8")
+            changes = global_install.plan(home, sys.executable, repo=repo)
+            rules = [c for c in changes if c.target == "claude rules"]
+            self.assertEqual(1, len(rules), [c.target for c in changes])
+            self.assertIn("U357_RULE_MARKER", rules[0].new_text or "")
+            self.assertIn("U357_ADAPTER_claude", rules[0].new_text or "")
+            self.assertIn(st.t1_global_drift(home, repo).status, (st.PASS, st.WARN))
+            self.assertEqual([".claude"], os.listdir(home), "plan must not write into home")
+
+    def test_u357_uaos_rsi_selftest_subcommand(self) -> None:
+        from v7_harness import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            proj, home = Path(tmp) / "p", Path(tmp) / "h"
+            proj.mkdir()
+            home.mkdir()
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = cli.main(["rsi", "selftest", "--project", str(proj), "--home", str(home), "--json"])
+            report = json.loads(out.getvalue())
+            self.assertIn(rc, (0, 1))
+            self.assertEqual(0 if report["ok"] else 1, rc)
+            self.assertEqual(0, report["paid_tokens"])
+            self.assertEqual("T1", report["probes"][0]["id"])
+
     def test_module_runs_as_python_dash_m(self) -> None:
         done = subprocess.run([sys.executable, "-m", "v7_harness.rsi_selftest", "--json", "--home", tempfile.gettempdir(),
                                "--project", str(REPO)], cwd=str(REPO), capture_output=True, timeout=120)
