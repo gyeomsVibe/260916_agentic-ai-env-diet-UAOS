@@ -259,12 +259,32 @@ def _classify_prompt(prompt: str) -> str:
     return "NOT_WORK_PROMPT"
 
 
+# U367: the safe Standard profile a card gets when triage itself fails (the contract's middle tier, never Fast).
+_MIA_FALLBACK: dict[str, Any] = {
+    "tier": "MIA-Standard", "steps": 6, "thinking_level": "Medium",
+    "card_slots": ["Research", "MIA", "Execute", "Verify"], "escalated": False,
+    "escalation_reason": "triage_exception_fallback", "reasons": ["fallback_to_standard"],
+    "invariants": ["author!=judge", "fixed_acceptance_exit_0", "backup_before_overwrite", "safety_7_human_only"],
+    "token_savings": "UNMEASURED"}
+
+
+def _triage_card_prompt(prompt: str, files: list[str]) -> dict[str, Any]:
+    """U367: zero-token MIA tier for a card (mia_triage reads no file, calls no model); never raises into the hook."""
+    try:
+        from .mia_triage import classify_mia_tier
+        return classify_mia_tier(prompt, paths=files)
+    except Exception:  # the prompt hook must stay alive; Standard keeps every invariant
+        return dict(_MIA_FALLBACK, file_count=len(files) if files else None)
+
+
 def _sync_queue_state(queue: list[dict[str, Any]], card: dict[str, Any]) -> None:
     for item in queue:
         if item.get("card_id") == card["card_id"]:
             item["state"] = card["state"]
             item["blocked_by"] = card.get("blocked_by")
             item["files"] = list(card.get("files", []))
+            if "mia_tier" in card:
+                item["mia_tier"] = card["mia_tier"]
 
 
 def _overlap_blocker(queue: list[dict[str, Any]], cards: dict[str, dict[str, Any]], card_id: str,
@@ -311,7 +331,8 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
         if event_key and event_key in events:
             card = read_card(project, events[event_key]) or {}
             return {"ok": True, "action": "DUPLICATE", "duplicate": True, "reused": False,
-                    "card_id": events[event_key], "state": card.get("state"), "blocked_by": card.get("blocked_by")}
+                    "card_id": events[event_key], "state": card.get("state"), "blocked_by": card.get("blocked_by"),
+                    "mia_tier": card.get("mia_tier"), "mia_profile": card.get("mia_profile")}
         cards = _load_cards(project, queue)
         session_key = f"{tool}:{session}" if session else ""
         reuse_id = explicit_card or (sessions.get(session_key) if session_key else None)
@@ -321,6 +342,8 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
             merged += [f for f in files if f not in merged]
             existing["files"] = merged
             existing["updated_at"] = t
+            existing["mia_profile"] = _triage_card_prompt(existing.get("prompt", ""), merged)
+            existing["mia_tier"] = existing["mia_profile"]["tier"]
             _write_json(_card_path(project, existing["card_id"]), existing)
             _sync_queue_state(queue, existing)
             if event_key:
@@ -329,7 +352,8 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
             _write_json(_index_path(project), index)
             return {"ok": True, "action": "REUSED", "duplicate": False, "reused": True,
                     "card_id": existing["card_id"], "state": existing["state"],
-                    "blocked_by": existing.get("blocked_by"), "peers": existing["peers"], "files": merged}
+                    "blocked_by": existing.get("blocked_by"), "peers": existing["peers"], "files": merged,
+                    "mia_tier": existing["mia_tier"], "mia_profile": existing["mia_profile"]}
         if existing and explicit_card:
             return {"ok": False, "action": "CARD_ID_TAKEN", "duplicate": False, "reused": False,
                     "card_id": existing["card_id"], "state": existing.get("state"),
@@ -338,13 +362,16 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
         card_id = _safe(explicit_card) if explicit_card else f"AA-{int(t)}-{index['seq']}"
         blocker = _overlap_blocker(queue, cards, card_id, files)
         state = "WAITING" if blocker else "PENDING"
+        mia_profile = _triage_card_prompt(prompt, files)
+        mia_tier = mia_profile["tier"]
         card = {"card_id": card_id, "owner": tool, "prompt": prompt, "session": session, "peers": peers,
                 "state": state, "reason": "FILE_OVERLAP" if blocker else "", "blocked_by": blocker,
-                "files": files, "enqueued_at": t, "updated_at": t, "project_id": project_id(project)}
+                "files": files, "mia_tier": mia_tier, "mia_profile": mia_profile, "enqueued_at": t,
+                "updated_at": t, "project_id": project_id(project)}
         _write_json(_card_path(project, card_id), card)
         queue.append({"card_id": card_id, "owner": tool, "prompt": prompt, "session": session,
                       "event_id": event_id, "peers": peers, "state": state, "blocked_by": blocker,
-                      "enqueued_at": t, "files": files})
+                      "enqueued_at": t, "files": files, "mia_tier": mia_tier})
         if event_key:
             events[event_key] = card_id
         if session_key:
@@ -352,7 +379,8 @@ def enqueue_from_prompt(project: Path, tool: str, prompt: str, *, session: str =
         _write_json(_queue_path(project), queue)
         _write_json(_index_path(project), index)
     return {"ok": True, "action": "ENQUEUED", "duplicate": False, "reused": False, "card_id": card_id,
-            "state": state, "blocked_by": blocker, "peers": peers, "files": files}
+            "state": state, "blocked_by": blocker, "peers": peers, "files": files, "mia_tier": mia_tier,
+            "mia_profile": mia_profile}
 
 
 def _companion_session_owner(project: Path, tool: str, session: str) -> str | None:
