@@ -742,7 +742,7 @@ def turn_shape(transcript: Path) -> dict | None:
             if isinstance(content, str) or (isinstance(content, list) and not any(
                     isinstance(b, dict) and b.get("type") == "tool_result" for b in content)):
                 texts = []
-        elif kind == "USER_INPUT" or source == "USER_EXPLICIT":
+        elif kind == "USER_INPUT" or source == "USER_EXPLICIT" or (kind in ("SYSTEM_MESSAGE", "CHECKPOINT") and source == "SYSTEM"):
             texts = []
         elif kind == "event_msg" and payload.get("type") == "task_started":
             texts = []
