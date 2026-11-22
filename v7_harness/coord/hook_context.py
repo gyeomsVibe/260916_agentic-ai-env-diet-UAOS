@@ -163,8 +163,49 @@ def hook_project(stdin_text: str, fallback: str | Path | None, env: dict[str, st
     return find_project(candidates)
 
 
-def brief_line(project: Path, presence: dict[str, Any]) -> str:
-    """One line of session context (a SessionStart hook's stdout becomes context in Claude Code and Codex)."""
+# The cap brief_line always had: one hook line of context per session, so every session pays little for it.
+BRIEF_MAX = 400
+FAIL_CLOSED_REGIME = "LOCAL_ONLY"
+BRIEF_TAIL = ("Read .coord/PLAN.md; `coord inbox` lists what waits. "
+              # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
+              "Keep `coord watch --target <you>` running in the background; send by `coord deliver`, never via the user.")
+
+
+def situational_line(project: Path | str, presence: dict[str, Any] | None = None, now: float | None = None) -> str:
+    """U365: the live regime tag 'Regime: <REGIME>' from `situational_ops.detect_regime` (pure, 0 tokens).
+    Fails closed to 'Regime: LOCAL_ONLY' on a missing, corrupt or non-dict desk, on records without `observed_at`,
+    and on any error, so a broken presence file never claims a live peer."""
+    if not isinstance(presence, dict):
+        return f"Regime: {FAIL_CLOSED_REGIME}"
+    desk = {tool: info for tool, info in presence.items()
+            if isinstance(info, dict) and info.get("observed_at") is not None}
+    if not desk:
+        return f"Regime: {FAIL_CLOSED_REGIME}"
+    try:
+        from .situational_ops import detect_regime
+
+        regime = detect_regime(desk, now=time.time() if now is None else float(now))
+    except Exception:  # fail closed: any failure reads as no live peer
+        regime = FAIL_CLOSED_REGIME
+    return f"Regime: {regime}"
+
+
+def _middle_cut(text: str, keep: int) -> str:
+    """`text` cut to `keep` characters by dropping its middle, so both its start and its end stay readable."""
+    if len(text) <= keep:
+        return text
+    if keep <= 3:
+        return text[:max(0, keep)]
+    head = (keep - 3 + 1) // 2
+    end = keep - 3 - head
+    return text[:head] + "..." + text[len(text) - end:]
+
+
+def brief_line(project: Path, presence: dict[str, Any], now: float | None = None) -> str:
+    """One line of session context (a SessionStart hook's stdout becomes context in Claude Code and Codex).
+    U365: `Regime: <REGIME>.` follows the desk. The line is at most BRIEF_MAX characters and always ends with
+    BRIEF_TAIL: an over-long line cuts the prefix first, and only a mode phrase that alone overflows is cut in its
+    middle, so the tail is never clipped."""
     inbox: list[str] = []
     box_dir = Path(project) / ".coord" / "mailbox" / "inbox"
     if box_dir.is_dir():
@@ -177,12 +218,19 @@ def brief_line(project: Path, presence: dict[str, Any]) -> str:
 
     rsi_latest = latest_rsi_upgrade_session(project)
     rsi_tag = f" [RSI:{rsi_latest['session_id']}]" if rsi_latest else ""
-    return (f"UAOS project {Path(project).name}{rsi_tag}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); desk {desk}. "
-            f"{mode_phrase(project)} "
-            "Read .coord/PLAN.md; `coord inbox` lists what waits. "
-            # U57-B: the only way a session wakes on a letter without the user relaying or approving it.
-            "Keep `coord watch --target <you>` running in the background; send by `coord deliver`, never via the user."
-            )[:400]
+    regime = situational_line(project, presence=presence, now=now)
+    prefix = (f"UAOS project {Path(project).name}{rsi_tag}: inbox {len(inbox)} (P1 {wakes}, RSI reviews {reviews}); "
+              f"desk {desk}. {regime}. ")
+    mode = mode_phrase(project)
+    suffix = f"{mode} {BRIEF_TAIL}"
+    room = BRIEF_MAX - len(suffix)
+    if len(prefix) > room:
+        if room >= 4:
+            prefix = prefix[:room - 4] + "... "
+        else:
+            prefix = ""
+            suffix = f"{_middle_cut(mode, BRIEF_MAX - len(BRIEF_TAIL) - 1)} {BRIEF_TAIL}"
+    return prefix + suffix
 
 
 def p1_line(project: Path, presence: dict[str, Any]) -> str:
