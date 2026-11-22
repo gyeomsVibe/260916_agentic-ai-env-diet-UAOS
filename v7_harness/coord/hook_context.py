@@ -246,15 +246,22 @@ def agy_letters(project: Path) -> list[str]:
     found: list[tuple[float, str]] = []
     if not box_dir.is_dir():
         return []
-    for path in box_dir.glob("*.json"):
-        try:
-            mtime = path.stat().st_mtime
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue  # claimed or mid-write: the next turn looks again
-        payload = data.get("payload") if isinstance(data, dict) else None
-        if isinstance(payload, dict) and AGY_TARGET in (payload.get("requested_target"), payload.get("to")):
-            found.append((mtime, path.stem))
+    # U362: filter by name before any read; evt_* event files are never letters and were the bulk of the inbox.
+    try:
+        with os.scandir(box_dir) as scan:
+            for entry in scan:
+                if not entry.name.endswith(".json") or entry.name.startswith("evt_") or not entry.is_file():
+                    continue
+                try:
+                    mtime = entry.stat().st_mtime
+                    data = json.loads((box_dir / entry.name).read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    continue  # claimed or mid-write: the next turn looks again
+                payload = data.get("payload") if isinstance(data, dict) else None
+                if isinstance(payload, dict) and AGY_TARGET in (payload.get("requested_target"), payload.get("to")):
+                    found.append((mtime, entry.name[:-5]))
+    except OSError:
+        return []
     # U104: name order showed the five oldest (2026-09-26) and hid a new verdict order; newest first instead.
     return [stem for _, stem in sorted(found, reverse=True)]
 
