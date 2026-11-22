@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -32,6 +33,8 @@ ADDRESSED_FIRST_LOOK_S = 86400
 MAX_LINES = 12
 # Characters of each item shown; the path gives the rest.
 SNIPPET = 220
+# U361: absence_items hands its one `git status` result to prepare_delta's ack() here, so ack() does not run it again.
+_STATUS_SINK = threading.local()
 
 def canonical(tool: str) -> str:
     name = str(tool or "").strip().lower()
@@ -113,7 +116,11 @@ def absence_items(
     for line in _git(root, *args):
         items.append(f"commit {line}")
     # Uncommitted (U275: filter by file mtime > since or unseen status line so stale dirty files do not flood every turn)
-    for line in _git(root, "-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=no"):
+    raw_status = _git(root, "-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=no")
+    if (sink := getattr(_STATUS_SINK, "cur_uncom", None)) is not None:
+        sink[:] = [f"uncommitted {l.strip()}" for l in raw_status]
+        _STATUS_SINK.captured = True
+    for line in raw_status:
         entry = f"uncommitted {line.strip()}"
         rel_part = line[3:].split(" -> ")[-1].strip().strip('"')
         target = root / rel_part
@@ -140,14 +147,23 @@ def absence_items(
             if observed is None or observed <= since:
                 continue
             items.append(f"lease {other} {record.get('state')} observed {record.get('observed_at')}")
-    # Files
-    tracked = set(_git(root, "ls-files", "--", *FILE_FOLDERS))
+    # Files (U361: one scandir per folder; `git ls-files` runs only when some file is fresh)
+    fresh_files: list[str] = []
     for folder in FILE_FOLDERS:
         base = root / folder
         if base.is_dir():
-            for path in sorted(base.glob("*")):
-                if path.is_file() and path.stat().st_mtime > since and f"{folder}/{path.name}" not in tracked:
-                    items.append(f"file {folder}/{path.name}")
+            try:
+                with os.scandir(base) as entries:
+                    names = sorted(entry.name for entry in entries
+                                   if entry.is_file() and entry.stat().st_mtime > since)
+            except OSError:
+                names = []
+            fresh_files.extend(f"{folder}/{name}" for name in names)
+    if fresh_files:
+        tracked = set(_git(root, "ls-files", "--", *FILE_FOLDERS))
+        for rel in fresh_files:
+            if rel not in tracked:
+                items.append(f"file {rel}")
     # U292: Standalone RSI upgrade sessions (.coord/rsi/sessions/*/SESSION.json) visible to all 3 tools
     rsi_sessions = root / ".coord" / "rsi" / "sessions"
     if rsi_sessions.is_dir():
@@ -278,19 +294,36 @@ def _replay_letters(project: Path, tool: str, session: str | None) -> list[Path]
     if not inbox.is_dir():
         return []
     acked = inbox.parent / "ack"
-    acked_names = {p.name for p in acked.glob("*.json")} if acked.is_dir() else set()
+    acked_names: set[str] = set()
+    if acked.is_dir():
+        try:
+            with os.scandir(acked) as found:
+                acked_names = {entry.name for entry in found if entry.name.endswith(".json")}
+        except OSError:
+            acked_names = set()
+    try:
+        with os.scandir(inbox) as scan:
+            entries = list(scan)
+    except OSError:
+        return []
     ordered = []
     memo: dict = {}
-    for letter in inbox.glob("*.json"):
+    for entry in entries:
+        name = entry.name
         try:
-            if letter.name in acked_names or not letter.is_file() or _is_symlink_or_reparse(letter):
+            # U361: run events (`evt_*`) are never replayed; skip them by name before any payload read.
+            if not name.endswith(".json") or name.startswith("evt_") or name in acked_names \
+                    or not entry.is_file(follow_symlinks=False):
+                continue
+            letter = inbox / name
+            if _is_symlink_or_reparse(letter):
                 continue
             if own_letter(letter, tool) or not _replay_bound(project, tool, session, letter, memo):
                 continue
-            ordered.append((letter.stat().st_mtime_ns, letter.name, letter))
+            ordered.append((entry.stat(follow_symlinks=False).st_mtime_ns, name, letter))
         except (OSError, ValueError):
             continue
-    return [entry[2] for entry in sorted(ordered)]
+    return [item[2] for item in sorted(ordered)]
 
 
 def _replay_urgent(letter: Path) -> bool:
@@ -343,15 +376,24 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
     letters: list[Path] = []
     recovered: list[Path] = []
     hidden = 0
+    replay_set = set(replay)
     if inbox.is_dir():
-        for letter in sorted(inbox.glob("*.json")):
-            if letter in replay and (letter == replay[0] or not _replay_urgent(letter)):
+        try:
+            with os.scandir(inbox) as scan:
+                scanned = sorted(((entry.name, entry) for entry in scan
+                                  if entry.name.endswith(".json") and entry.is_file()), key=lambda pair: pair[0])
+        except OSError:
+            scanned = []
+        for name, entry in scanned:
+            letter = inbox / name
+            if letter in replay_set and (letter == replay[0] or not _replay_urgent(letter)):
                 hidden += letter != replay[0]
                 continue
-            if not letter.is_file():
-                continue
-            mtime = _mtime(letter)
-            in_replay = letter in replay
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            in_replay = letter in replay_set
             in_unshown = letter.stem in unshown_before
             if had_cursor and mtime <= since and not in_replay and not in_unshown:
                 if letter.stem in pending and not own_letter(letter, tool):
@@ -393,7 +435,16 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
         if had_cursor and isinstance(cursor.get("uncommitted"), list)
         else None
     )
-    items.extend((item, None) for item in absence_items(project, since, tool, seen_uncommitted=seen_uncom))
+    # U361: absence_items fills captured_uncom with its one `git status` result; ack() reuses it.
+    captured_uncom: list[str] = []
+    _STATUS_SINK.cur_uncom = captured_uncom
+    _STATUS_SINK.captured = False
+    try:
+        items.extend((item, None) for item in absence_items(project, since, tool, seen_uncommitted=seen_uncom))
+        has_captured_uncom = bool(getattr(_STATUS_SINK, "captured", False))
+    finally:
+        _STATUS_SINK.cur_uncom = None
+        _STATUS_SINK.captured = False
     for actor, group in events.items():
         items.append((f"{len(group)} run event(s) from {actor}, newest {group[-1].stem}: {summary_of(group[-1])}", None))
     # U331: this tool's card-navigation deltas (companion cards, UNKNOWN cards); best effort, never blocks the hook.
@@ -427,10 +478,13 @@ def prepare_delta(project: Path, tool: str, session: str | None = None,
 
     def ack() -> None:
         # The cursor first (atomic), then the receipts: a crash between them is completed by the next hook (recovery).
-        cur_uncom = [
-            f"uncommitted {l.strip()}"
-            for l in _git(project, "-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=no")
-        ]
+        if has_captured_uncom:
+            cur_uncom = list(captured_uncom)
+        else:
+            cur_uncom = [
+                f"uncommitted {l.strip()}"
+                for l in _git(project, "-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=no")
+            ]
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(
