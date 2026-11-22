@@ -90,10 +90,12 @@ def _write_json(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
-def _letter_waits(project: Path, schedule: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def _letter_waits(project: Path, schedule: dict[str, Any] | None = None,
+                  answered: set[str] | None = None) -> list[dict[str, Any]]:
     found = []
     root = project / QUEUED
-    answered = _answered(project, _watermark(project, time.time()))
+    if answered is None:  # U358: scan() passes the set it computed once
+        answered = _answered(project, _watermark(project, time.time()))
     ended = {str(p.get("phase_id")) for p in (schedule if isinstance(schedule, dict) else {}).get("phases") or []
              if isinstance(p, dict) and p.get("state") in TERMINAL}
     for target_dir in sorted(p for p in root.glob("*") if p.is_dir()):
@@ -188,21 +190,52 @@ def _dispatched_at(project: Path, message_id: str) -> float | None:
 
 
 def _answered(project: Path, mark: float) -> set[str]:
-    """U214: ids answered by any reply written since the watermark, read or not yet read (inbox and ack)."""
-    found = set()
+    """U214: ids answered by any reply written since the watermark, read or not yet read (inbox and ack).
+    U358: an incremental cache keyed by (mtime_ns, size) spares re-parsing unchanged replies on every scan."""
+    cache_path = project / STATE_DIR / "answered_cache.json"
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    if not isinstance(cache, dict):
+        cache = {}
+    found, fresh_cache = set(), {}
     for folder in (INBOX, ACK):
-        for path in (project / folder).glob("*.json"):
+        try:
+            entries = list(os.scandir(project / folder))
+        except OSError:
+            continue
+        for entry in entries:
+            name = entry.name
+            if not name.endswith(".json") or name.startswith(("evt_", "wake_")):
+                continue
             try:
-                fresh = path.stat().st_mtime >= mark
+                st = entry.stat()
             except OSError:
                 continue
-            body = _payload(path) if fresh else None
-            if body is not None:
-                found.add(_reply_to(body))
+            if st.st_mtime < mark:
+                continue
+            key = f"{folder.name}/{name}"
+            cached = cache.get(key)
+            if (isinstance(cached, list) and len(cached) == 3 and cached[0] == st.st_mtime_ns
+                    and cached[1] == st.st_size and (cached[2] is None or isinstance(cached[2], str))):
+                reply = cached[2]
+            else:
+                body = _payload(Path(entry.path))
+                reply = _reply_to(body) if body is not None else None
+            fresh_cache[key] = [st.st_mtime_ns, st.st_size, reply]
+            if reply is not None:
+                found.add(reply)
+    if fresh_cache != cache:
+        try:
+            _write_json(cache_path, fresh_cache)
+        except OSError:
+            pass
     return found
 
 
-def _inbox_waits(project: Path, schedule: dict[str, Any] | None, moment: float) -> list[dict[str, Any]]:
+def _inbox_waits(project: Path, schedule: dict[str, Any] | None, moment: float,
+                 answered: set[str] | None = None) -> list[dict[str, Any]]:
     """U214: deliver dispatches at once, so a sent verdict request waits in the inbox until it is acked, answered
     (in_reply_to) or its card's phase is terminal; only letters dispatched after the watermark count."""
     from .desk_delta import canonical
@@ -210,11 +243,25 @@ def _inbox_waits(project: Path, schedule: dict[str, Any] | None, moment: float) 
     mark = _watermark(project, moment)
     ended = {str(p.get("phase_id")) for p in (schedule or {}).get("phases") or []
              if isinstance(p, dict) and p.get("state") in TERMINAL}
-    answered, found = _answered(project, mark), []
-    for path in sorted((project / INBOX).glob("*.json")):
-        body, since = _payload(path), _dispatched_at(project, path.stem)
-        if (path.name.startswith("evt_") or body is None or since is None or since < mark
-                or path.stem in answered or (project / ACK / path.name).exists()):
+    if answered is None:
+        answered = _answered(project, mark)
+    found = []
+    try:
+        ack_names = {e.name for e in os.scandir(project / ACK) if e.name.endswith(".json")}
+    except OSError:
+        ack_names = set()
+    try:
+        names = sorted(e.name for e in os.scandir(project / INBOX) if e.name.endswith(".json"))
+    except OSError:
+        names = []
+    for name in names:
+        stem = name[:-5]
+        # U358: cheap checks first; only a live, unanswered letter is opened.
+        if name.startswith("evt_") or name in ack_names or stem in answered:
+            continue
+        path = project / INBOX / name
+        body, since = _payload(path), _dispatched_at(project, stem)
+        if body is None or since is None or since < mark:
             continue
         asked = body.get("verdict_requested") is True or "VERDICT_REQUESTED=YES" in str(body.get("message", ""))
         target = canonical(str(body.get("requested_target") or body.get("to") or ""))
@@ -323,7 +370,9 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
         if not all(isinstance(x, dict) for x in (seen, votes, adopted)):
             result["error"] = "stall state corrupt"
             return result
-        letters = {w["item"]: w for w in _inbox_waits(project, schedule, moment) + _letter_waits(project, schedule)}
+        answered = _answered(project, _watermark(project, moment))  # U358: once per scan
+        letters = {w["item"]: w for w in _inbox_waits(project, schedule, moment, answered=answered)
+                   + _letter_waits(project, schedule, answered=answered)}
         waits = list(letters.values()) + (_phase_waits(schedule) if schedule is not None else [])
         live = {w["item"] for w in waits}
         seen = {k: v for k, v in seen.items() if k in live}
