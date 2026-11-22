@@ -39,6 +39,7 @@ SAME_RATIO = 0.4  # term overlap (Jaccard) at which two reports are one error; "
 SNIPPET = 120  # characters of the report shown to the other tools
 REDACTED = "[redacted: secret-like content]"
 LOCK_RETRY_S, LOCK_WAIT_S = 0.02, 10.0
+LOCK_STALE_S = 60.0  # U359: an append holds the lock for ms; older than this is a killed holder (as presence.py)
 
 
 def is_error_report(text) -> bool:
@@ -95,21 +96,44 @@ class _Lock:
     # Windows loses lines on concurrent appends (global rule), so every append holds an exclusive lock file.
     def __init__(self, path: Path):
         self.path = path
+        self._token = f"{os.getpid()}:{uuid.uuid4().hex}"
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + LOCK_WAIT_S
         while True:
             try:
-                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                try:
+                    os.write(fd, self._token.encode("ascii"))
+                finally:
+                    os.close(fd)
                 return self
             except (FileExistsError, PermissionError):
+                try:
+                    age = time.time() - self.path.stat().st_mtime
+                except OSError:
+                    age = None
+                stale_cleared = False
+                if age is not None and age > LOCK_STALE_S:  # U359: a killed holder's lock blocked every hook 10 s
+                    try:
+                        self.path.unlink()
+                        stale_cleared = True
+                    except OSError:
+                        pass
                 if time.monotonic() > deadline:
                     raise TimeoutError(f"lock busy: {self.path}")
-                time.sleep(LOCK_RETRY_S)
+                if not stale_cleared:
+                    time.sleep(LOCK_RETRY_S)
 
     def __exit__(self, *_exc):
-        self.path.unlink(missing_ok=True)
+        # U359: release only the lock this holder wrote; an expired holder must not remove a successor's lock.
+        try:
+            held = self.path.read_text(encoding="ascii")
+        except (OSError, ValueError):
+            return
+        if held == self._token:
+            self.path.unlink(missing_ok=True)
 
 
 def _append(path: Path, rows: list[dict]) -> None:
