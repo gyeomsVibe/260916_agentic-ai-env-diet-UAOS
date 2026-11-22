@@ -1123,6 +1123,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_stall.add_argument("--tool", required=True, choices=["codex", "claude", "antigravity"])
     p_coord_stall.set_defaults(func=cmd_coord_stall)
 
+    p_coord_freeze = p_coord_subs.add_parser("freeze", help="U334 freeze-tag: detect frozen tools, take over, thaw")
+    p_coord_freeze.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_freeze.add_argument("--action", choices=["scan", "status", "schedule", "thaw"], default="status")
+    p_coord_freeze.add_argument("--actor", default="scheduler", choices=["codex", "claude", "antigravity", "scheduler"])
+    p_coord_freeze.set_defaults(func=cmd_coord_freeze)
+
     p_coord_cap = p_coord_subs.add_parser(
         "capacity",
         help="U256/U265/U276: Compute 3-tool + Ollama/Haiku token usage, remaining capacity, compact head, HUD widget, and dashboard",
@@ -2487,6 +2493,14 @@ def cmd_coord_stall(args: argparse.Namespace) -> int:
     result = scan(Path(args.project), args.tool)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result.get("blocked") or result.get("error") else 0
+
+
+def cmd_coord_freeze(args: argparse.Namespace) -> int:
+    """U334: freeze-tag scan / status / schedule / thaw; exit 1 when every tool is FROZEN (BLOCKED, wake scheduled)."""
+    from .coord import freeze_tag
+    result = freeze_tag.main(Path(args.project), args.action, args.actor)
+    print(json.dumps(result, ensure_ascii=False, default=str))
+    return 1 if result.get("blocked") else 0
 
 
 def cmd_coord_rea_audit(args: argparse.Namespace) -> int:
