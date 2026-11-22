@@ -598,6 +598,27 @@ def stop_unguarded_is_noise(project_root: Path, request_id: str) -> bool:
     return bool(bound and desk and bound != desk)
 
 
+def reconcile_sentinel_auto_attach(project_root: Path, *, now: float | None = None) -> Any:
+    """U369: the resident cycle reconciles the U337 companion queue and verdict SLAs (0 paid tokens).
+
+    adapters=None, so reconcile_once never launches a process. A root without queue.json or verdicts/ gets
+    IDLE_NO_QUEUE and no file or directory is created; UAOS_AUTO_ATTACH=0 gets DISABLED the same way.
+    """
+    if os.environ.get("UAOS_AUTO_ATTACH", "").strip() == "0":
+        return "DISABLED"
+    coord = Path(project_root) / ".coord" / "auto_attach"
+    if not ((coord / "queue.json").is_file() or (coord / "verdicts").is_dir()):
+        return "IDLE_NO_QUEUE"
+    try:
+        from .auto_attach import reconcile_once, reconcile_verdict_requests
+
+        cards = reconcile_once(Path(project_root), now=now)
+        verdicts = reconcile_verdict_requests(Path(project_root), now=now)
+        return {"cards": cards, "verdicts": verdicts}
+    except Exception as exc:  # noqa: BLE001 - a torn queue or verdict record must not stop the operator
+        return {"error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
 def run_sentinel_cycle(
     project_root: Path,
     box: Mailbox,
@@ -802,6 +823,9 @@ def run_sentinel_cycle(
     except Exception as exc:  # noqa: BLE001 - a failed spawn must not stop the operator
         flagman_daemon = f"{type(exc).__name__}: {exc}"[:200]
 
+    # U369: unblock and admit queued companion cards and fail over late verdict requests without a tool's next turn.
+    auto_attach_res = reconcile_sentinel_auto_attach(project_root)
+
     bell = ring_bell(project_root, box, runner=runner, sessions_dir=sessions_dir) if ring else {"rung": False, "reason": "RING_OFF"}
 
     wall_time_s = time.time() - t0
@@ -823,4 +847,5 @@ def run_sentinel_cycle(
         "owner_wake": owner_res,
         "flagman_3tool": flagman_3tool,
         "flagman_daemon": flagman_daemon,
+        "auto_attach": auto_attach_res,
     }
