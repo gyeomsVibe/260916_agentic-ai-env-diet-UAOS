@@ -275,7 +275,16 @@ def on_hook(project: Path, tool: str, event: dict[str, Any], session: str) -> bo
     """The hook's whole part: designate on a fresh declaration. Never raises; a hook never fails the session."""
     try:
         if tool in ("codex", "claude") and event.get("hook_event_name") == "UserPromptSubmit":
-            return bool(session) and on_prompt(project, tool, session, event.get("prompt"))
+            prompt = event.get("prompt")
+            if isinstance(prompt, str):
+                try:  # U368: enqueue-only and 0 tokens; its own failure never changes the designation bool
+                    from v7_harness.coord import auto_attach
+
+                    auto_attach.hook_on_prompt(project, tool, prompt, session=session,
+                                               event_id=str(event.get("event_id") or ""))
+                except Exception:
+                    pass
+            return bool(session) and on_prompt(project, tool, session, prompt)
         if tool == "antigravity" and event.get("invocationNum", 0) == 0 and event.get("transcriptPath") \
                 and not os.environ.get("UAOS_WORKER"):
             conversation = str(event.get("conversationId") or "")
@@ -285,6 +294,15 @@ def on_hook(project: Path, tool: str, event: dict[str, Any], session: str) -> bo
 
                 turns = parse_transcript_to_turns(Path(str(event["transcriptPath"])))
                 prompt = turns[-1][0] if turns else None
+                if isinstance(prompt, str) and prompt.strip():
+                    try:  # U368: one id per (conversation, turn count), so a replayed PreInvocation is a DUPLICATE
+                        from v7_harness.coord import auto_attach
+
+                        det_event_id = hashlib.sha256(f"{conversation}\0{len(turns)}".encode("utf-8")).hexdigest()
+                        auto_attach.hook_on_prompt(project, "antigravity", prompt, session=conversation,
+                                                   event_id=det_event_id)
+                    except Exception:
+                        pass
                 if is_declaration(prompt):
                     key = hashlib.sha256(f"{conversation}\0{len(turns)}\0{prompt}".encode("utf-8")).hexdigest()
                     return designate(project, "antigravity", conversation, source="PreInvocation", fingerprint=key)
