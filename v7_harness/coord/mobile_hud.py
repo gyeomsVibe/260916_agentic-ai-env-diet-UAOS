@@ -8,6 +8,7 @@ Zero external dependencies, zero paid tokens.
 from __future__ import annotations
 
 import datetime
+import html
 import http.server
 import json
 import socketserver
@@ -37,6 +38,76 @@ def _progress_bar(pct: float | None, length: int = 8) -> str:
         return "░" * length
     filled = max(0, min(length, int(round((pct / 100.0) * length))))
     return "█" * filled + "░" * (length - filled)
+
+
+def _load_json_safe(path: Path) -> Any:
+    """Read JSON without raising; torn or absent files yield None."""
+    try:
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _collect_ops_telemetry(project: Path) -> dict[str, Any]:
+    """Read-only live regime, schedule and auto-attach telemetry (0 tokens, creates nothing)."""
+    project = Path(project).resolve()
+    coord = project / ".coord"
+
+    regime = "UNKNOWN"
+    try:
+        from v7_harness.coord.hook_context import situational_line
+        from v7_harness.coord.presence import read_all
+
+        raw = str(situational_line(project, read_all(project)) or "").strip()
+        regime = raw.split("Regime: ", 1)[1].strip() if raw.startswith("Regime: ") else (raw or "UNKNOWN")
+    except Exception:
+        regime = "UNKNOWN"
+
+    sched = {"current_phase_id": None, "active_cards_count": 0, "active_cards": []}
+    sdata = _load_json_safe(coord / "master_schedule.json")
+    if isinstance(sdata, dict):
+        phases = sdata.get("phases")
+        active = {
+            str(ph["phase_id"])
+            for ph in (phases if isinstance(phases, list) else [])
+            if isinstance(ph, dict)
+            and ph.get("phase_id")
+            and ph.get("state") in ("ACTIVE", "IN_PROGRESS", "RUNNING")
+        }
+        sub = _load_json_safe(coord / "sub_process_schedule.json")
+        if isinstance(sub, dict) and isinstance(sub.get("active_cards"), list):
+            active |= {str(c) for c in sub["active_cards"] if c}
+        cur = sdata.get("current_phase_id")
+        sched = {
+            "current_phase_id": str(cur) if cur else None,
+            "active_cards_count": len(active),
+            "active_cards": sorted(active),
+        }
+
+    aa: dict[str, Any] = {
+        "total_cards": 0, "state_counts": {}, "mia_tiers": {}, "priorities": {}, "open_verdicts": 0,
+    }
+    queue = _load_json_safe(coord / "auto_attach" / "queue.json")
+    if isinstance(queue, list):
+        aa["total_cards"] = len(queue)
+        for card in queue:
+            if not isinstance(card, dict):
+                continue
+            for key, field in (("state_counts", "state"), ("mia_tiers", "mia_tier"), ("priorities", "priority")):
+                val = str(card.get(field) or ("UNKNOWN" if field == "state" else "UNSPECIFIED"))
+                aa[key][val] = aa[key].get(val, 0) + 1
+    vdir = coord / "auto_attach" / "verdicts"
+    if vdir.is_dir():
+        from v7_harness.coord.auto_attach import OPEN_VERDICT_STATES
+
+        for vp in vdir.glob("*.json"):
+            doc = _load_json_safe(vp)
+            if isinstance(doc, dict) and doc.get("state") in OPEN_VERDICT_STATES:
+                aa["open_verdicts"] += 1
+
+    return {"regime": regime, "schedule": sched, "auto_attach": aa}
 
 
 def build_mobile_status(project: Path) -> dict[str, Any]:
@@ -107,6 +178,7 @@ def build_mobile_status(project: Path) -> dict[str, Any]:
             "id": active_phase_id,
             "title": active_phase_title,
         },
+        "ops_telemetry": _collect_ops_telemetry(project),
     }
 
 
@@ -125,7 +197,18 @@ def export_mobile_status(project: Path, out_path: Path | None = None) -> Path:
 
 
 def render_mobile_html(status_data: dict[str, Any]) -> str:
-    initial_json = json.dumps(status_data, ensure_ascii=False)
+    initial_json = json.dumps(status_data, ensure_ascii=False).replace("<", "\\u003c")
+    ops = status_data.get("ops_telemetry") or {}
+    aa = ops.get("auto_attach") or {}
+    states = aa.get("state_counts") or {}
+    ops_html = (
+        '<div class="card" id="ops-telemetry"><b>Ops Telemetry</b> '
+        f'<span class="pill">{html.escape(str(ops.get("regime", "UNKNOWN")))}</span> '
+        f'Auto-attach {html.escape(str(aa.get("total_cards", 0)))} '
+        f'(PENDING {html.escape(str(states.get("PENDING", 0)))}, '
+        f'WAITING {html.escape(str(states.get("WAITING", 0)))}, '
+        f'verdicts {html.escape(str(aa.get("open_verdicts", 0)))})</div>'
+    )
     return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -158,6 +241,7 @@ body {{ background: #0b0f19; color: #f1f5f9; padding: 16px; display: flex; flex-
 </style>
 </head>
 <body>
+{ops_html}
 <div class="header">
   <h1>⚡ UAOS COCKPIT</h1>
   <span class="badge" id="status-badge">실시간 연동됨</span>
