@@ -342,7 +342,8 @@ def action(wait: dict[str, Any], owner: str) -> str:
 
 
 def scan(project: Path, tool: str | None, *, now: float | None = None,
-         desk: dict[str, dict[str, Any]] | None = None, max_wait_s: int = MAX_WAIT_S) -> dict[str, Any]:
+         desk: dict[str, dict[str, Any]] | None = None, max_wait_s: int = MAX_WAIT_S,
+         quorum_timeout_s: float = QUORUM_TIMEOUT_S) -> dict[str, Any]:
     from .next_card import coord_root
     from .stream import _exclusive
 
@@ -414,9 +415,15 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
             # a crashed tool leaves the quorum by itself (defect 3). With one ACTIVE tool, that tool is the conductor
             # under the global authority order, so its own agreement suffices.
             ballot = votes.get(wait["item"])
-            if (not isinstance(ballot, dict) or ballot.get("owner") != owners[0]
-                    or ballot.get("since") != wait["since"] or not isinstance(ballot.get("by"), dict)):
+            if (not isinstance(ballot, dict) or ballot.get("since") != wait["since"]
+                    or not isinstance(ballot.get("by"), dict)):
                 ballot = {"owner": owners[0], "since": wait["since"], "by": {}}
+            elif ballot.get("owner") != owners[0]:
+                # U334 (U166 hang): a flickering ACTIVE set changes the first owner; votes were for the old owner and
+                # are dropped, but the election clock keeps running, else a peer that comes and goes resets it forever
+                ballot = {"owner": owners[0], "since": wait["since"], "by": {}, "opened": ballot.get("opened", moment)}
+            if isinstance(ballot.get("opened"), bool) or not isinstance(ballot.get("opened"), (int, float)):
+                ballot["opened"] = moment  # corrupt/foreign value: restart the clock rather than crash
             ballot.setdefault("opened", moment)  # U203: when this wait instance first had a ballot
             ballot["by"] = {t: ts for t, ts in ballot["by"].items()
                             if isinstance(ts, (int, float)) and moment - ts < max_wait_s}
@@ -427,7 +434,7 @@ def scan(project: Path, tool: str | None, *, now: float | None = None,
             entry.update({"owner": owners[0], "action": action(wait, owners[0]), "voters": voters,
                           "present": present})
             result["stalled"].append(entry)
-            timed_out = moment - float(ballot["opened"]) >= QUORUM_TIMEOUT_S
+            timed_out = moment - float(ballot["opened"]) >= quorum_timeout_s
             # U329: after the agreement deadline only tools that are alive must agree; silent ones abstain.
             # Silent means already quiet when the ballot opened AND still quiet now: a tool that was beating when the
             # vote began is only slow, and keeps its seat until QUORUM_TIMEOUT_S (U166/U203 unchanged for it).
