@@ -1,10 +1,12 @@
 from __future__ import annotations
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import re
 import stat
+import threading
 import time
 import uuid
 
@@ -334,3 +336,188 @@ class Mailbox:
             if self._return_to_inbox(path, msg_id):
                 recovered.append(msg_id)
         return recovered
+
+
+_COMPACT_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def fenced_file_lock(lock_path: Path, timeout_s: float = 10.0, label: str = "lock"):
+    """Live-owner OS kernel lock (U86 pattern): never steals a live owner's lock based on file age."""
+    from .stream import StreamBusy, _local_exclusive, _try_lock, _unlock
+
+    lock_path = Path(lock_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + max(0.05, float(timeout_s))
+    try:
+        with _local_exclusive(lock_path, deadline - time.monotonic()):
+            fd = None
+            try:
+                while True:
+                    if fd is None:
+                        try:
+                            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+                        except PermissionError:
+                            fd = None
+                    if fd is not None and _try_lock(fd):
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"{label} busy: {lock_path}")
+                    time.sleep(0.015)
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    os.write(fd, f"{os.getpid():<10d} {time.time():<16.3f}\n".encode("ascii"))
+                except OSError:
+                    pass
+                try:
+                    yield
+                finally:
+                    try:
+                        _unlock(fd)
+                    except OSError:
+                        pass
+            finally:
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+    except StreamBusy as exc:
+        raise TimeoutError(f"{label} busy: {lock_path}") from exc
+
+
+@contextmanager
+def _compact_lock(lock_path: Path, timeout_s: float = 10.0):
+    """Serialize inbox compaction across threads and processes via live kernel lock."""
+    with fenced_file_lock(lock_path, timeout_s=timeout_s, label="compact lock"):
+        yield
+
+
+def _compact_wake_key(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    cfp = payload.get("canonical_fingerprint")
+    if isinstance(cfp, str) and cfp:
+        return f"cfp:{cfp}"
+    reason = str(payload.get("wake_reason") or payload.get("delta") or "").strip()
+    if reason:
+        parts = sorted({part.strip() for part in reason.split(";") if part.strip()})
+        return "r:" + "|".join(parts)
+    fp = payload.get("event_fingerprint")
+    return f"fp:{fp}" if isinstance(fp, str) and fp else ""
+
+
+def compact_inbox(
+    project: Path,
+    *,
+    keep_recent_events: int = 100,
+    archive_dir: Path | None = None,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Deletion-free compaction of stale ``evt_*`` and duplicate ``wake_*`` files in inbox.
+
+    Never touches unacked ``relay_*`` or ``rsi_*`` letters, newest ``keep_recent_events`` events,
+    or symlinks/reparse points. When ``dry_run=False``, moves candidates atomically into
+    ``.coord/mailbox/archive/compact_<YYYYMMDD>/`` and writes a compaction manifest.
+    """
+    import datetime
+
+    root = Path(project)
+    inbox_dir = root / ".coord" / "mailbox" / "inbox"
+    stamp = datetime.date.today().strftime("%Y%m%d")
+    dest_dir = Path(archive_dir) if archive_dir is not None else (root / ".coord" / "mailbox" / "archive" / f"compact_{stamp}")
+    if not inbox_dir.is_dir():
+        return {
+            "ok": True,
+            "dry_run": dry_run,
+            "archive_target": str(dest_dir),
+            "candidates": [],
+            "candidate_count": 0,
+            "moved_count": 0,
+            "kept_count": 0,
+        }
+
+    keep_n = max(0, int(keep_recent_events))
+    lock_ctx = (
+        _compact_lock(root / ".coord" / "mailbox" / ".compact.lock")
+        if not dry_run
+        else _COMPACT_THREAD_LOCK
+    )
+    with lock_ctx:
+        entries: list[tuple[float, Path]] = []
+        for path in inbox_dir.iterdir():
+            if not path.name.endswith(".json") or _is_symlink_or_reparse(path) or not path.is_file():
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            entries.append((mtime, path))
+
+        entries.sort(key=lambda item: (item[0], item[1].name), reverse=True)
+        events: list[Path] = []
+        wakes: list[Path] = []
+        protected = 0
+        for _mtime, path in entries:
+            if path.name.startswith("evt_"):
+                events.append(path)
+            elif path.name.startswith("wake_"):
+                wakes.append(path)
+            else:
+                protected += 1
+
+        candidates: list[Path] = []
+        kept = protected
+        kept += min(len(events), keep_n)
+        candidates.extend(events[keep_n:])
+
+        seen_wake_keys: set[str] = set()
+        for path in wakes:
+            data = _read_message(path)
+            key = _compact_wake_key((data or {}).get("payload") if isinstance(data, dict) else None)
+            if not key:
+                kept += 1
+                continue
+            if key in seen_wake_keys:
+                candidates.append(path)
+            else:
+                seen_wake_keys.add(key)
+                kept += 1
+
+        moved: list[str] = []
+        errors: list[str] = []
+        if not dry_run and candidates:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            for src in candidates:
+                dst = dest_dir / src.name
+                if dst.exists():
+                    dst = dest_dir / f"{src.stem}.{os.getpid()}.{time.monotonic_ns()}{src.suffix}"
+                try:
+                    os.replace(str(src), str(dst))
+                    moved.append(src.name)
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    errors.append(f"{src.name}:{exc}")
+            manifest = {
+                "schema": "uaos-mailbox-compaction-v1",
+                "compacted_at": time.time(),
+                "keep_recent_events": keep_n,
+                "moved_count": len(moved),
+                "kept_count": kept,
+                "moved_files": moved,
+                "errors": errors,
+            }
+            manifest_path = dest_dir / f"compaction_receipt_{os.getpid()}_{time.monotonic_ns()}.json"
+            manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        return {
+            "ok": not errors,
+            "dry_run": dry_run,
+            "archive_target": str(dest_dir),
+            "candidates": [p.name for p in candidates],
+            "candidate_count": len(candidates),
+            "moved_count": len(moved),
+            "kept_count": kept,
+            "errors": errors,
+        }

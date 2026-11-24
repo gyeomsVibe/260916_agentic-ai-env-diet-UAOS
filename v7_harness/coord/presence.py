@@ -224,11 +224,94 @@ def _live_lease(target: Path, moment: float, state: str) -> bool:
     return isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > moment
 
 
+def _unified_desk_pause_lease(project: Path, tool: str, moment: float) -> dict[str, Any] | None:
+    """Honor an explicit future ``execution_paused_until`` lease in ``unified_desks.json`` as LIMITED.
+
+    Never promotes an expired/missing tool to ACTIVE; only prevents false UNKNOWN when a provider
+    quota pause lease is recorded in the unified desk manifest.
+    """
+    path = Path(project) / PRESENCE_DIR / "unified_desks.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    desks = data.get("desks")
+    if not isinstance(desks, dict):
+        return None
+    desk = desks.get(tool)
+    if not isinstance(desk, dict):
+        return None
+    paused_raw = desk.get("execution_paused_until")
+    if not isinstance(paused_raw, str) or not paused_raw.strip():
+        return None
+    paused_epoch = _epoch(paused_raw)
+    if paused_epoch is None or paused_epoch <= moment:
+        return None
+    return {
+        "tool": tool,
+        "state": "LIMITED",
+        "observed_at": desk.get("heartbeat_at"),
+        "expires_at": paused_epoch,
+        "evidence": {
+            "source": "unified_desks_pause",
+            "paused_until": paused_raw,
+        },
+    }
+
+
+def audit_desk_split_brain(project: Path) -> list[dict[str, Any]]:
+    """Read-only comparison between ``unified_desks.json`` and ``user_desk_<tool>.json``."""
+    pres_dir = Path(project) / PRESENCE_DIR
+    try:
+        unified = json.loads((pres_dir / "unified_desks.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    desks = unified.get("desks") if isinstance(unified, dict) else None
+    if not isinstance(desks, dict):
+        return []
+    mismatches: list[dict[str, Any]] = []
+    for tool in TOOLS:
+        ud = desks.get(tool)
+        if not isinstance(ud, dict):
+            continue
+        user_desk_path = pres_dir / f"user_desk_{tool}.json"
+        if not user_desk_path.is_file():
+            continue
+        try:
+            active_desk = json.loads(user_desk_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(active_desk, dict):
+            continue
+        ud_sid = str(ud.get("session_id") or "")
+        ad_thread = str(active_desk.get("thread") or "")
+        ud_gen = ud.get("desk_gen")
+        ad_gen = active_desk.get("generation")
+        if (ud_sid and ad_thread and ud_sid != ad_thread) or (
+            isinstance(ud_gen, int) and isinstance(ad_gen, int) and ud_gen != ad_gen
+        ):
+            mismatches.append(
+                {
+                    "tool": tool,
+                    "code": f"{tool.upper()}_DESK_DRIFT",
+                    "unified_session": ud_sid,
+                    "user_desk_thread": ad_thread,
+                    "unified_gen": ud_gen,
+                    "user_desk_gen": ad_gen,
+                }
+            )
+    return mismatches
+
+
 def read(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any]:
     moment = time.time() if now is None else now
     unknown = {"tool": tool, "state": "UNKNOWN", "observed_at": None, "expires_at": None}
     try:
         record = json.loads(_path(project, tool).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _unified_desk_pause_lease(project, tool, moment) or unknown
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return unknown
     if not isinstance(record, dict):
@@ -242,6 +325,9 @@ def read(project: Path, tool: str, *, now: float | None = None) -> dict[str, Any
             return {"tool": tool, "state": "LIMITED", "observed_at": record.get("observed_at"),
                     "expires_at": blocked["until"], "evidence": blocked}
     if expires_at <= moment:
+        paused = _unified_desk_pause_lease(project, tool, moment)
+        if paused is not None:
+            return paused
         return {**unknown, "observed_at": record.get("observed_at"), "expires_at": expires_at}
     if tool == "codex" and record["state"] == "ACTIVE":
         blocked = codex_quota_block(_epoch(record.get("observed_at")), moment)

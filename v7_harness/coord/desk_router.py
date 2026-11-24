@@ -242,8 +242,56 @@ def deterministic_concretize(text: str) -> dict[str, Any]:
             "non_goals": non_goals, "worst_cases": [list(row) for row in WORST_CASE_ROWS], "source": "deterministic"}
 
 
-def concretize(text: str, drafter: Callable[[str], str] | None = None) -> dict[str, Any]:
+def concretize(text: str, drafter: Callable[..., str] | None = None, *, project: Path | None = None) -> dict[str, Any]:
     """Ollama drafts, the router checks: a draft is used only if it parses and every field has the right type."""
+    if project is not None:
+        from . import idea_fullstack
+
+        adapted_drafter: Callable[[str, dict[str, Any]], str] | None = None
+        if drafter is not None:
+            def _wrapped(prompt: str, schema: dict[str, Any]) -> str:
+                try:
+                    raw_out = drafter(prompt, schema)
+                except TypeError:
+                    raw_out = drafter(prompt)
+                try:
+                    parsed = json.loads(raw_out)
+                except Exception:
+                    return raw_out
+                if (
+                    isinstance(parsed, dict)
+                    and "problem_statement" not in parsed
+                    and isinstance(parsed.get("goal"), str)
+                    and isinstance(parsed.get("success_signal"), str)
+                    and isinstance(parsed.get("non_goals"), list)
+                ):
+                    parsed = {
+                        "goal": parsed["goal"],
+                        "problem_statement": parsed["goal"],
+                        "measurable_success_signals": [parsed["success_signal"]],
+                        "non_goals": parsed["non_goals"],
+                        "risks_and_rollback": [],
+                        "candidate_domains": [],
+                        "ambiguities": [],
+                        "clarification_questions": [],
+                    }
+                    return json.dumps(parsed, ensure_ascii=False)
+                return raw_out
+            adapted_drafter = _wrapped
+
+        full = idea_fullstack.concretize_raw_idea(Path(project), text, drafter=adapted_drafter)
+        return {
+            "goal": full["goal"],
+            "success_signal": full["measurable_success_signals"][0],
+            "measurable_success_signals": full["measurable_success_signals"],
+            "non_goals": full["non_goals"],
+            "worst_cases": [list(row) for row in WORST_CASE_ROWS],
+            "grounded_files": full["grounded_files"],
+            "mia_tier": full["mia_tier"],
+            "clarification_questions": full["clarification_questions"],
+            "source": full["source"],
+        }
+
     base = deterministic_concretize(text)
     if drafter is None:
         return base
@@ -264,12 +312,29 @@ def concretize(text: str, drafter: Callable[[str], str] | None = None) -> dict[s
             "non_goals": draft["non_goals"], "worst_cases": draft["worst_cases"] or base["worst_cases"], "source": "ollama"}
 
 
-def default_drafter(prompt: str) -> str:  # pragma: no cover - needs a local Ollama server; tests inject a drafter
+def default_drafter(prompt: str, fmt: dict[str, Any] | str | None = None) -> str:  # pragma: no cover - needs a local Ollama server; tests inject a drafter
     from v7_harness import olla
+    from v7_harness.adapters.ollama_vram_guard import (
+        choose_vram_safe_ctx,
+        estimate_prompt_tokens,
+        normalize_keep_alive,
+    )
 
     if not olla._server_up():
         raise RuntimeError("ollama down")
-    body = olla._post("/api/generate", {"model": olla.CHAT_MODEL, "prompt": prompt, "stream": False, "format": "json"}, timeout=60)
+    ctx = choose_vram_safe_ctx(estimate_prompt_tokens(prompt), max_ctx=8192, num_predict=1024)
+    body = olla._post(
+        "/api/generate",
+        {
+            "model": olla.CHAT_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "format": fmt if fmt is not None else "json",
+            "keep_alive": normalize_keep_alive("10m"),
+            "options": {"num_ctx": ctx, "temperature": 0.1},
+        },
+        timeout=60,
+    )
     return str(body.get("response", ""))
 
 
@@ -544,7 +609,7 @@ def route_directive(project: Path, raw: bytes | str, *, tool: str, states: dict[
     if not won["won"]:
         return {"d_id": d_id, "role": "peer", "router": won["owner"], "state": "PEER", "cards": []}
     epoch = claim_epoch(project, d_id)
-    concrete = concretize(text, drafter)
+    concrete = concretize(text, drafter, project=project)
     files, lane = extract_files(text), infer_lane(text)
     kind = classify(text)
     from . import desk_ledger
@@ -584,13 +649,14 @@ def route_directive(project: Path, raw: bytes | str, *, tool: str, states: dict[
         card_id = allocate_card() if allocate_card else f"{d_id.replace('-', '')}-{spec['key']}"
         keys[spec["key"]] = card_id
         deps = [keys[k] for k in spec["depends_on"]]
+        card_files = list(spec["files"]) if spec["files"] else list(concrete.get("grounded_files") or ())
         assign = assign_tool(lane, states, admitted, open_counts)
         chosen = assign["tool"]
-        picked = select_model(chosen, purpose=spec["units"][0], lane=lane, multi_file=len(spec["files"]) > 1) if chosen else {}
+        picked = select_model(chosen, purpose=spec["units"][0], lane=lane, multi_file=len(card_files) > 1) if chosen else {}
         assignment = {"tool": chosen, "paid": assign["paid"], "model": picked.get("model"), "effort": picked.get("effort"),
                       "model_source": picked.get("source"), "blocked": assign.get("blocked"), "skipped": assign["skipped"]}
         title = spec["units"][0][:60]
-        manual = build_manual(card_id, title, d_id, meta["sha256"], concrete, "\n".join(spec["units"]), spec["files"], assignment, deps)
+        manual = build_manual(card_id, title, d_id, meta["sha256"], concrete, "\n".join(spec["units"]), card_files, assignment, deps)
         manual_path = manuals / f"{card_id}.md"
         _atomic_write(manual_path, manual.encode("utf-8"))
         if not chosen:
@@ -602,7 +668,7 @@ def route_directive(project: Path, raw: bytes | str, *, tool: str, states: dict[
             # intent. Only the caller that gets NEW may launch; a crash after launch leaves LAUNCHING, which a replay
             # never relaunches and which is reconciled against the session readback, not re-opened.
             verdict = _claim_dispatch(project, d_id, tool, epoch, {
-                "id": card_id, "title": title, "status": "LAUNCHING", "tool": chosen, "files": spec["files"],
+                "id": card_id, "title": title, "status": "LAUNCHING", "tool": chosen, "files": card_files,
                 "resources": sorted(extract_resources(" ".join(spec["units"]))), "lane": lane, "depends_on": deps, "d_id": d_id})
             if verdict == "FENCED":
                 return {"d_id": d_id, "role": "superseded", "state": "SUPERSEDED", "router": current_owner(project, d_id), "cards": plan["cards"]}
@@ -616,7 +682,7 @@ def route_directive(project: Path, raw: bytes | str, *, tool: str, states: dict[
                     window = {"opened": False, "error": str(error)[:160]}
                 state = "RUNNING" if window.get("opened") else "READY"
                 open_counts[chosen] = open_counts.get(chosen, 0) + 1
-        entry = {"id": card_id, "title": title, "status": state, "tool": chosen, "files": spec["files"], "lane": lane,
+        entry = {"id": card_id, "title": title, "status": state, "tool": chosen, "files": card_files, "lane": lane,
                  "resources": sorted(extract_resources(" ".join(spec["units"]))),
                  "depends_on": deps, "d_id": d_id, "linked_to": plan.get("linked_to"),
                  "manual": str(manual_path.relative_to(project)).replace("\\", "/"),
@@ -626,6 +692,12 @@ def route_directive(project: Path, raw: bytes | str, *, tool: str, states: dict[
     plan["state"] = "ROUTED"
     if not _commit(project, meta, plan, {k: v for k, v in registry_add.items() if k not in existing_cards}, tool, epoch):
         return {"d_id": d_id, "role": "superseded", "state": "SUPERSEDED", "router": current_owner(project, d_id), "cards": plan["cards"]}
+    try:
+        from . import uaos_fullstack_os
+
+        uaos_fullstack_os.sync_routed_plan(project, plan, now=now)
+    except Exception:  # noqa: BLE001 - durable OS mirror is additive and never breaks directive routing
+        pass
     return plan
 
 

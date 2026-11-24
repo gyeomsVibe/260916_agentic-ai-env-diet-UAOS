@@ -6,18 +6,20 @@ local models can summarize/triage but cannot approve, delete, or suppress a requ
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import hashlib
 import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Sequence
 
-from .mailbox import Mailbox
+from .mailbox import Mailbox, _is_symlink_or_reparse
 from .adapter import sync_stream_to_mailbox
 
 # A consumer that crashed mid-delivery gets its message back after this long. Long consumers call Mailbox.renew().
@@ -619,6 +621,96 @@ def reconcile_sentinel_auto_attach(project_root: Path, *, now: float | None = No
         return {"error": f"{type(exc).__name__}: {exc}"[:200]}
 
 
+_WAKE_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _sentinel_wake_lock(lock_path: Path, timeout_s: float = 10.0) -> Iterator[None]:
+    """Serialize wake emission + superseded wake archiving via live-owner OS kernel lock."""
+    from .mailbox import fenced_file_lock
+
+    with fenced_file_lock(lock_path, timeout_s=timeout_s, label="sentinel wake lock"):
+        yield
+
+
+def _canonical_wake_fingerprint(
+    recipient: str,
+    p1_reasons: Sequence[str],
+    p1_events: Sequence[dict[str, Any]],
+) -> str:
+    """Stable SHA-256 fingerprint over deduplicated, sorted P1 reasons and event kinds."""
+    norm_reasons = sorted({str(r).strip() for r in p1_reasons if str(r).strip()})
+    norm_kinds = sorted(
+        {
+            f"{e.get('kind')}:{e.get('request_id') or e.get('reason') or ','.join(e.get('tasks') or ()) or (e.get('payload') or {}).get('step') or ''}"
+            for e in p1_events
+            if isinstance(e, dict)
+        }
+    )
+    blob = json.dumps(
+        {"recipient": recipient, "reasons": norm_reasons, "keys": norm_kinds},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _pending_has_canonical_wake(box: Mailbox, recipient: str, canonical_fp: str) -> bool:
+    for msg_id, payload in box.peek():
+        if not msg_id.startswith("wake_") or not isinstance(payload, dict):
+            continue
+        target = payload.get("requested_target") or payload.get("recipient")
+        if target and target != recipient:
+            continue
+        if payload.get("canonical_fingerprint") == canonical_fp:
+            return True
+    return False
+
+
+def _archive_superseded_wakes(
+    box: Mailbox,
+    keep_wake_id: str,
+    recipient: str,
+    *,
+    prior_wakes: Sequence[Path] | None = None,
+    keep_canonical_fp: str = "",
+    archive_root: Path | None = None,
+) -> list[str]:
+    """Deletion-free move of older unacked ``wake_*.json`` for ``recipient`` out of inbox."""
+    archived: list[str] = []
+    dest_dir = Path(archive_root) if archive_root is not None else (box.root / "archive" / "superseded_wakes")
+    if not box.inbox_dir.is_dir():
+        return archived
+    candidates = list(prior_wakes) if prior_wakes is not None else sorted(box.inbox_dir.glob("wake_*.json"))
+    for path in candidates:
+        if path.stem == keep_wake_id or _is_symlink_or_reparse(path) or not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        payload = data.get("payload") if isinstance(data, dict) else None
+        if isinstance(payload, dict):
+            target = payload.get("requested_target") or payload.get("recipient")
+            if target and target != recipient:
+                continue
+            if keep_canonical_fp and payload.get("canonical_fingerprint") == keep_canonical_fp:
+                continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dst = dest_dir / path.name
+        if dst.exists():
+            dst = dest_dir / f"{path.stem}.{os.getpid()}.{time.monotonic_ns()}{path.suffix}"
+        try:
+            os.replace(str(path), str(dst))
+            archived.append(path.stem)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+    return archived
+
+
 def run_sentinel_cycle(
     project_root: Path,
     box: Mailbox,
@@ -701,6 +793,7 @@ def run_sentinel_cycle(
             )
 
     p1_wake_emitted = False
+    superseded_wakes_archived: list[str] = []
     if p1_events:
         canonical = json.dumps(
             {"recipient": recipient, "events": p1_events},
@@ -709,6 +802,7 @@ def run_sentinel_cycle(
             separators=(",", ":"),
         ).encode("utf-8")
         event_fingerprint = hashlib.sha256(canonical).hexdigest()
+        canonical_fp = _canonical_wake_fingerprint(recipient, p1_reasons, p1_events)
         wake_id = f"wake_{event_fingerprint[:24]}"
         # U296 (B5): a set of only STOP_UNGUARDED items wakes once per distinct set, even after the wake was acked.
         only_unguarded = all(event.get("kind") == "stop_unguarded" for event in p1_events)
@@ -719,27 +813,41 @@ def run_sentinel_cycle(
             last_set = None
         unchanged_set = only_unguarded and last_set == event_fingerprint
         # has_message also sees a wake that someone has claimed but not yet acked, so it is not sent twice.
-        if not unchanged_set and not box.has_message(wake_id):
-            if only_unguarded:
-                from .watch import _write_atomic
-                unguarded_state.parent.mkdir(parents=True, exist_ok=True)
-                _write_atomic(unguarded_state, {"fingerprint": event_fingerprint})
-            box.publish(
-                message_id=wake_id,
-                payload={
-                    "recipient": recipient,
-                    "p1_alert": True,
-                    # U141-B: producer adaptation; the structured watcher routes by requested_target and wakes only on
-                    # wake_class, so a P1 wake carries both (its id still comes from the events, never repeated).
-                    "requested_target": recipient,
-                    "wake_class": "ACTIONABLE",
-                    "delta": "; ".join(p1_reasons)[:200],
-                    "wake_reason": "; ".join(p1_reasons),
-                    "event_fingerprint": event_fingerprint,
-                    "actor": "sentinel",
-                },
-            )
-            p1_wake_emitted = True
+        with _sentinel_wake_lock(box.root / ".sentinel_wake.lock"):
+            prior_wakes = sorted(box.inbox_dir.glob("wake_*.json")) if box.inbox_dir.is_dir() else []
+            if (
+                not unchanged_set
+                and not box.has_message(wake_id)
+                and not _pending_has_canonical_wake(box, recipient, canonical_fp)
+            ):
+                if only_unguarded:
+                    from .watch import _write_atomic
+                    unguarded_state.parent.mkdir(parents=True, exist_ok=True)
+                    _write_atomic(unguarded_state, {"fingerprint": event_fingerprint})
+                box.publish(
+                    message_id=wake_id,
+                    payload={
+                        "recipient": recipient,
+                        "p1_alert": True,
+                        # U141-B: producer adaptation; the structured watcher routes by requested_target and wakes only on
+                        # wake_class, so a P1 wake carries both (its id still comes from the events, never repeated).
+                        "requested_target": recipient,
+                        "wake_class": "ACTIONABLE",
+                        "delta": "; ".join(p1_reasons)[:200],
+                        "wake_reason": "; ".join(p1_reasons),
+                        "event_fingerprint": event_fingerprint,
+                        "canonical_fingerprint": canonical_fp,
+                        "actor": "sentinel",
+                    },
+                )
+                p1_wake_emitted = True
+                superseded_wakes_archived = _archive_superseded_wakes(
+                    box,
+                    wake_id,
+                    recipient,
+                    prior_wakes=prior_wakes,
+                    keep_canonical_fp=canonical_fp,
+                )
 
     exhaustion = consume_exhaustion(project_root, box, _event_keys(p1_events))
 
@@ -826,6 +934,20 @@ def run_sentinel_cycle(
     # U369: unblock and admit queued companion cards and fail over late verdict requests without a tool's next turn.
     auto_attach_res = reconcile_sentinel_auto_attach(project_root)
 
+    # U390: observer-only OS tick (crash-lease recovery, quota thaw check, RSI synthesis, bloat guard; zero dispatch).
+    try:
+        from .uaos_fullstack_os import tick_fullstack_os
+
+        fullstack_os_res: Any = tick_fullstack_os(
+            Path(project_root),
+            inbox_compact_threshold=500,
+            now=time.time(),
+            dry_run=False,
+            observer_only=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - durable OS cycle must never break sentinel
+        fullstack_os_res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
     bell = ring_bell(project_root, box, runner=runner, sessions_dir=sessions_dir) if ring else {"rung": False, "reason": "RING_OFF"}
 
     wall_time_s = time.time() - t0
@@ -834,6 +956,7 @@ def run_sentinel_cycle(
         "paid_api_calls": 0,
         "p1_wake_emitted": p1_wake_emitted,
         "p1_superseded": sorted(set(p1_superseded)),
+        "superseded_wakes_archived": superseded_wakes_archived,
         "exhaustion": exhaustion,
         "lock_status": lock_info["status"],
         "reconcile_tasks": reconcile_tasks,
@@ -848,4 +971,5 @@ def run_sentinel_cycle(
         "flagman_3tool": flagman_3tool,
         "flagman_daemon": flagman_daemon,
         "auto_attach": auto_attach_res,
+        "fullstack_os": fullstack_os_res,
     }
