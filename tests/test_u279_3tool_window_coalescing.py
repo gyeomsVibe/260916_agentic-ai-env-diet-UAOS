@@ -245,6 +245,7 @@ class TestU279ThreeToolWindowCoalescing(unittest.TestCase):
                 [sys.executable, "-m", "v7_harness.cli", "coord", "ack", "--id", res.message_id],
                 cwd=str(self.project),
                 env={**os.environ, "PYTHONPATH": wt_root},
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -442,7 +443,13 @@ class TestU279ThreeToolWindowCoalescing(unittest.TestCase):
             "from v7_harness.coord.windows import acquire_window_lease; "
             f"acquire_window_lease(Path({str(self.project)!r}), 'U401', 'antigravity', lease_id='dead-child-lease')"
         )
-        cp = subprocess.run([sys.executable, "-c", child_lease_code], capture_output=True, text=True, timeout=10)
+        cp = subprocess.run(
+            [sys.executable, "-c", child_lease_code],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         self.assertEqual(0, cp.returncode, cp.stderr)
 
         # Now `U401` has a lease owned by a dead PID! `acquire_topic_window` for `U404` must prune `U401`'s dead-PID
@@ -661,7 +668,11 @@ class TestU279ThreeToolWindowCoalescing(unittest.TestCase):
             f"[time.sleep(0.01) for _ in range(500) if time.monotonic() < t_end and not Path({str(release_flag)!r}).is_file()]"
         )
         proc = subprocess.Popen(
-            [sys.executable, "-c", child_guard_code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            [sys.executable, "-c", child_guard_code],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         try:
             deadline = time.monotonic() + 5.0
