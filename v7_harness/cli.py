@@ -3240,6 +3240,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if arguments and arguments[0] == "usage":
         from .usage_accounting import main as usage_main
         return usage_main(arguments[1:])
+    if arguments and arguments[0] == "erp":  # U402 token ERP over the same usage ledger
+        from .token_erp import main as erp_main
+        return erp_main(arguments[1:])
     if arguments and arguments[0] == "version":
         from .version_gate import main as version_main
         return version_main(arguments[1:])
