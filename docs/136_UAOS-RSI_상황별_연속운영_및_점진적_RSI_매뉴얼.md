@@ -105,6 +105,38 @@
 
 **도우미 모델 배분 ('성과/토큰')**: 그날 실제로 설치된 모델을 먼저 확인한다(`ollama list`, `~/.codex/config.toml`의 `model`). 50%는 Ollama(`qwen2.5-coder:7b` 코드 조각, `qwen2.5-coder:3b` 분류, `qwen3.5` 요약, `qwen3-embedding` 검색), 30%는 도우미(Claude Haiku, Codex 도우미 모델), 20%만 핵심 추론 모델(계획·설계·판정). 절약량은 대조 측정 전까지 `UNMEASURED`.
 
+### 2.6 2도구 = 기본 작업 단위, [긴급] 1도구 단독 완결 (U403, 2026-11-28 윤겸스 긴급 지시 261127 R2)
+
+**왜 (초보자용)**: 3도구 협업은 오래 걸리고 예산을 많이 씁니다. 그래서 **아무 두 도구나** 살아 있으면 작성·판정·병합이 한 묶음으로 끝나야 하고, 긴급할 때는 **한 도구만으로도** 카드를 끝까지 마칠 수 있어야 합니다. 대신 "자기 승인"은 끝까지 금지하고, 돌아온 도구가 반드시 다시 봅니다.
+
+**코드 정본**: `v7_harness/coord/situational_ops.py` `work_steal_route` (시험: `tests/test_u403_duo_solo_unit.py`).
+
+| 상황 | 경로(`action`) | 판정 | 뒤처리 |
+|---|---|---|---|
+| DUO, 정식 심판(`REVIEWERS`=Codex·AGY)이 비작성자로 살아 있음 | `RUN` | `judge` = 그 도구 | 기존과 같음 |
+| DUO, 정식 심판이 작성자 자신뿐 (예: `DUO_CODEX_CLAUDE`에서 Codex 작성) | `RUN_DUO_PEER` | `peer_judge` = 짝 도구 (비작성자) | `rereview: REQUIRED_ON_RETURN` — 빠진 도구가 돌아오면 재검토 |
+| SOLO, 카드에 `emergency: true` (불리언) | `SOLO_EMERGENCY_FINISH` | 정식 `judge`는 비움(자기 승인 금지); `reference_judge` = 같은 도구의 **새 세션**(참고 증거만) | `self_test_tail` = 빌드 → 런타임 재설치 → 테스트, `rereview: REQUIRED_ON_RETURN` |
+| SOLO, 긴급 표시 없음 | `WAIT_FOR_JUDGE` | 없음 | 기존과 같음 |
+| Codex 전용 키포인트인데 Codex 부재 | `QUEUE_FOR_CODEX` | — | 긴급 표시로도 우회 불가 |
+| `UNKNOWN`·오래된 신호·기록 없음 | 부재로 계산(fail closed); 전원 부재면 `LOCAL_ONLY_HOLD` | — | — |
+
+**작성자 재배정 (R2)**: 카드 작성자가 현재 상황에서 살아 있지 않으면 `AUTHOR_ORDER`(claude → antigravity → codex) 중 첫 번째로 살아 있는 도구가 작성자가 되고, 원래 작성자는 `author_reassigned_from`에 남습니다. 예: `DUO_CODEX_CLAUDE`에서 AGY 작성 카드는 Claude가 작성, Codex가 판정합니다.
+
+**실행 진입점**: `uaos coord regime --card <ID> [--author <도구>] [--emergency]` 가 공유 출석부(presence)를 훅의 `Regime:` 태그와 같은 규칙으로 읽고(`observed_at` 없는 기록·`UNKNOWN`·60초 넘은 신호는 부재) 경로 JSON을 출력합니다. 출석부 경로는 **제안(informational)**일 뿐입니다(U403-R3). 종료 코드 0(지금 진행 가능)은 경로가 `RUN`·`RUN_DUO_PEER`·`SOLO_EMERGENCY_FINISH`이면서 정식 참여 결정(`participation.snapshot`, 읽기 전용)이 작성자와 지정 판정자를 `EXECUTOR`로 승인(admission)할 때만 나옵니다. `HALT`·`JUDGE_ONLY`·`UNKNOWN`·만료·오류는 모두 1(대기·보류, fail closed)이며 JSON에 `admissions_consulted: true`와 `admission` 사유가 남습니다.
+
+**SOLO 긴급 완결 절차 (5단계)**
+1. 카드 계약(`.coord/cards/<ID>`)에 `emergency: true`와 긴급 사유 한 줄을 적는다. 사유 없는 긴급은 쓰지 않는다.
+2. 작성: Ollama 조각(≤20줄) → 두 번 실패 시 `apply_after` 또는 도우미 모델 → 핵심 모델은 설계만.
+3. 참고 판정: 같은 도구의 **새 세션**(작성 문맥을 물려받지 않음)이 고정 인수 테스트를 다시 돌리고 결과를 `.coord/results/<ID>.md`에 `reference-only`로 적는다.
+4. 자가 시험 꼬리(`self_test_tail`): 빌드 → `uaos` 재설치(드리프트 없음 확인) → 전체 관련 테스트. 하나라도 실패하면 중단하고 `coord log --kind BLOCKED`.
+5. 기능 브랜치 push + PR (main 직접 push·자동 병합 금지). 돌아온 비작성자 도구가 `rereview`를 끝내야 정식 PASS다. 병합은 병합 권한 도구(`MERGERS`)만.
+
+**커밋 관문의 SOLO 증거 (U403-LAND, 2026-11-29 윤겸스 지시)**: 커밋 메시지에 `Solo-Evidence: <ID>` 줄이 있으면 `calculator_gate.solo_errors`가 아래 네 가지를 **모두** 확인한 경우에만 AGY 감사·Codex 검토 대신 통과시킵니다. 하나라도 빠지면 기존 위반에 SOLO 사유가 더해져 거부됩니다(관문을 끄지 않음, 판정자=사용자 금지, Codex/AGY 판정 위조 금지).
+1. 지금 `coord regime`(`situational_ops.regime_admission`, 긴급 표시)이 커밋 작성 도구를 `SOLO_EMERGENCY_FINISH`의 `EXECUTOR`로 승인한다. 단, 데스크톱 앱 Claude의 사용량은 사람이 옮겨 적은 값(`operator_reported`)이라 S5가 절대 `EXECUTOR`로 올리지 않으므로(`quota_sources.admit_paid`), **유일하게 살아 있는 작성 도구가 `JUDGE_ONLY`(쿼터 미검증)이고 결정이 만료되지 않은 경우**도 SOLO에 한해 인정합니다(쿼터 미검증은 Codex 재검토 대상). 다른 도구가 살아 있거나 `UNKNOWN`·`OFFLINE`·만료·오류면 거부(fail closed).
+2. 공유 데스크 `.coord/solo_evidence/<ID>.json` 기록: `judge_tool` = 작성 도구와 **같은 도구**, `judge_session` ≠ `author_session`(둘 다 비어 있지 않음), `verdict: PASS`, `reference_only: true`.
+3. 기록의 `files`(경로 → sha256, CRLF→LF 정규화)가 스테이징된 모든 `v7_harness/`·`uaos_everywhere/` .py 바이트와 같다(판정 뒤 바뀐 코드는 거부).
+4. `deferred_review_id`가 가리키는 편지가 우편함에 있고 `codex` 대상·같은 카드·`verdict_requested: true`다 (`uaos coord deliver --actor claude --target codex --card <ID> --verdict-requested --message …`). Codex가 돌아오면 이 편지로 재검토합니다.
+
 **자주 틀리는 점**
 - 앱 `send_message`로 다른 가족(사용자 창·다른 데스크)이 띄운 창을 깨우면 기록만 남고 턴이 열리지 않는다 → 우편함(`coord deliver`) 또는 새 전담 창.
 - `coord deliver`의 `QUEUED_UNTIL_ACTIVE`는 "보냄"이지 "읽음"이 아니다. 상대가 실제로 시작했는지는 따로 확인한다.

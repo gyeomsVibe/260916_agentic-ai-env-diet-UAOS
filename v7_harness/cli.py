@@ -1236,6 +1236,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_coord_route = p_coord_subs.add_parser("route", help="Choose the sole authority from fresh presence states")
     p_coord_route.add_argument("--project", default=".", help="Project root (default: .)")
+    # U403-R2: the deterministic call path for situational_ops.work_steal_route (prints the route JSON).
+    p_coord_regime = p_coord_subs.add_parser("regime", help="U403: route one card for the live regime (fails closed)")
+    p_coord_regime.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_regime.add_argument("--card", required=True, help="Card id, e.g. U403")
+    p_coord_regime.add_argument("--author", default="", help="Card author; an absent author is reassigned")
+    p_coord_regime.add_argument("--emergency", action="store_true", help="Allow the SOLO emergency finish")
+    p_coord_regime.set_defaults(func=cmd_coord_regime)
     p_coord_route.set_defaults(func=cmd_coord_route)
     # U332: the user desk is a router; one verbatim directive in, cards out (v7_harness/coord/desk_router.py).
     p_coord_rd = p_coord_subs.add_parser("route-directive", help="U332: capture a user directive verbatim, claim it, split it into cards and route them")
@@ -2626,6 +2633,19 @@ def cmd_coord_lease(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coord_regime(args: argparse.Namespace) -> int:
+    """U403-R3: the presence route is a suggestion; exit 0 only when it is runnable AND the canonical participation
+    decision (S5 `participation.snapshot`, read-only) admits its author as EXECUTOR and any named judge as a live
+    EXECUTOR judge. HALT, JUDGE_ONLY, OFFLINE, UNKNOWN, an expired decision or any error exits 1 (fail closed)."""
+    import time
+    from .coord.situational_ops import regime_admission
+
+    card = {"card": args.card, "author": args.author, "emergency": bool(args.emergency)}
+    out = regime_admission(Path(args.project), card, now=time.time())  # U403-LAND: shared with the commit gate
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out["ready"] else 1
+
+
 def cmd_coord_route(args: argparse.Namespace) -> int:
     """Choose authority from provider states; percentages and reset windows are never token balances."""
     from .budget_route import route_authority
@@ -3237,7 +3257,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "route-directive", "sentinel", "inbox", "ack", "archive", "window", "lanes", "desk-handoff"})
+_DESK_COMMANDS = frozenset({"presence", "watch", "route", "route-directive", "sentinel", "inbox", "ack", "archive", "window", "lanes", "desk-handoff", "regime"})
 
 
 def cmd_coord_library(args: argparse.Namespace) -> int:

@@ -272,6 +272,106 @@ def card_errors(message: str, new_paths: list[str], desk: Path, run_dirs, branch
             f"{card} --slot {slot}`" for slot in result["missing"]]
 
 
+# U403-LAND (user order 2026-11-29, docs/136 §2.6): when only one tool is live, a card may ship on SOLO evidence instead
+# of an AGY/Codex review. It never disables the gate: the live regime must admit this author for a SOLO emergency finish,
+# a different session of the same tool must have judged the exact staged bytes (reference_only, never a formal verdict),
+# and a deferred re-review letter must already be queued for Codex. Any missing piece fails closed.
+SOLO_RE = re.compile(r"^Solo-Evidence:\s*(U[0-9A-Za-z_.-]+)\s*$", re.MULTILINE)
+SOLO_DIR = Path(".coord") / "solo_evidence"
+SOLO_QUEUED = "delivery/queued/codex"  # SOLO means codex is absent, so its letter usually waits here (judge R2 P1)
+SOLO_MAIL_FOLDERS = ("inbox", "ack", "acked", "archive", "claimed", SOLO_QUEUED)
+
+
+_PEER_ONLY = ": not an APPLIED pilot bundle with an independent PASS review"
+
+
+def solo_waivable(violation: str) -> bool:
+    """Only the peer-review classes (independent bundle review, peer audit letter, card audit slots) are waived by
+    SOLO evidence; a missing `Card:` line, an author CONFLICT or any future check stays blocking (judge P1)."""
+    if "CONFLICT" in violation or violation.startswith("CARD_AUDIT: name the card"):
+        return False
+    return violation.startswith(("CARD_AUDIT: ", "AUDIT_FIRST: ")) or (
+        violation.startswith(GATED_PREFIX) and _PEER_ONLY in violation)
+
+
+def _deferred_review_ok(mailbox: Path, message_id: str, card: str, author: str | None = None) -> bool:
+    """The deferred re-review entry: a letter to codex for this card with verdict_requested, in any mailbox folder."""
+    if not re.fullmatch(r"[0-9A-Za-z_.-]+", message_id or ""):
+        return False
+    for folder in SOLO_MAIL_FOLDERS:
+        try:
+            letter = json.loads((mailbox / folder / f"{message_id}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(letter, dict):
+            continue
+        queued = folder == SOLO_QUEUED  # deliver.py parks a letter for an inactive codex here as a flat record
+        payload = letter if queued else letter.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        target = "codex" if queued else payload.get("recipient") or payload.get("requested_target")
+        if author is not None and payload.get("actor") != author:
+            continue  # the author queues its own re-review (judge P2)
+        if target == "codex" and payload.get("verdict_requested") is True and payload.get("card") == card:
+            return True
+    return False
+
+
+def solo_errors(message: str, gated: dict[str, bytes], desk: Path, author: str | None, *,
+                admission: dict | None = None, now: float | None = None) -> list[str] | None:
+    """None when the message has no `Solo-Evidence: U##` line; [] when the SOLO evidence is complete; else errors."""
+    match = SOLO_RE.search(message)
+    if match is None:
+        return None
+    card = match.group(1)
+    if author in (None, "CONFLICT"):
+        return [f"SOLO_EVIDENCE: {card} author provenance is {author!r}; SOLO needs one known author tool"]
+    errors: list[str] = []
+    if admission is None:
+        import time
+
+        from v7_harness.coord.situational_ops import regime_admission  # lazy: situational_ops imports this module
+
+        admission = regime_admission(desk, {"card": card, "author": author, "emergency": True},
+                                     now=time.time() if now is None else now)
+    route = admission.get("route") if isinstance(admission, dict) else None
+    verdict = (admission.get("admission") or {}) if isinstance(admission, dict) else {}
+    solo_route = isinstance(route, dict) and route.get("action") == "SOLO_EMERGENCY_FINISH" and route.get("author") == author
+    # A desktop-app Claude reading is operator-relayed, so S5 never makes it EXECUTOR (quota_sources.admit_paid): the
+    # sole ACTIVE tool reads JUDGE_ONLY and the mode HALT. The 2026-11-29 SOLO order accepts exactly that case (an
+    # unexpired decision, the author ACTIVE but quota-unverified); UNKNOWN, OFFLINE, expiry and errors still fail closed.
+    quota_unverified = verdict.get("author_role") == "JUDGE_ONLY" and verdict.get("reason") in ("HALT", "AUTHOR_JUDGE_ONLY")
+    if not (solo_route and (admission.get("ready") is True or quota_unverified)):
+        reason = verdict.get("reason") if verdict else "NO_ADMISSION"
+        action = route.get("action") if isinstance(route, dict) else None
+        errors.append(f"SOLO_EVIDENCE: coord regime does not admit {author} for a SOLO finish of {card} "
+                      f"(action={action}, reason={reason}); UNKNOWN fails closed")
+    try:
+        record = json.loads((Path(desk) / SOLO_DIR / f"{card}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return errors + [f"SOLO_EVIDENCE: no readable record {SOLO_DIR.as_posix()}/{card}.json"]
+    if not isinstance(record, dict):
+        return errors + [f"SOLO_EVIDENCE: {card} record is not an object"]
+    a_sess, j_sess = record.get("author_session"), record.get("judge_session")
+    if record.get("card") != card or record.get("author_tool") != author:
+        errors.append(f"SOLO_EVIDENCE: {card} record names card {record.get('card')!r} author {record.get('author_tool')!r}")
+    if record.get("judge_tool") != author:
+        errors.append(f"SOLO_EVIDENCE: {card} judge must be another session of {author}, got {record.get('judge_tool')!r}")
+    if record.get("verdict") != "PASS" or record.get("reference_only") is not True:
+        errors.append(f"SOLO_EVIDENCE: {card} needs verdict PASS marked reference_only")
+    if not (isinstance(a_sess, str) and a_sess and isinstance(j_sess, str) and j_sess) or a_sess == j_sess:
+        errors.append(f"SOLO_EVIDENCE: {card} judge session must differ from author session (self-approval)")
+    files = record.get("files") if isinstance(record.get("files"), dict) else {}
+    for path, content in sorted(gated.items()):
+        if files.get(path) != _digest(content):
+            errors.append(f"SOLO_EVIDENCE: {path} staged bytes differ from what the {card} judge reviewed")
+    mailbox = Path(desk) / ".coord" / "mailbox"
+    if not _deferred_review_ok(mailbox, str(record.get("deferred_review_id") or ""), card, author):
+        errors.append(f"SOLO_EVIDENCE: {card} has no deferred re-review letter to codex "
+                      "(coord deliver --target codex --card <card> --verdict-requested)")
+    return errors
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Calculator gate check")
     parser.add_argument("--commit-msg", type=Path)
@@ -332,6 +432,14 @@ def main(argv=None) -> int:
     new_card_code = [p for p in card_paths
                      if _digest(subprocess.check_output(["git", "show", f":{p}"])) not in card_parents.get(p, set())]
     violations += card_errors(message, new_card_code, desk, pilot_dirs)
+    gated = dict(staged)  # every staged runtime .py must be the bytes the SOLO judge reviewed
+    gated.update({p: subprocess.check_output(["git", "show", f":{p}"]) for p in new_card_code if p not in gated})
+    solo = solo_errors(message, gated, desk, author)
+    if solo == [] and violations:  # U403-LAND: complete SOLO evidence stands in for the absent peer review only
+        print("SOLO_EVIDENCE accepted (reference_only); deferred Codex re-review is queued", file=sys.stderr)
+        violations = [v for v in violations if not solo_waivable(v)]
+    elif solo:
+        violations += solo
 
     for v in violations:
         print(v, file=sys.stderr)
