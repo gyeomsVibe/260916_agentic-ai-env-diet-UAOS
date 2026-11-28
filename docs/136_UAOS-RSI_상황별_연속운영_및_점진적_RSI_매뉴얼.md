@@ -5,6 +5,7 @@
 - **대상 독자**: 초보자부터 전문 운영자까지 (Beginner-Complete Guide)
 - **상위 정본**: `.coord/results/MIA_SITUATIONAL_DEGRADED_RSI_OPS_261122.md`, `docs/135_UAOS-RSI_구독별_토큰예산_할당_및_고가모델_운용매뉴얼.md`, `v7_harness/coord/failover_closeout.py`
 - **준수 불변식**: `author != judge` (작성자는 자신의 변경을 승인할 수 없음), 독립 검증 관문, 롤백 앵커 상시 유지
+- **3모드 안내서(SOLO/DUO/TRIO) + 상황별 프롬프트집**: [docs/140](140_UAOS-RSI_상황별_메뉴얼_모드_Solo_Duo_Trio.md), 확인 명령 `coord mode --show`
 
 ---
 
