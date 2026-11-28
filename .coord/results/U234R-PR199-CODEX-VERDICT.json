@@ -1,0 +1,21 @@
+{
+  "mergeable": "MERGEABLE",
+  "delivery_state": "QUEUED_INTERACTIVE",
+  "head": "1932afab43ed7c8b87dfc3c886285179e0915a82",
+  "live_state": "OPEN",
+  "letter": "relay_92ba8bd7b5de906e8bcf2a0a95155238",
+  "full_suite": {
+    "exit": 1,
+    "tests": 2561,
+    "failure": "test_real_scan_budget_5k_files CPU36.90625 exceeds30",
+    "baseline_equivalence": "Observed log base FAIL/OK/OK, head OK/OK/OK; original test unchanged. Source attribution worker-reported, independent Windows full-suite PASS not claimed.",
+    "skips": 7,
+    "failures": 1
+  },
+  "delivery": "relay_1e226e773fcf4759108e8b182110beb7",
+  "checked_at": "2026-10-25T16:08:16.5265298+09:00",
+  "next": "Antigravity-priority exact-head merge; preserve CPU issue and U235 HOLD; exact-delta runtime validation after merge",
+  "pr": "https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/199",
+  "scoped_verdict": "PASS_SCOPED_EXACT_HEAD_1932afab",
+  "ci": "SUCCESS run40171100089"
+}

@@ -1,0 +1,13 @@
+{
+  "independent_full_suite_exit": 0,
+  "merge_commit": "2bcde35ba1adefbc9612411f5d5b0af6afaa2add",
+  "disposition": "NATIVE_TITLE_AUDIT_CONSUMED_ALREADY_MERGED",
+  "pr": 187,
+  "current_policy_review": "PENDING",
+  "ui_visibility": "UNKNOWN",
+  "verified_file_count": 4,
+  "parent_u229": "OPEN",
+  "relay": "relay_a6d705b14be451de10d0e6a146df5900",
+  "verified_state": "MERGED",
+  "current_hash_votes": "PENDING"
+}

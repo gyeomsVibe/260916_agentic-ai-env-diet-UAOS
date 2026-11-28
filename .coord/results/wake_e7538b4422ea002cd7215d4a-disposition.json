@@ -1,0 +1,666 @@
+{
+  "wake_id": "wake_e7538b4422ea002cd7215d4a",
+  "verdict": "WAKE_DISPOSED_NOT_PROJECT_COMPLETE",
+  "unique_blocked_steps": 131,
+  "historical_reconciliation": "EVALCW-u188,P01 unresolved; no ledger rollback without owner and artifact proof",
+  "current_action": "Existing U236a local pilot alive; no overlapping launch. Scheduler command mismatch already reproduced and durably BLOCKED. No new paid call.",
+  "entries": [
+    {
+      "step": "AGY-QUOTA",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "ARTICLES-V04",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "CI-FLAKE-U23-U150",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "CODEX_PACKAGE_A_OMISSION_WARNING",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "CODEX_SESSION_THREAD_REGISTRATION",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "CODEX-LETTER-WAIT",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "DESK-261020-1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "EVAL-COMMON-WORKER",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "MERGE-NON-UAOS-REPO",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "NONSTOP-20261009",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "NONSTOP-20261009-A3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "OLLAMA-DICTATION-MISMATCH",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "SDV3-E0-20261009",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "STOP-GATE-HOLES",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U123-GATE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U150-B-false-positive",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U150-claude-claim",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U150B-PROMPT-AS-USER-ERROR",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U166-CONFLICT",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U166-SELFLOOP",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U166-WAIT-NOT-FIRED",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U167-LOCAL1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U167-LOCAL2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U169",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U172",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U174B-LOCAL1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U174B-MERGE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U175-AUDIT-LEDGER",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U175-MERGE-CODEX-CMD",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U175-U169-AUDIT_FIRST",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U175-U169-MERGE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U176-C1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U176-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U176-L2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U178-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U180-NO-REVIEW-RECORD",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U180-REAL-LOTTO",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U180C-OLLAMA",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U180R-AG3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U180R-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U180S-BOOT",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U181-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U181-WINDOW-TIMEOUT",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U182-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U183-L2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U185-AG1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U185-REVIEW",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U186-CI-A1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U187-L3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U189-A",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U189-native-window",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U191-BOOT-GATE",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U191-REAL-PROJECT",
+      "schedule_state": "RETIRED",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U191-SESSION-ROUTE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U191-U185-FREEZE",
+      "schedule_state": "DONE_ELSEWHERE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U192-RELEASE",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U192-U195-COMMIT",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U193-L2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U194-RELEASE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U196-A4-REVIEW",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U196-RELEASE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U196-REROUTE-BINDING",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U196-REROUTE-BINDING-local3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U197-ROUTING",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U200-RECEIPT",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U202-AUDIT-BUDGET",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U202-COMMIT",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U202-RS1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U202-RS3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U202-URGENT",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U203-LIVE-PROOF",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U205-R4",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U205-S6",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U205-S7",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U207-B-L3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U207-B-L3B",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U207-B-L5",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U207-B-L5B",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U207-L3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U209-R2",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U209-R2B",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U209-R2C-PROMOTE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U211-A",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U211-A1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U212-A",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U213-L2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U214-CLOSURE",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U214-CLOSURE-S1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U217-L1c",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U217-L1d",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U217-L3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U218-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U218-L1b",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U218-L2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U218-L2b",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U219-CANON",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221-DONE-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221-DONE-L2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221-DONE-L3",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221-DONE-L4",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221-review",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221-S3-H3L",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U221-U222-INTEGRATION",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U222-S2-H1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U222-S2-H1a",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U222-S2-H1b",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U222-S2-H5",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U222-S2-H5a",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U222-S2-H5b",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U222-S2-H5c",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U223",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U223-FIRST-LOOK-Y1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U223-R3-S1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U223-RELEASE",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U225-DESK3-NATIVE-CHECK",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U225-READY-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U226-commit",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U229",
+      "schedule_state": "ACTIVE",
+      "disposition": "PARENT_OPEN_PRESERVE_ACTIVE_EXECUTION_OWNER"
+    },
+    {
+      "step": "U229-SCHEDULER",
+      "schedule_state": null,
+      "disposition": "CONFIRMED_COMMAND_MISMATCH_RECORDED_BLOCKED"
+    },
+    {
+      "step": "U231",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U231-local",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U232",
+      "schedule_state": "DONE",
+      "disposition": "HISTORICAL_ALERT_PRESERVE_EVIDENCE_NO_RERUN"
+    },
+    {
+      "step": "U234",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U234R-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U235-L1",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U235-L2",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "U236A-L2",
+      "schedule_state": null,
+      "disposition": "RECONCILED_ABANDONED_EXIT0_PREVIOUS_TURN_NO_APPROVAL"
+    },
+    {
+      "step": "U48-R1-FLAKY",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "UAOS_SYSTEMIC_COLLABORATION_BREAKDOWN",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    },
+    {
+      "step": "UAOS-WAIT-HANDOFF-20261009",
+      "schedule_state": null,
+      "disposition": "BACKLOG_NOT_CLEARED_PRESERVE_NO_AUTOMATIC_RETRY"
+    }
+  ],
+  "ref": ".coord/tasks/DESK-261025-2-resume-plan.md",
+  "ack_scope": "This aggregate wake only; underlying backlog remains pending"
+}

@@ -1,29 +1,13 @@
-# 2026-09-26 02:57 Codex 기상 및 즉시 수신 가이드 (CODEX RESUME)
+# UAOS-RSI PC 재부팅 후 자동 재개 체크포인트 (Resume Checkpoint)
 
-> **기상 예정 시각**: 2026-09-26T02:57:00+09:00 (Codex 쿼터 리셋 및 세션 복귀)  
-> **상태**: Antigravity 권한대행 완결 (U31~U42 DONE, 전체 710 회귀 통과, PC 전역 배포 완료)
-
----
-
-## 1. 구동과 동시 자동 수신 프로세스 (Startup Flow)
-
-Codex가 구동되면 UAOS 런타임에 의해 아래 순서로 즉시 수신 및 연동됩니다:
-
-1. **세션 훅 자동 감지**: Codex 시작 훅(`hooks.json`)이 출석부(`coord presence --tool codex --state ACTIVE`)를 갱신합니다.
-2. **사서함 즉시 조회**:
-   ```bash
-   python -m v7_harness.cli coord inbox
-   ```
-   수신함에 적재된 `codex_resume_report_20260925.json` 통지를 확인하고 아래 명령으로 수신 확인(ACK)합니다:
-   ```bash
-   python -m v7_harness.cli coord ack --id codex_resume_report_20260925
-   ```
-3. **권한대행 보고서 열람**:
-   `.coord/tasks/CODEX_PROXY_CLOSEOUT_REPORT_20260925.md`를 열람하여 부재 중 종결된 U31~U42 내역을 확인합니다.
-4. **복귀 점검표(Checklist) 28~33번 항목 1분 검증**:
-   `.coord/codex_return_checklist.md`의 신규 검증 항목을 확인합니다.
-5. **독립 회귀 검증 (1회 실행)**:
-   ```bash
-   python .coord/runs/run_regression.py
-   ```
-   710개 단위/통합 테스트 전건 Green(exit 0)을 확인하면 인계가 100% 완료됩니다.
+- **저장 시각**: 2026-10-25T16:37:15+09:00
+- **대화창 상태**: `[사용자 대화창구-261025-1] 창구·호출기록 개선` (`96f7e6a1-6ad1-4b05-bdec-a214323ce91e`)
+- **현재 마스터 상태**:
+  1. U229 3도구 제목 합의(3/3 Quorum, '창구·호출기록 개선') 영구 달성 완료.
+  2. U234 / U235 / U234R PR #197, #198, #199 병합 및 런타임 `0.3.0-1df66c523ee7` 무드리프트 검증 완료.
+  3. U236a(Haiku 5.5 모델 핀·검증 계약 매뉴얼) 보완 및 Antigravity 독립 감사(PASS_CONTRACT_WITH_1_NOTE) 완료.
+  4. Codex에 ACTIONABLE 편지(`relay_c0ccb819`), Claude에 NOTICE 편지(`relay_56ea2ebe`) 발송 완료.
+- **PC 재부팅 후 자동 진행 절차**:
+  1. 출석 갱신: `python -m v7_harness.cli coord presence --tool antigravity --state ACTIVE --lease --desk-thread 96f7e6a1-6ad1-4b05-bdec-a214323ce91e`
+  2. 우편함 확인: `python -m v7_harness.cli coord inbox --project .` (Codex의 U236a 계약 판정 및 `tests/test_u236a_model_pin.py` 수신 확인)
+  3. U236a 로컬 구현(Ollama) 및 fixed acceptance 테스트 통과 후 PR 생성 및 병합 무승인 진행.

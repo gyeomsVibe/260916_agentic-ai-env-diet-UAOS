@@ -1,0 +1,10 @@
+{
+  "duplicate_incident_of": "relay_72abaf7c320a0228c87902d61434f508",
+  "rollback": false,
+  "new_install": false,
+  "disposition": "SAME_HISTORICAL_INSTALL_HOLD_ALREADY_RESOLVED",
+  "current_runtime": "0.3.0-cbd2208ef625",
+  "relay": "relay_d50ecb352941a7bdbe8aa072e56d2ad9",
+  "listen_check": ".work/U229/U231-relay72-listen-check.log",
+  "verified_merge": "05ede4bd17044513bbe7febeac4700fa35145373"
+}

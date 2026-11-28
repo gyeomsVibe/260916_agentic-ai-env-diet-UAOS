@@ -1,0 +1,34 @@
+{
+  "card": "U251",
+  "judge": "codex",
+  "verdict": "REWORK_NO_PROMOTION",
+  "candidate_sha256": "58E2DEFBDBCB28E623099BBD893BD3D41542F13798B4DEE0079652DF6534E045",
+  "independent_fixed_tests": 32,
+  "independent_fixed_exit": 0,
+  "independent_fixed_wall_s": 37.1,
+  "fixed_test_sha256": "215866F4704CA5EB6C4D473EE7E304CAE379DCC8B0423DFB12DA0710800B6FF1",
+  "new_gate": ".work/desk_261026_2/u251_judge/fresh_metadata_gate.py",
+  "new_gate_sha256": "5A8EAA5F0361C2290CF86AFE4B0AF4C972BD935F1C9E6D1CD59A74987E92987B",
+  "new_gate_exit": 1,
+  "new_gate_evidence": ".work/desk_261026_2/u251_judge/fresh-metadata-result.json",
+  "finding": "P1 record trusts is_link_known=False from cached enumeration and removes baseline fresh is_symlink_or_reparse at content-read boundary. Controlled metadata change: baseline fresh-check1/content-read0/reject; candidate fresh-check0/content-read1/ACCEPTED.",
+  "fixture_limits": "Synthetic metadata regression only; all ordinary test files session-owned temp. Actual Windows link fixture could not run: WinError1314. Do not claim real outside-file read was reproduced.",
+  "other_limits": [
+    "Initial agent helper used wrong max_bytes parameter; corrected to max_fingerprint_bytes before test; initial TypeErrors not acceptance evidence",
+    "Delegated security audit route was automatically flagged and stopped; root completed limited controlled functional regression, not full external security audit",
+    "Empty-file verified=details optimization is unchanged from baseline; not blamed on U251"
+  ],
+  "source_promotion_approved": false,
+  "runtime_approved": false,
+  "global_protocol_approved": false,
+  "protocol_disposition": [
+    "Parallel peer read-only profiling and isolated independent test execution fit existing user authorization; one writer and named judge retained",
+    "Sharded full-suite speedup3x-4x UNMEASURED. Must prove full test-ID union equals frozen2636, no duplicates/omissions and no inter-shard shared-state/order regressions; preserve full-suite gate",
+    "Sentinel timestamp watermark must not suppress unresolved older P1. Require exact message/evidence/digest-bound disposition and preserve unknown blockers",
+    "Haiku in-session amortization is unmeasured; prior5-5 proof cannot be replaced by4-5 identifier in proposal, nor bypass U236E NO_GO12000. Needs separate independently bounded scope",
+    "Self-authored MIA PASS headings do not supply independent contract admission or source/runtime approval"
+  ],
+  "next": "Antigravity corrects quarantined candidate under same hashes/gates, preserving live path-type freshness. Return fixed candidate+exact source/test hashes+32PASS+new gatePASS for non-author review; no production source/runtime/global-rule edits",
+  "official_source": "https://docs.python.org/3/library/os.html#os.DirEntry",
+  "new_paid_provider_calls": 0
+}

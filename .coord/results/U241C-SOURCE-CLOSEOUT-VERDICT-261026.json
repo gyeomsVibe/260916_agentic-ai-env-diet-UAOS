@@ -1,0 +1,20 @@
+{
+  "independent_tests": 50,
+  "closeout_sha256": "48CE6F83226F963F8D1E66A9D04CCC001F67477F15A76EF6A750A4A50E868DF3",
+  "next": "Separate exact-source runtime admission; U245-U249 remain REVIEW, never treat stale 5a911 review as approval",
+  "closeout_report": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.claude\\worktrees\\gallant-carson-220acd\\.coord\\results\\U241C-CLOSEOUT-261026.md",
+  "runtime": "0.3.0-fe627cf17102",
+  "verdict": "SOURCE_ACCEPTED_RELEASE_HELD",
+  "source_control_ux": "888900bdc0a2343f6d70bf5a52eae9675d27630657fa14c3c98979774d98da79",
+  "actual_billing": "UNKNOWN",
+  "judge": "codex",
+  "full_suite_source": "peer exact-equivalent stage log",
+  "source_user_window": "c428116fcb8971b9046a88a74b0ee872471e2d34e488923092b6dfa542a5dbe8",
+  "discarded_auxiliary_review_tokens": 18700,
+  "work_id": "U241C-U242-SOURCE-CLOSEOUT",
+  "runtime_approval": false,
+  "tracked_stage_mismatches": 0,
+  "skipped": 7,
+  "independent_exit": 0,
+  "full_tests": 2636
+}

@@ -1,0 +1,16 @@
+{
+  "card": "U197",
+  "title": "[U197] Transition controller repair",
+  "tools": {
+    "claude": {
+      "id": "c90d74de-8190-4479-8b6c-9c2a1ecc25a8",
+      "opened_at": 1792061836.4173493,
+      "released_at": 1792065621.436271
+    },
+    "antigravity": {
+      "id": "5799b7c7-6bf7-44c9-a16b-749f82923e87",
+      "opened_at": 1792064044.2133386,
+      "last_input_tokens": 27705
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "work_id": "DESK-261026",
+  "desk_generation": 19,
+  "thread": "01a1745b-dd9d-7932-8ada-8a05675c9938",
+  "title": "[사용자 대화창구-261026-1] 병렬 협업·U241 복구",
+  "ownership": "Codex coordinator; Claude existing U242 sole writer; Antigravity no duplicate dispatch",
+  "stage0": [
+    "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
+    "https://github.com/ollama/ollama/blob/main/docs/cli.mdx"
+  ],
+  "decision": "Go bounded independent audit; Pivot duplicate U241C execution to existing U242 writer; Hold high-frequency model adoption after budget/semantic failures",
+  "success_gate": "Exact model/usage envelope; unchanged frozen test; unique writer; merge != acceptance",
+  "plan": [
+    "Reconcile false DONE schedule with independent REWORK",
+    "Existing Claude owner reconcile U242-L2 and finish F1 only",
+    "Antigravity audit remaining scope; no overlapping code dispatch",
+    "Codex exact-head acceptance before release"
+  ],
+  "haiku": {
+    "work_id": "DESK-261026-HAIKU-PROBE",
+    "model_requested": "claude-haiku-5-5",
+    "model_returned": [
+      "claude-haiku-5-5"
+    ],
+    "provider": "firstParty",
+    "exit_code": 0,
+    "semantic_pass": true,
+    "actual_tokens_including_cache": 17432,
+    "token_cap": 12000,
+    "budget_pass": false,
+    "wall_ms": 14218,
+    "api_ms": 2821,
+    "reported_list_cost_usd": 0.00347848,
+    "actual_billing": "UNKNOWN",
+    "verdict": "BLOCKED_TOKEN_CAP_EXCEEDED",
+    "availability_proof": "PASS_ACTUAL_FIRST_PARTY_MODEL",
+    "retry": 0,
+    "savings": "UNMEASURED"
+  },
+  "ollama": {
+    "work_id": "DESK-261026-OLLAMA-CLASSIFY",
+    "first_exit": 0,
+    "first_semantic_pass": false,
+    "first_reason": "CLI multiline transport: actual input31 tokens, unrelated contract question",
+    "retry_exit": 6,
+    "retry_reason": "GPU_BUSY: existing pilot has priority",
+    "model": "qwen2.5-coder:7b",
+    "first_input_tokens": 31,
+    "first_output_tokens": 69,
+    "verdict": "REWORK_BLOCKED",
+    "promotion": false
+  },
+  "map_output": "Rejected: unrelated instruction-like local note; only exact parser line map used",
+  "inbox": "2 relevant letters dispositioned and ACKed; unrelated backlog not bulk ACKed",
+  "peer_delivery": "Antigravity tool-disabled ACK/BLOCKED; Claude queued, not confirmed consumed",
+  "release_hold": true
+}

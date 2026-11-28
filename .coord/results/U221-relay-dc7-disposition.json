@@ -1,0 +1,18 @@
+{
+  "disposition": "OLD_BASE_INTEGRATION_HOLD_SUPERSEDED_BY_MERGED_FEATURES",
+  "retained_questions": [
+    "Q1 acceptance contract replacement vs unmerged permissive tests",
+    "Q2 real PR_FIELDS omits mergeCommit; callers require actual PR head sha",
+    "Q3 runtime verify/current pointer proof excludes launcher start-time proof"
+  ],
+  "postmerge_acceptance": "PENDING_CODEX_REVIEW",
+  "verified_merges": {
+    "PR195": "daf96ad5e6c915bbf5e91661e0972fcdfaec1b76",
+    "PR196": "ba2a8849a501dbc9fbf754ae09acb51fcb218561"
+  },
+  "relay": "relay_dc7d098624c2f38611ce82cf9daf1359",
+  "old_repair_replayed": false,
+  "new_completion_claim": false,
+  "priority": "Keep current U229 first; no duplicate feature integration",
+  "old_base": "f3529eb"
+}

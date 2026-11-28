@@ -1,0 +1,15 @@
+{
+  "review_token_admission_limit": 100000,
+  "extra_retries": 0,
+  "issue_closed": false,
+  "relay": "relay_b31cb7d446ef43dfe47eab51f5ae3a8a",
+  "decision_receipt": "relay_ae241f75fd6ddb60d63f76edf99bd5c6",
+  "root_commit_as_bypass": "REJECTED",
+  "review_time_limit_s": 180,
+  "source_commit_state": "NOT_COMMITTED",
+  "native_reply_requirement": "Actual Antigravity response linked to Claude original request",
+  "disposition": "INTERNAL_ROUTE_ALREADY_DECIDED_WAITING_FOR_OWNER_CONSUMPTION",
+  "source_owner": "claude",
+  "selected_route": "Genuine pilot provenance plus one independent aggregate review",
+  "remote_push_authorized": false
+}

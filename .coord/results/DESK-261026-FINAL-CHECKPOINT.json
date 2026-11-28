@@ -1,0 +1,23 @@
+{
+  "work_id": "DESK-261026",
+  "desk": "01a1745b-dd9d-7932-8ada-8a05675c9938",
+  "title": "[사용자 대화창구-261026-1] 3도구 병렬·대화창구 복구",
+  "coordinator": "codex",
+  "schedule_verdict": "independent PASS; old90 preserved; U241C BLOCKED, U242 REVIEW, U236E BLOCKED",
+  "implementation_owner": "existing Claude U242 checkout only",
+  "scoped_acceptance": "independent8 tests exit0; source9EDB5E74; no runtime approval",
+  "full_suite": "RUNNING PID3740; no exit code yet; warning/argparse text retained in full.log",
+  "native_delivery": "agy auto reply tool-disabled BLOCKED; Claude final scoped verdict DELIVERY_FAILED rc1 Session ID already in use; durable mailbox and review retained",
+  "haiku": "actual firstParty claude-haiku-5-5; semantic PASS; token cap FAIL17432>12000; no repeat",
+  "ollama": "U242 L1 and L2B APPLIED; L2 failed/reconciled; coordinator CLI semantic FAIL then GPU_BUSY; map note rejected",
+  "manual_lint": "Haiku and Ollama manuals lint exit0 after correcting initial lint syntax",
+  "approval_requests_to_user": 0,
+  "release_hold": true,
+  "next_actions": [
+    "Existing Claude owner finishes full suite and exact-head result",
+    "Codex independently judges final source/PR",
+    "Resolve remaining worker visibility/shared root/write lock conditions before release"
+  ],
+  "evidence_directory": "C:\\Users\\Kimyoongyeom\\.codex\\worktrees\\26e2\\260916_agentic-ai-env-diet\\.work\\desk_261026",
+  "user_action_required": false
+}

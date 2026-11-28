@@ -1,0 +1,16 @@
+{
+  "relay": "relay_924ece7742d3b6164edf77036927cd21",
+  "disposition": "FEEDBACK_IMPLEMENTED_IN_SOURCE_RECHECK_PENDING",
+  "new_core": "ce8541d45f0288de223d5cc1645f7ad2314aa6da8232bd049cf20011356751ca",
+  "old_core": "3be5529d",
+  "independent_re_review": "PENDING",
+  "source_check": "PASS",
+  "runtime_rule_apply": "NOT_PERFORMED",
+  "three_generated_adapters_checks": "ALL_TRUE",
+  "fixed": [
+    "PRIMARY report routing separated from conductor Authority",
+    "Exclusions in shared core for all three tools",
+    "Prefix explicitly immutable with creation date and next daily N",
+    "16 Unicode characters"
+  ]
+}

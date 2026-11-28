@@ -1,0 +1,34 @@
+{
+  "card": "U239B",
+  "pr": 208,
+  "head": "0a74075e23bd46945d93159ef0cf3c3522ddb8f7",
+  "verdict": "REWORK_FIRST_PASS_GRAIN_AND_WINDOW",
+  "existing_tests": 18,
+  "existing_exit": 0,
+  "elapsed_s": 4.712,
+  "initial_counterexamples": "Provider classification and in-window retry examples now pass",
+  "independent_repro": {
+    "truncated_window": {
+      "observed": 1.0,
+      "expected_first_attempt_fraction": 0.5,
+      "cause": "A failed before the last2-attempt window; retry reclassified as first pass"
+    },
+    "cross_project_collision": {
+      "observed": 0.0,
+      "expected": 0.5,
+      "cause": "Distinct projects sharing work_id U01 collapse into one work"
+    }
+  },
+  "independent_gate": {
+    "path": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u239b-first-pass-negative.py",
+    "sha256": "55B136C95793E0E9BDE106899A172625245C47351AE3162B8B3832BC32ED5BC0",
+    "tests": 2,
+    "failures": 2,
+    "exit": 1,
+    "log": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u239b-first-pass-negative.log"
+  },
+  "root": "first_by_work groups only work_id after the journal has been truncated by window; it neither separates projects nor determines true first attempts from prior history",
+  "required": "Freeze metric grain (project, work_id) and window semantics first; work keys selected in window must consult their first-ever attempt in retained history, or report UNKNOWN where unprovable. New exact contract before another implementation retry; retain original tests and these negative gates.",
+  "source_edits": 0,
+  "runtime": "Keep f4723bc9dd46; do not promote cumulative U239/U239B/U240/U237D payload before separate holds clear"
+}

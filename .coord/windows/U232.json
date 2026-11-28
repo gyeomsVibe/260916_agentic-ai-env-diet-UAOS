@@ -1,0 +1,15 @@
+{
+  "card": "U232",
+  "title": "[U232]",
+  "tools": {
+    "antigravity": {
+      "id": "54ba3073-e224-4b61-8ebf-e8329532131c",
+      "opened_at": 1792874471.303716,
+      "last_input_tokens": 27302
+    },
+    "claude": {
+      "id": "e2b03d57-8fab-434e-8820-ac25b90fdb80",
+      "opened_at": 1792874761.5884662
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "relay": "relay_74878b5db901f0922139d040e09780a4",
+  "card": "U237E",
+  "judge": "codex",
+  "verdict": "PASS_BUNDLE_PROMOTION_ONLY",
+  "bundle": "b3b2afd9d8e6da00e0808fc285fea313ff3e10b96a044676d1078dead6e6d021",
+  "source": "D:\\D_Workspace_NB\\-agentic-ai-workspace\\260916_agentic-ai-env-diet\\.claude\\worktrees\\user-conversation-setup-42d227\\.work\\wt_u237e",
+  "base": "5725b79854522074bdc9dfb3a3696841de2b3a9a",
+  "lint": "exit0, errors[], warnings[]",
+  "scope": {
+    "checked_v7_and_test_files": 483,
+    "changed_only": "v7_harness/coord/user_window.py",
+    "function": "_topic_from_text",
+    "code_delta": "5 insertions,2 deletions",
+    "all_6_test_modules_and_pinned_gate_unchanged": true
+  },
+  "independent_acceptance": {
+    "regression_tests": 79,
+    "regression_exit": 0,
+    "elapsed_s": 11.189,
+    "external_gate_tests": 3,
+    "external_gate_exit": 0,
+    "external_gate_sha256": "43D2AFD05C1F989359957A7F16323C0F76ACC97560BB02BBD4E4146F850A77C9",
+    "promoted_source_gate_tests": 3,
+    "promoted_source_exit": 0
+  },
+  "advisory": "agy review for exact bundle PASS, no counterexamples, WITHIN cost gate; advisory only",
+  "promotion": "pilot run --task U237E-L1 --work-dir .coord --source . --manual .coord/tasks/U237E-L1-manual.md --approve <exact bundle>: exit0 APPLIED",
+  "promoted_file_sha256": "2595EB11AD8DF25630338177F149F25BF3D7B726A2133D5988589ECE7215D349",
+  "backup": ".work/backup_20261026_u237e/user_window.py in author checkout",
+  "limits": "Source bundle approval only: no commit/push/merge or runtime reinstall by this verdict; U239/U239B hold remains; no live native title store mutation",
+  "next": "Author card-audit, commit, push and PR; Codex reviews exact PR head, merge subject to existing gates; deployment remains separately held"
+}

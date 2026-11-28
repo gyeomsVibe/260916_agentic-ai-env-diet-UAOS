@@ -1,0 +1,40 @@
+{
+  "relay": "relay_10fede1251c36a24c173060da92d1099",
+  "verdict": "REWORK",
+  "scope": "PR207 exact head ec5009520f2914fe583e7e169d96417454d47c1d",
+  "live_state": "MERGED",
+  "merge": "5725b79854522074bdc9dfb3a3696841de2b3a9a",
+  "ci": "SUCCESS",
+  "requested_acceptance": {
+    "tests": 79,
+    "exit": 0,
+    "elapsed_s": 21.425,
+    "command": "python -B -m unittest tests.test_u237_desk_titles tests.test_u207_desk_title_handoff tests.test_u229_independent_title tests.test_u229_title_worker tests.test_u234_title_consensus tests.test_u150_user_window -q",
+    "baseline_note": "PR changes one existing assertion BLOCKED to UNVERIFIED; current-candidate pass is not unchanged-baseline evidence"
+  },
+  "independent_gate": {
+    "path": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u237d-topic-negative.py",
+    "sha256": "43D2AFD05C1F989359957A7F16323C0F76ACC97560BB02BBD4E4146F850A77C9",
+    "tests": 3,
+    "failures": 2,
+    "exit": 1,
+    "log": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/u237d-topic-negative.log",
+    "cases": [
+      "Declaration plus URL only -> com, expected no topic",
+      "Declaration plus file path only -> md, expected no topic",
+      "Real Korean topic retained: PASS"
+    ]
+  },
+  "public_path_proof": "on_prompt on a fresh temporary Claude desk with declaration plus URL persists entry.topic=com; no real native store touched",
+  "root_cause": {
+    "file": "v7_harness/coord/user_window.py",
+    "line": 488,
+    "reason": "Sentence splitting on dot precedes URL/path stripping; domain suffix and file extension survive as valid topics; on_prompt stores topic once at line379"
+  },
+  "required": "Separate scoped correction contract for _topic_from_text only; sanitize complete URL/path spans before punctuation splitting; preserve valid real topics and all frozen gates; judge-owned negative gate must pass before source/runtime approval",
+  "audit_metadata_note": "Audit relay2f578 refers to relay01a414, which is a U237 worker-pool ACK_ONLY. Does not substitute actual U237D stage review provenance.",
+  "runtime": "Keep verified0.3.0-f4723bc9dd46; no PR207 cumulative install. U239 hold still applies independently",
+  "source_changes": 0,
+  "probe_errors": "Initial CLI probe wrong cwd rejected; public-path probe initially omitted UTF8 read encoding, corrected before confirmation",
+  "local_map": "Parser ranges used; model narrative inconsistent ranges ignored; no model judgments accepted"
+}

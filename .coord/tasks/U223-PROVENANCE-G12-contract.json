@@ -1,0 +1,54 @@
+{
+  "work_id": "U223-PROVENANCE-G12",
+  "owner": "codex coordinator",
+  "goal": "Read-only proposal for genuine exact-source canonical provenance; no implementation permission",
+  "allowed_output": [
+    ".coord/tasks/U223-PROVENANCE-G12-contract.json",
+    ".coord/reviews/STALL-93fcb295-independent-verdict.json"
+  ],
+  "inputs": {
+    "code": "7beb60aa04eccf40e3d455db79fdd6d9cc5a7a868aa8367284459a14562b1322",
+    "test": "e263ad47ba609484d45d03e9b744dd4cb81211ee396eaacdd582b014221a0df8",
+    "original_bundle": "6dbe4957aeb1cea750a9be0b8f1deac5283e47ef4af689045a7cc5082812ff10"
+  },
+  "fixed43_exit": 0,
+  "routes": [
+    {
+      "route": "pilot review agy against clean source",
+      "state": "BLOCKED_PROVIDER_QUOTA",
+      "evidence": "Existing actual429; no retry"
+    },
+    {
+      "route": "pilot judge --judge codex --no-apply",
+      "state": "SUPPORTED_BUT_ORIGINAL_APPLIED_NOT_READY",
+      "evidence": "Actual exit2; no provider started"
+    },
+    {
+      "route": "Native Antigravity exact review",
+      "state": "EXISTING_RECEIPT_CANONICAL_COMPATIBILITY_UNCONFIRMED",
+      "evidence": "Do not create manual ANSWERED/review file"
+    },
+    {
+      "route": "Fresh isolated provenance reconstruction",
+      "state": "CONTRACT_REVIEW_REQUIRED_NO_EXECUTION_GO",
+      "evidence": "Must preserve original APPLIED identity and unchanged acceptance; not authorized by this proposal"
+    }
+  ],
+  "forbidden": [
+    "source/test/evaluator edits",
+    "mutating original APPLIED state",
+    "fabricated canonical records",
+    "new provider calls",
+    "commit/push/install"
+  ],
+  "stop": [
+    "input mismatch",
+    "ownership conflict",
+    "any route requiring forbidden action"
+  ],
+  "timeout_s": 120,
+  "external_provider_calls": 0,
+  "pass_command": "Parse JSON and assert exact current source/test hashes; validates this proposal only",
+  "decision": "RESEARCH_MORE_CANONICAL_PROVENANCE_NOT_RELEASE_GO",
+  "native_handoff_result": "relay_b346d1a73fb96cbaffdc8b6fb403d40e returned command-permission refusal; coordinator wrote coordination-only artifact here without changing receiver permissions"
+}

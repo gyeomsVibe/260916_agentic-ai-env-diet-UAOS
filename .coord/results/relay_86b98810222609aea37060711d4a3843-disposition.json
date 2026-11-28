@@ -1,0 +1,10 @@
+{
+  "relay": "relay_86b98810222609aea37060711d4a3843",
+  "classification": "ACK_ONLY_SUPERSEDED_OLD_PASS",
+  "head": "0a74075e23bd46945d93159ef0cf3c3522ddb8f7",
+  "stale_pass": "relay_32063068145f8dbd78d7f3af0fa4dfe2",
+  "current_verdict": "REWORK .coord/results/U239B-CODEX-REWORK-261026.json",
+  "explicit_receiver_hold": "relay_6776e0b8a6bb42a80a978c798d7a82b3 already ACKed; explicitly supersedes this PASS",
+  "action": "No merge, runtime reinstall, worker retry or peer reply; keep release hold",
+  "runtime_expected": "0.3.0-f4723bc9dd46"
+}

@@ -1,0 +1,30 @@
+{
+  "relay": "relay_fd2fe8cf58b64318bc854382a544a570",
+  "verdict": "PASS_SCOPED_HELPER_RUNTIME_RELEASE",
+  "pr": "https://github.com/gyeomsVibe/260916_agentic-ai-env-diet-UAOS/pull/204",
+  "head": "bb85121a0408a43d427ae9dd883c1e9ebc58318f",
+  "merge": "ac40282948523131fdf6521e89077fcf19b4e1e3",
+  "live_state": "MERGED",
+  "ci": "SUCCESS",
+  "source_delta_from_installed_baseline": "v7_harness/docs_manager.py only, nine-line bootstrap helper; existing payload retained",
+  "acceptance": {
+    "tests": 52,
+    "exit": 0,
+    "elapsed_s": 10.101,
+    "command": "python -B -m unittest tests.test_u238_autoboot_init tests.test_u233_unified_doc_hub tests.test_docs_manager tests.test_u222_docs_concurrency tests.test_u225_worker_routing tests.test_u237_haiku_worker_pool tests.test_u229_independent_invocation tests.test_u229_claude_journal_worker tests.test_u229_olla_embed_journal tests.test_u236a_model_pin -q"
+  },
+  "card_audit": "ok:true missing:[]",
+  "audit_metadata_note": "Original U238.md Audit field references U237 ACK_ONLY relay01a414; not treated as U238 code review. Original Codex exact-head PASS relay31cba7 and independent source/test/probe evidence checked.",
+  "runtime": "0.3.0-f4723bc9dd46",
+  "previous_runtime": "0.3.0-ea71a5568454",
+  "verification": {
+    "runtime": "0.3.0-f4723bc9dd46",
+    "archive_commit": "ac40282948523131fdf6521e89077fcf19b4e1e3",
+    "files_checked": 135,
+    "mismatches": [],
+    "installed_bootstrap_twice": "PASS"
+  },
+  "backup": "C:/Users/Kimyoongyeom/.codex/worktrees/b5bf/260916_agentic-ai-env-diet/.work/backup_20261026_u238",
+  "scope_limit": "Helper callable and idempotent installed behavior proved; automatic invocation from new-project/session hooks is not implemented or claimed by this nine-line card",
+  "new_paid_worker_calls": 0
+}
