@@ -1289,6 +1289,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_coord_thrift.add_argument("--stop-condition", default="")
     p_coord_thrift.set_defaults(func=cmd_coord_thrift)
 
+    p_coord_cmode = p_coord_subs.add_parser(
+        "mode", help="MODE-SDT: print the situation-manual mode SOLO/DUO/TRIO/HALT from presence (docs/140)")
+    p_coord_cmode.add_argument("--project", default=".", help="Project root (default: .)")
+    p_coord_cmode.add_argument("--show", action="store_true", help="Print the mode JSON (the default action)")
+    p_coord_cmode.set_defaults(func=cmd_coord_collab_mode)
+
     p_coord_today = p_coord_subs.add_parser("today", help="U213: the day briefing (version, progress, next step)")
     p_coord_today.add_argument("--project", default=".", help="Project root or a folder inside it (default: .)")
     p_coord_today.add_argument("--tool", choices=["codex", "claude", "antigravity"], default="claude")
@@ -2712,6 +2718,27 @@ def cmd_coord_participation(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coord_collab_mode(args: argparse.Namespace) -> int:
+    """MODE-SDT: exit 0 for SOLO/DUO/TRIO with every tool's state known, 1 when fail_closed (UNKNOWN or HALT)."""
+    from .coord.collab_mode import collab_mode
+    from .coord.mode import current_mode
+    from .coord.presence import read_all
+
+    project = Path(args.project)
+    try:
+        desk = read_all(project)
+        states = {t: (desk.get(t) or {}).get("state", "UNKNOWN") for t in ("codex", "claude", "antigravity")}
+    except Exception:
+        states = {}
+    result = collab_mode(states)
+    try:
+        result["budget_mode"] = current_mode(project).get("mode")
+    except Exception:  # fail-thrift, as mode.current_mode itself does; flagged so the fallback is visible
+        result["budget_mode"], result["budget_mode_fallback"] = "token-thrift", True
+    print(json.dumps(result, ensure_ascii=False))
+    return 1 if result["fail_closed"] else 0
+
+
 def cmd_coord_thrift(args: argparse.Namespace) -> int:
     from .coord.thrift import ThriftRejected, apply
     try:
@@ -3257,7 +3284,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # U59: commands that read or write gitignored desk state (presence, mail, watch files) run against the main checkout
 # when called from a linked worktree, so every session of a repository shares one desk. PLAN readers (log, status,
 # brief) keep the worktree's own branch copy.
-_DESK_COMMANDS = frozenset({"presence", "watch", "route", "route-directive", "sentinel", "inbox", "ack", "archive", "window", "lanes", "desk-handoff", "regime"})
+_DESK_COMMANDS = frozenset({"presence", "watch", "route", "route-directive", "sentinel", "inbox", "ack", "archive", "window", "lanes", "desk-handoff", "regime", "mode"})
 
 
 def cmd_coord_library(args: argparse.Namespace) -> int:
